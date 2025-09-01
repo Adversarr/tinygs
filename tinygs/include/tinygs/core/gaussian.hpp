@@ -5,29 +5,11 @@
 namespace tinygs {
 
 /**
- * @brief 3D Gaussian
+ * @brief 2D Gaussian both Host and GPU memory, it is small, efficient enough that SoA does not work better.
  * @description It aligns to 16 bytes for better memory access performance.
- * @note For kMaxSphericalHarmonicsDegree = 3, we have 240 Bytes per Gaussian
- */
-struct Gaussian3d {
-  // [mean3D, opacity]
-  alignas(16) vec4 mean_opacity;
-  // quaternion rotation
-  alignas(16) vec4 rotation;
-  // scale3D, pad 4B
-  alignas(16) vec3 scale;
-  // Spherical Harmonics coefficients
-  alignas(16) vec3 sh_coefficients[kMaxSphericalHarmonicsCoefficients];
-};
-
-/**
- * @brief 2D Gaussian
- * @description It aligns to 16 bytes for better memory access performance.
- * @note For kMaxSphericalHarmonicsDegree = 3, we have 120 Bytes per Gaussian
- *
  * @todo this structure have 36 Bytes in memory, which is not a good alignment
  */
-struct Gaussian2d {
+struct Gaussian2dItem {
   // mean2d
   vec2 mean;
   // color
@@ -37,6 +19,15 @@ struct Gaussian2d {
   // other auxiliary variables...
 };
 
-TINYGS_HOST_DEVICE void project_2d(Gaussian2d& out, const Gaussian3d& in);
+/**
+ * @brief SoA structure for 3D Gaussians
+ * 
+ */
+struct Gaussian3d {
+  std::vector<vec4> means_opacities;
+  std::vector<vec4> rotations;
+  std::vector<vec3> scales;
+  std::vector<vec3> sh_coefficients;
+};
 
 }  // namespace tinygs

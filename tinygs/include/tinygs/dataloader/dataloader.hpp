@@ -1,14 +1,12 @@
 #pragma once
-#include "tinygs/dataset/dataset.hpp"
-#include "tinygs/cuda/common_host.hpp"
 #include "tinygs/core/image.hpp"
-
-
+#include "tinygs/cuda/common_host.hpp"
+#include "tinygs/dataset/dataset.hpp"
 
 namespace tinygs {
 
 struct GPUBatchInput {
-  uint32_t batch_size; // Only 1 is support for now.
+  uint32_t batch_size;  // Only 1 is support for now.
   uint32_t height, width;
   float near, far;
   mat3x3 K;
@@ -38,31 +36,29 @@ public:
 
   /**
    * @brief Get next batch of data ready for compute.
-   * 
+   *
    * @param stream CUDA stream to use for asynchronous data transfers
-   * @return GPUBatchInputOutput 
+   * @return GPUBatchInputOutput
    */
   virtual GPUBatchInputOutput next(cudaStream_t stream) noexcept = 0;
 
   /**
    * @brief Get next batch of data ready for compute using default stream.
-   * 
-   * @return GPUBatchInputOutput 
+   *
+   * @return GPUBatchInputOutput
    */
-  virtual GPUBatchInputOutput next() noexcept {
-    return next(cudaStreamDefault);
-  }
+  virtual GPUBatchInputOutput next() noexcept { return next(cudaStreamDefault); }
 
   virtual void reset() {};
 
 protected:
   std::shared_ptr<DatasetBase> m_dataset;
-  size_t m_batch_size = 1; /// TODO: must be 1.
+  size_t m_batch_size = 1;  /// TODO: must be 1.
 };
 
 /**
  * @brief Helper function to transfer data from host to GPU.
- * 
+ *
  * @param stream CUDA stream to use for asynchronous transfer.
  * @param gpu_data GPU batch input/output data structure.
  * @param host_data Host batch input/output data structure.
@@ -73,4 +69,4 @@ inline void transfer_gpu(const Image<float>& gpu_data, const Image<const float>&
   transfer_gpu(cudaStreamDefault, gpu_data, host_data);
 }
 
-} // namespace tinygs
+}  // namespace tinygs

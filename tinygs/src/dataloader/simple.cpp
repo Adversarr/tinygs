@@ -1,17 +1,18 @@
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/cuda/common_host.hpp"
-
+#include <random>
 namespace tinygs {
-
 GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) noexcept {
-  // Get the next data from the dataset
+  // // Get the next data from the dataset
   static size_t current_index = 0;
   if (current_index >= m_dataset->size()) {
     current_index = 0; // Loop back to the beginning
   }
   
+  // // Randomly pick a data from the dataset
+  // size_t current_index = m_rng.next_uint(m_dataset->size());
   Data host_data = (*m_dataset)[current_index++];
-  
+
   // Prepare GPU batch input
   GPUBatchInput gpu_input;
   gpu_input.batch_size = 1; // Only batch size 1 is supported

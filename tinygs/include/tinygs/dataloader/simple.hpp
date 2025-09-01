@@ -1,6 +1,7 @@
 #pragma once
 #include <tinygs/cuda/gpu_memory.hpp>
 #include "tinygs/dataloader/dataloader.hpp"
+#include "tinygs/random/pcg32.hpp"
 
 namespace tinygs {
 
@@ -19,6 +20,7 @@ public:
 private:
   // It always use this buffer to store the data on GPU.
   GPUMemory<float> m_gpu_memory;
+  pcg32 m_rng;
 };
 
 }  // namespace tinygs

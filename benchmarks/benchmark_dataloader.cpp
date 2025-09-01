@@ -6,7 +6,7 @@
 #include "tinygs/utils/file.hpp"
 #include "tinygs/dataloader/simple.hpp"
 
-std::shared_ptr<tinygs::PngFolderDataset> create_test_dataset() {
+std::shared_ptr<tinygs::PngFolderDataset>& create_test_dataset() {
   static std::shared_ptr<tinygs::PngFolderDataset> dataset;
   if (dataset == nullptr) {
     std::string data_path = "/data/accgs/1747834320424/";
@@ -28,7 +28,7 @@ std::shared_ptr<tinygs::PngFolderDataset> create_test_dataset() {
 }
 
 void benchmark_simple_loader(benchmark::State& state) {
-  auto dataset = create_test_dataset();
+  auto& dataset = create_test_dataset();
   tinygs::SimpleDataLoader loader(dataset);
 
   // Benchmark the data loading

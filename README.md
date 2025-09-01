@@ -11,7 +11,8 @@ Features:
 Known Issues:
 1. single GPU support only.
 2. no Python interface yet.
-3. not optimized for other platforms, only Linux is supported.
+3. batch_size=1 is a must.
+4. not optimized for other platforms, only Linux is supported.
 
 # Acknowledgements
 
