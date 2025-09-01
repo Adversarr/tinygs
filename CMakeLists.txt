@@ -94,6 +94,7 @@ set(TINYGS_INCLUDE_DIRS
 # Find required packages
 find_package(CUDAToolkit REQUIRED)
 find_package(Threads REQUIRED)
+find_package(OpenMP REQUIRED)
 
 # Figure out CUDA version
 if(CMAKE_CUDA_COMPILER_LOADED)
@@ -110,7 +111,7 @@ endif()
 add_subdirectory(tinygs)
 
 # Optional: Build examples
-option(TINYGS_BUILD_EXAMPLES "Build tinygs examples" OFF)
+option(TINYGS_BUILD_EXAMPLES "Build tinygs examples" ON)
 if(TINYGS_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()

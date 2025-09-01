@@ -12,6 +12,8 @@
 
 #include <cstdint>
 
+namespace tinygs {
 void save_stbi(const uint8_t* data, int width, int height, int n_channels, const char* outfilename);
 void save_stbi(const float* data, int width, int height, int n_channels, const char* outfilename);
 float* load_stbi(int* width, int* height, const char* filename);
+}  // namespace tinygs

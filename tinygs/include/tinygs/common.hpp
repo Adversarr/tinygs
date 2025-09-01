@@ -41,6 +41,7 @@
 #include <cstdint>
 #include <memory>
 #include <type_traits>
+#include <nlohmann/json_fwd.hpp>
 
 #if defined(__CUDACC__)
 #include <cuda_fp16.h>
@@ -95,6 +96,7 @@ static_assert(
 #endif
 
 namespace tinygs {
+using json = nlohmann::json;
 
 static constexpr uint32_t MIN_GPU_ARCH = TINYGS_MIN_GPU_ARCH;
 
@@ -450,5 +452,10 @@ using IntervalAndIdx = PayloadAndIdx<Interval<float>>;
 constexpr int kMaxSphericalHarmonicsDegree = 3;
 constexpr int kMaxSphericalHarmonicsCoefficients =
     (kMaxSphericalHarmonicsDegree + 1) * (kMaxSphericalHarmonicsDegree + 1);
+
+constexpr int kMaxBatchSize = 1;
+constexpr uint32_t kMaxImageWidth = 2048;
+constexpr uint32_t kMaxImageHeight = 2048;
+constexpr uint32_t kMaxImageChannels = 4;
 
 } // namespace tinygs

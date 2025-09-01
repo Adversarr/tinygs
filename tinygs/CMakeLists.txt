@@ -56,9 +56,14 @@ target_link_libraries(tinygs
         # Third-party libraries
         spdlog::spdlog
         nlohmann_json::nlohmann_json
-        # glm::glm
+        OpenMP::OpenMP_CXX
 )
 
+target_compile_definitions(
+        tinygs
+        PUBLIC
+        SPDLOG_ACTIVE_LEVEL=0
+)
 
 if(TARGET stb)
     target_link_libraries(tinygs PUBLIC stb)
