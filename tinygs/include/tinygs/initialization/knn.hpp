@@ -18,6 +18,7 @@ struct KnnParameters {
   float random_extent = 6.0f;      // Extent for random initialization
 };
 
+// Initialize the GS size to be the average dist of the K nearest neighbors
 class KnnInitialization : public InitializationBase {
 private:
   KnnParameters m_params;

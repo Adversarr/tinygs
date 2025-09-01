@@ -7,8 +7,10 @@
 #include <iostream>
 #include <random>
 
+#include "cuda/common_host.hpp"
 #include "nanoflann.hpp"
 #include "tinygs/initialization/knn.hpp"
+#include "utils/scope_timer.hpp"
 
 namespace tinygs {
 
@@ -103,6 +105,7 @@ vec3 KnnInitialization::rgb_to_sh(const vec3& rgb) const {
 }
 
 void KnnInitialization::initialize(PointCloud& pointcloud) {
+  ScopeTimer timer("KnnInitialization::initialize");
   std::vector<vec3> positions;
   std::vector<vec3> colors;
 
@@ -188,9 +191,9 @@ void KnnInitialization::initialize(PointCloud& pointcloud) {
     }
   }
 
-  std::cout << "Initialized " << m_gaussians.means_opacities.size() << " gaussians with KNN method" << std::endl;
-  std::cout << "Scene scale: " << scene_scale << std::endl;
-  std::cout << "SH degree: " << m_params.sh_degree << std::endl;
+  log_info("Initialized {} gaussians with KNN method", m_gaussians.means_opacities.size());
+  log_info("Scene scale: {}", scene_scale);
+  log_info("SH degree: {}", m_params.sh_degree);
 }
 
 }  // namespace tinygs
