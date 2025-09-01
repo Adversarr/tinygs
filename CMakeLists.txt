@@ -79,6 +79,9 @@ project(tinygs
         DESCRIPTION "Lightweight library for reconstructing 3D scenes with 3DGS in seconds"
         LANGUAGES CXX CUDA
 )
+option(TINYGS_BUILD_EXAMPLES "Build tinygs examples" ON)
+option(TINYGS_BUILD_TESTS "Build tinygs tests" OFF)
+option(TINYGS_BUILD_BENCHMARKS "Build tinygs benchmarks" ON)
 
 ### Dependencies
 include(${PROJECT_SOURCE_DIR}/cmake/dependencies.cmake)
@@ -111,20 +114,17 @@ endif()
 add_subdirectory(tinygs)
 
 # Optional: Build examples
-option(TINYGS_BUILD_EXAMPLES "Build tinygs examples" ON)
 if(TINYGS_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
 # Optional: Build tests
-option(TINYGS_BUILD_TESTS "Build tinygs tests" OFF)
 if(TINYGS_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
 endif()
 
 # Optional: Build benchmarks
-option(TINYGS_BUILD_BENCHMARKS "Build tinygs benchmarks" OFF)
 if(TINYGS_BUILD_BENCHMARKS)
     add_subdirectory(benchmarks)
 endif()

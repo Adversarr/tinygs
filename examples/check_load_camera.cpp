@@ -4,7 +4,7 @@
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/dataset/png_folder.hpp"
 #include "tinygs/utils/file.hpp"
-#include "tinygs/utils/stbi/stbi_wrapper.h"
+#include "tinygs/dataloader/simple.hpp"
 
 std::string DATA_PATH = "/data/accgs/1747834320424/";
 
@@ -25,13 +25,24 @@ int main() {
       std::cout << tinygs::to_string(extrinsics.get_w2c()) << std::endl;
     }
 
-    int width = 640, height = 480;
+    int width = 480, height = 640;
+    tinygs::ImageShape shape;
+    shape.width = width;
+    shape.height = height;
+    shape.channels = 3;
 
     auto start = std::chrono::system_clock::now();
-    tinygs::PngFolderDataset dataset(DATA_PATH + "inputs/images_480x640_1", width, height);
+    std::shared_ptr<tinygs::PngFolderDataset> dataset = std::make_shared<tinygs::PngFolderDataset>(
+        DATA_PATH + "inputs/images_480x640_1", camera_extrinsics_path,
+        camera_intrinsics_path, shape);
     auto end = std::chrono::system_clock::now();
     std::cout << "Load image cost: " << (end - start).count() << std::endl;
 
+    tinygs::SimpleDataLoader loader(dataset);
+    auto data = loader.next();
+    std::cout << tinygs::to_string(data.output.image.shape) << std::endl;
+    std::cout << tinygs::to_string(data.input.w2c) << std::endl;
+    std::cout << tinygs::to_string(data.input.K) << std::endl;
 
     return EXIT_SUCCESS;
   } catch (const std::exception &e) {

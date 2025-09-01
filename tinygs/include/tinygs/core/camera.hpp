@@ -6,6 +6,7 @@
 #include <vector>
 #include <cmath>
 #include <stdexcept>
+#include <fmt/format.h>
 
 namespace tinygs {
 
@@ -73,7 +74,30 @@ struct CameraIntrinsics {
     
     return intrinsics;
   }
+  
+  // Convert camera intrinsics to string representation
+  std::string to_string() const {
+    std::string model_str;
+    switch (model) {
+      case CameraModel::Pinhole:
+        model_str = "PINHOLE";
+        break;
+      default:
+        model_str = "UNKNOWN";
+        break;
+    }
+    
+    return fmt::format("CameraIntrinsics(id={}, model={}, width={}, height={}, "
+                      "fx={:.3f}, fy={:.3f}, cx={:.3f}, cy={:.3f}, "
+                      "k1={:.6f}, k2={:.6f}, k3={:.6f}, p1={:.6f}, p2={:.6f})",
+                      id, model_str, width, height, fx, fy, cx, cy, k1, k2, k3, p1, p2);
+  }
 };
+
+// Global to_string function for CameraIntrinsics
+inline std::string to_string(const CameraIntrinsics& intrinsics) {
+  return intrinsics.to_string();
+}
 
 // Camera extrinsic parameters (pose)
 struct CameraExtrinsics {

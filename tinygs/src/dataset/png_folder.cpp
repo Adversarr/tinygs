@@ -5,6 +5,7 @@
 #include <chrono>
 #include <stdexcept>
 
+#include "core/camera.hpp"
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/stbi/stbi_wrapper.h"
@@ -19,6 +20,10 @@ static std::vector<std::string> list_png_files(const std::string& folder_path) {
       filterd_pngs.push_back(path);
     }
   }
+
+  // sort by name
+  std::sort(filterd_pngs.begin(), filterd_pngs.end());
+
   return filterd_pngs;
 }
 
@@ -39,42 +44,93 @@ static void load_single_image(size_t index, const std::string& image_path, float
                              + ", Got: " + std::to_string(img_width) + "x" + std::to_string(img_height));
   }
 
-  // Copy image data to pinned memory
+  // Convert from RGBA HWC to RGB CHW format
   float* dest_ptr = data_buffer + index * expected_height * expected_width * channels;
-  std::memcpy(dest_ptr, img_data, expected_height * expected_width * channels * sizeof(float));
+  
+  // img_data is in RGBA HWC format (4 channels)
+  // dest_ptr should be in RGB CHW format (3 channels)
+  for (uint32_t c = 0; c < 3; ++c) {  // Only process RGB channels (skip alpha)
+    for (uint32_t h = 0; h < expected_height; ++h) {
+      for (uint32_t w = 0; w < expected_width; ++w) {
+        // Source: HWC format with 4 channels (RGBA)
+        uint32_t src_idx = h * expected_width * 4 + w * 4 + c;
+        // Destination: CHW format with 3 channels (RGB)
+        uint32_t dst_idx = c * expected_height * expected_width + h * expected_width + w;
+        dest_ptr[dst_idx] = img_data[src_idx];
+      }
+    }
+  }
 
   // Free the temporary image data
   free(img_data);
 }
 
-PngFolderDataset::PngFolderDataset(const std::string& folder_path, uint32_t height, uint32_t width) :
-    m_image_paths(list_png_files(folder_path)),
-    m_folder_path(folder_path),
-    m_height(height),
-    m_width(width),
-    m_channels(4) {
-  m_size = m_image_paths.size();
-  log_debug("Loading {} images from folder: {}", m_size, folder_path);
+static std::vector<CameraExtrinsics> load_cameras(const std::string& camera_file_path) {
+  auto lines = readlines(camera_file_path);
+  std::vector<CameraExtrinsics> cameras;
+  cameras.reserve(lines.size());
+for (const auto& line : lines) {
+    cameras.emplace_back(CameraExtrinsics::parse(line));
+  }
+  return cameras;
+}
 
+CameraIntrinsics load_intrinsics(const std::string& intrinsics_file_path) {
+  auto lines = readlines(intrinsics_file_path);
+  if (lines.empty()) {
+    throw std::runtime_error("No camera intrinsics found in file: " + intrinsics_file_path);
+  }
+  return CameraIntrinsics::parse(lines[0]);
+}
+
+PngFolderDataset::PngFolderDataset(const std::string &folder_path,
+                                   const std::string &extrinsics_file_path,
+                                   const std::string &intrinsics_file_path,
+                                   const ImageShape &image_shape)
+    : m_image_paths(list_png_files(folder_path)), m_folder_path(folder_path),
+    m_cameras(load_cameras(extrinsics_file_path)), 
+    m_camera_intrinsics(load_intrinsics(intrinsics_file_path)),
+    m_image_shape(image_shape) {
+  auto start = std::chrono::steady_clock::now();
+  m_size = std::min(m_image_paths.size(), m_cameras.size());
   if (m_size == 0) {
     throw std::runtime_error("No PNG files found in folder: " + folder_path);
   }
 
+  if (m_image_shape.channels != 3) {
+    throw std::runtime_error("Only 3 channels (RGB) are supported now.");
+  }
+
+  if (m_size != m_cameras.size()) {
+    log_warning("Number of PNG files ({}) and camera extrinsics ({}) do not match.", m_size, m_cameras.size());
+  } else if (m_size != m_image_paths.size()) {
+    log_warning("Number of PNG files ({}) and camera extrinsics ({}) do not match.", m_size, m_image_paths.size());
+  }
+
   // Allocate pinned memory for all images
-  size_t total_size = m_size * m_height * m_width * m_channels * sizeof(float);
+  const size_t total_size = m_size * m_image_shape.height * m_image_shape.width * m_image_shape.channels * sizeof(float);
   CUDA_CHECK_THROW(cudaMallocHost(&m_data, total_size));
 
-  auto start = std::chrono::steady_clock::now();
   // Load all images into memory
   #pragma omp parallel for
   for (size_t i = 0; i < m_size; ++i) {
-    load_single_image(i, m_image_paths[i], m_data, m_width, m_height, m_channels);
+    load_single_image(i, m_image_paths[i], m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channels);
   }
   auto end = std::chrono::steady_clock::now();
 
   log_info("Loaded {} images with resolution={}x{}. (consumed {:.6f} GiB in {:.6f} sec.)",
-            m_size, width, height, static_cast<double>(total_size) / (1024 * 1024 * 1024),
+            m_size, m_image_shape.width, m_image_shape.height, static_cast<double>(total_size) / (1024 * 1024 * 1024),
             std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
+
+  log_info("Camera Intrisics: {}", to_string(m_camera_intrinsics));
+}
+
+ImageShape PngFolderDataset::image_shape() const {
+  return m_image_shape;
+}
+
+size_t PngFolderDataset::size() const noexcept {
+  return m_size;
 }
 
 Data PngFolderDataset::operator[](size_t index) const {
@@ -86,18 +142,15 @@ Data PngFolderDataset::operator[](size_t index) const {
   Data data;
 
   // Set up image data
-  float* image_ptr = m_data + index * m_height * m_width * m_channels;
-  data.image.width = static_cast<uint16_t>(m_width);
-  data.image.height = static_cast<uint16_t>(m_height);
-  data.image.channels = static_cast<uint16_t>(m_channels);
-  data.image.format = ImageFormat::HWC;  // stb_image standard
-  data.image.data = PitchedPtr<const float>(image_ptr, m_width * m_channels * sizeof(float));
+  float* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channels;
+  data.image.shape = image_shape();
+  data.image.format = ImageFormat::CHW;  // Converted to CHW format
+  data.image.data = image_ptr;
 
   // Initialize camera matrices to identity (placeholder values)
   // In a real implementation, these would be loaded from camera calibration files
-  data.w2c = mat4x4(1.0f);  // Identity matrix
-  data.K = mat3x3(1.0f);    // Identity matrix
-
+  data.w2c = m_cameras[index].get_w2c();
+  data.K = m_camera_intrinsics.get_K();
   return data;
 }
 
@@ -106,6 +159,17 @@ PngFolderDataset::~PngFolderDataset() {
     CUDA_CHECK_PRINT(cudaFreeHost(m_data));
     m_data = nullptr;
   }
+}
+
+PngFolderDataset::PngFolderDataset(PngFolderDataset&& other) noexcept {
+  m_data = other.m_data;
+  other.m_data = nullptr;
+}
+
+PngFolderDataset& PngFolderDataset::operator=(PngFolderDataset&& other) noexcept {
+  m_data = other.m_data;
+  other.m_data = nullptr;
+  return *this;
 }
 
 }  // namespace tinygs

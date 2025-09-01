@@ -14,19 +14,24 @@ struct Data {
 class DatasetBase {
 public:
   explicit DatasetBase() = default;
+  DatasetBase(const DatasetBase&) = delete;
+  DatasetBase& operator=(const DatasetBase&) = delete;
+  DatasetBase(DatasetBase&&) = default;
+  DatasetBase& operator=(DatasetBase&&) = default;
 
   virtual ~DatasetBase() = default;
 
   /// Get the size of the dataset.
-  size_t size() const noexcept { return m_size; }
+  virtual size_t size() const noexcept = 0;
+
+  /// Get the image shape of the dataset.
+  virtual ImageShape image_shape() const = 0;
 
   /// Get the data at the given index.
   /// @param idx The index of the data.
   /// @return The data at the given index.
   virtual Data operator[](size_t idx) const = 0;
 
-protected:
-  size_t m_size = 0;
 };
 
 } // namespace tinygs

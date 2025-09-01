@@ -41,9 +41,16 @@ CPMAddPackage(
 #       "BUILD_TESTING OFF"
 # )
 
-# Print dependency status
-message(STATUS "Dependencies loaded successfully:")
-message(STATUS "  - spdlog: ${spdlog_VERSION}")
-message(STATUS "  - nlohmann_json: ${nlohmann_json_VERSION}")
-# message(STATUS "  - glm: ${glm_VERSION}")
-message(STATUS "  - cutlass: ${cutlass_VERSION}")
+if(TINYGS_BUILD_BENCHMARKS)
+    find_package(benchmark QUIET)
+    if(NOT benchmark_FOUND)
+        CPMAddPackage(
+            NAME benchmark
+            GIT_TAG v1.9.4
+            GITHUB_REPOSITORY google/benchmark
+            OPTIONS
+                "BENCHMARK_ENABLE_TESTING OFF"
+                "BENCHMARK_ENABLE_INSTALL OFF"
+        )
+    endif()
+endif()

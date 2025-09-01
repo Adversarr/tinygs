@@ -33,7 +33,7 @@
 #include <tinygs/common.hpp>
 // #include <tinygs/cpp_api.h>
 
-// #include <fmt/format.h>
+#include <cuda_runtime.h>
 #include <spdlog/spdlog.h>
 
 #include <array>
