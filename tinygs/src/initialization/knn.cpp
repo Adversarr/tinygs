@@ -2,16 +2,17 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
+#include "tinygs/initialization/knn.hpp"
+
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <nlohmann/json.hpp>
 #include <random>
 
 #include "cuda/common_host.hpp"
 #include "nanoflann.hpp"
-#include "tinygs/initialization/knn.hpp"
 #include "utils/scope_timer.hpp"
-#include <nlohmann/json.hpp>
 
 namespace tinygs {
 
@@ -67,12 +68,13 @@ std::vector<float> KnnInitialization::compute_mean_neighbor_distances(const std:
     // Skip the first result (self) and collect neighbors
     for (size_t j = 1; j < num_results && valid_neighbors < m_params.num_neighbors; ++j) {
       if (out_dists_sqr[j] > m_params.min_distance * m_params.min_distance) {
-        sum_dist += std::sqrt(out_dists_sqr[j]);
+        // sum_dist += std::sqrt(out_dists_sqr[j]);
+        sum_dist += out_dists_sqr[j];
         valid_neighbors++;
       }
     }
 
-    result[i] = (valid_neighbors > 0) ? (sum_dist / valid_neighbors) : m_params.default_distance;
+    result[i] = (valid_neighbors > 0) ? std::sqrt(sum_dist / valid_neighbors) : m_params.default_distance;
   }
 
   return result;
@@ -108,35 +110,8 @@ vec3 KnnInitialization::rgb_to_sh(const vec3& rgb) const {
 
 void KnnInitialization::initialize(const PointCloud& pointcloud) {
   TINYGS_TIMER("KnnInitialization::initialize");
-  std::vector<vec3> positions;
-  std::vector<vec3> colors;
-
-  if (m_params.use_random_init) {
-    // Generate random points
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<float> dis(-1.0f, 1.0f);
-
-    positions.reserve(m_params.random_num_points);
-    colors.reserve(m_params.random_num_points);
-
-    for (int i = 0; i < m_params.random_num_points; ++i) {
-      positions.emplace_back(dis(gen) * m_params.random_extent, dis(gen) * m_params.random_extent,
-                             dis(gen) * m_params.random_extent);
-
-      std::uniform_real_distribution<float> color_dis(0.0f, 1.0f);
-      colors.emplace_back(color_dis(gen), color_dis(gen), color_dis(gen));
-    }
-  } else {
-    // Use existing point cloud data
-    positions = pointcloud.points;
-    colors.reserve(pointcloud.colors.size());
-
-    // Normalize colors from [0, 255] to [0, 1]
-    for (const auto& color : pointcloud.colors) {
-      colors.emplace_back(color / 255.0f);
-    }
-  }
+  const auto& positions = pointcloud.points;
+  const auto& colors = pointcloud.colors;
 
   if (positions.empty()) {
     std::cerr << "Error: No points to initialize from" << std::endl;
@@ -152,28 +127,21 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
 
   float scene_scale = calculate_scene_scale(positions, scene_center);
 
-  // Scale positions if using random initialization
-  if (m_params.use_random_init) {
-    for (auto& pos : positions) {
-      pos *= scene_scale;
-    }
-  }
-
   // Compute neighbor distances for scaling initialization
   auto neighbor_distances = compute_mean_neighbor_distances(positions);
 
   // Clear existing gaussians and resize to fit new data
   const size_t num_points = positions.size();
   m_gaussians.means_opacities.resize(num_points);
-  m_gaussians.rotations.resize(num_points);
+  m_gaussians.rotations.resize(num_points, vec4(1.0f, 0.0f, 0.0f, 0.0f));
   m_gaussians.scales.resize(num_points);
   m_gaussians.sh_coefficients.resize(num_points * kMaxSphericalHarmonicsCoefficients);
 
+  auto init_opa = -logf(1.0f / (fminf(fmaxf(m_params.init_opacity, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
   // Initialize gaussians using SoA structure
-#pragma omp parallel for
   for (size_t i = 0; i < num_points; ++i) {
     // Set position and opacity
-    m_gaussians.means_opacities[i] = vec4(positions[i].x, positions[i].y, positions[i].z, m_params.init_opacity);
+    m_gaussians.means_opacities[i] = vec4(positions[i].x, positions[i].y, positions[i].z, init_opa);
 
     // Set rotation (identity quaternion: w=1, x=0, y=0, z=0)
     m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
@@ -184,18 +152,29 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
     m_gaussians.scales[i] = vec3(log_scale, log_scale, log_scale);
 
     // Set spherical harmonics coefficients
-    // vec3 sh_color = rgb_to_sh(colors[i]);
-    vec3 sh_color = colors[i]; // Use raw color for better initialization
+    vec3 sh_color = rgb_to_sh(colors[i]);
+    // vec3 sh_color = colors[i]; // Use raw color for better initialization
     m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients] = sh_color;
-    for (int j = 1; j < kMaxSphericalHarmonicsCoefficients; ++j) {
-      m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients + j] = vec3(0.0f);
-    }
 
     // Initialize SH coefficients array
     for (int j = 1; j < kMaxSphericalHarmonicsCoefficients; ++j) {
       m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients + j] = vec3(0.0f);
     }
   }
+
+  // calculate the std and mean of colors, only sh0.
+  vec3 color_mean(0.0f);
+  vec3 color_std(0.0f);
+  for (int i = 0; i < num_points; ++i) {
+    color_mean += m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients];
+  }
+  color_mean /= static_cast<float>(num_points);
+  for (int i = 0; i < num_points; ++i) {
+    color_std += (m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients] - color_mean) *
+                 (m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients] - color_mean);
+  }
+  color_std = sqrt(color_std / static_cast<float>(num_points));
+  log_info("Color mean={}, std={}", to_string(color_mean), to_string(color_std));
 
   log_info("Initialized {} gaussians with KNN method", m_gaussians.means_opacities.size());
   log_info("Scene scale: {}", scene_scale);

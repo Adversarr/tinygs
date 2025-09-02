@@ -1,7 +1,5 @@
 #include "tinygs/core/pointcloud.hpp"
-#include "cuda/common_host.hpp"
-#include "utils/scope_timer.hpp"
-
+#include "tinygs/utils/scope_timer.hpp"
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -62,6 +60,47 @@ PointCloud load_from_colmap_file(const std::string &filename) {
   // Move the vectors to the pointcloud struct
   pointcloud.points = std::move(points);
   pointcloud.colors = std::move(colors);
+
+  // // Calculate mean of points
+  // vec3 point_mean = vec3(0.0f);
+  // for (const auto& p : pointcloud.points) {
+  //   point_mean += p;
+  // }
+  // point_mean /= static_cast<float>(pointcloud.points.size());
+
+  // // Calculate standard deviation of points
+  // vec3 point_std = vec3(0.0f);
+  // for (const auto& p : pointcloud.points) {
+  //   vec3 diff = p - point_mean;
+  //   point_std += vec3(diff.x * diff.x, diff.y * diff.y, diff.z * diff.z);
+  // }
+  // point_std = vec3(
+  //   std::sqrt(point_std.x / pointcloud.points.size()),
+  //   std::sqrt(point_std.y / pointcloud.points.size()),
+  //   std::sqrt(point_std.z / pointcloud.points.size())
+  // );
+
+  // // Calculate mean of colors
+  // vec3 color_mean = vec3(0.0f);
+  // for (const auto& c : pointcloud.colors) {
+  //   color_mean += c;
+  // }
+  // color_mean /= static_cast<float>(pointcloud.colors.size());
+
+  // // Calculate standard deviation of colors
+  // vec3 color_std = vec3(0.0f);
+  // for (const auto& c : pointcloud.colors) {
+  //   vec3 diff = c - color_mean;
+  //   color_std += vec3(diff.x * diff.x, diff.y * diff.y, diff.z * diff.z);
+  // }
+  // color_std = vec3(
+  //   std::sqrt(color_std.x / pointcloud.colors.size()),
+  //   std::sqrt(color_std.y / pointcloud.colors.size()),
+  //   std::sqrt(color_std.z / pointcloud.colors.size())
+  // );
+
+  // log_info("Points mean={}, std={}", tinygs::to_string(point_mean), tinygs::to_string(point_std));
+  // log_info("Colors mean={}, std={}", tinygs::to_string(color_mean), tinygs::to_string(color_std));
 
   log_info("Loaded {} 3D points.", pointcloud.points.size());
   return pointcloud;

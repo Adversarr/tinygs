@@ -45,10 +45,7 @@ int main() {
         DATA_PATH + "inputs/images_480x640_1", camera_extrinsics_path,
         camera_intrinsics_path, shape);
 
-    auto data = (*dataset)[0];
-
-    log_info("K={}", tinygs::to_string(data.K));
-    log_info("w2c={}", tinygs::to_string(data.w2c));
+    tinygs::SimpleDataLoader loader(dataset);
 
     // Prepare Render data.
     auto gs3d = std::make_shared<tinygs::GPUGaussian3d>();
@@ -60,8 +57,6 @@ int main() {
     io.input.batch_size = 1;
     io.input.near = 0.001f;
     io.input.far = 10000.0f;
-    io.input.K = data.K;
-    io.input.w2c = data.w2c;
 
     tinygs::GPUMemory<float> out_image(width * height * 3);
     tinygs::GPUMemory<float> out_alpha(width * height * 1);
@@ -72,7 +67,7 @@ int main() {
     io.output.image.format = io.output.alpha.format = tinygs::ImageFormat::HWC;
     io.output.image.data = out_image.data();
     io.output.alpha.data = out_alpha.data();
-    tinygs::RasterizeParamsRuntime params;
+    tinygs::RasterizeContext params;
     params.inference = true;
     params.fwd_input = io.input;
     params.fwd_output = io.output;
@@ -80,28 +75,64 @@ int main() {
     // Rendering.
     tinygs::FastGSRasterizer rasterizer;
     rasterizer.set_gaussians(gs3d);
-    rasterizer.forward(params);
     
-    // Visualize RGB
-    std::vector<float> h_img(width * height * 3);
-    out_image.copy_to_host(h_img); // CHW format 
+    std::cout << "Press 'q' to quit, any other key to load next image" << std::endl;
     
-    std::vector<uint8_t> h_img_hwc(width * height * 3);
-    for (int h = 0; h < height; h++) {
-      for (int w = 0; w < width; w++) {
-        for (int c = 0; c < 3; c++) {
-          // CHW format: data is stored as [C0H0W0, C0H0W1, ..., C0H1W0, ..., C1H0W0, ...]
-          int chw_idx = c * height * width + h * width + w;
-          // HWC format: data is stored as [H0W0C0, H0W0C1, H0W0C2, H0W1C0, ...]
-          int hwc_idx = h * width * 3 + w * 3 + c;
-          h_img_hwc[hwc_idx] = static_cast<uint8_t>(h_img[chw_idx] * 255.0f);
+    int frame_count = 0;
+    while (true) {
+      auto data = loader.next();
+      
+      log_info("Frame {}: K={}", frame_count, tinygs::to_string(data.input.K));
+      log_info("Frame {}: w2c={}", frame_count, tinygs::to_string(data.input.w2c));
+      
+      // Update camera parameters for this frame
+      io.input.K = data.input.K;
+      io.input.w2c = data.input.w2c;
+      params.fwd_input = io.input;
+
+      params.gaussians_grad = gs3d; // TODO: impl
+      
+      // Render the frame
+      rasterizer.forward(params);
+
+      params.grad_output.image = params.fwd_output.image;
+      params.grad_output.alpha = params.fwd_output.alpha;
+
+      rasterizer.backward(params);
+      
+      // Visualize RGB
+      std::vector<float> h_img(width * height * 3);
+      out_image.copy_to_host(h_img); // CHW format 
+      
+      std::vector<uint8_t> h_img_hwc(width * height * 3);
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          for (int c = 0; c < 3; c++) {
+            // CHW format: data is stored as [C0H0W0, C0H0W1, ..., C0H1W0, ..., C1H0W0, ...]
+            int chw_idx = c * height * width + h * width + w;
+            // HWC format: data is stored as [H0W0C0, H0W0C1, H0W0C2, H0W1C0, ...]
+            int hwc_idx = h * width * 3 + w * 3 + c;
+            h_img_hwc[hwc_idx] = static_cast<uint8_t>(h_img[chw_idx] * 255.0f);
+          }
         }
       }
-    }
 
-    cv::Mat vis_image(height, width, CV_8UC3, h_img_hwc.data());
-    cv::imshow("Visualization", vis_image);
-    cv::waitKey(0);
+      cv::Mat vis_image(height, width, CV_8UC3, h_img_hwc.data());
+      
+      // Add frame counter to the image
+      std::string frame_text = "Frame: " + std::to_string(frame_count);
+      cv::putText(vis_image, frame_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
+      
+      cv::imshow("Visualization", vis_image);
+      
+      // Wait for key press
+      char key = cv::waitKey(0);
+      if (key == 'q' || key == 'Q') {
+        break;
+      }
+      
+      frame_count++;
+    }
 
 
     cv::destroyAllWindows();

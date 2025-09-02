@@ -9,9 +9,9 @@ public:
 
   ~FastGSRasterizer() override;
 
-  void forward(const RasterizeParamsRuntime& params) override;
+  void forward(const RasterizeContext& params) override;
 
-  void backward(const RasterizeParamsRuntime& params) override;
+  void backward(const RasterizeContext& params) override;
 
   void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians) override;
   

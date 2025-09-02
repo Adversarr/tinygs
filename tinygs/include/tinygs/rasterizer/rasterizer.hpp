@@ -5,7 +5,7 @@
 
 namespace tinygs {
 
-struct RasterizeParamsRuntime {
+struct RasterizeContext {
   /// If true, the rasterizer will prepare the gradients for 
   ///    - mat3x3 K;
   ///    - mat4x4 w2c;
@@ -21,6 +21,8 @@ struct RasterizeParamsRuntime {
 
   GPUBatchInput fwd_input;
   GPUBatchOutput fwd_output;
+  GPUBatchInput grad_input;
+  GPUBatchOutput grad_output;
   std::shared_ptr<GPUGaussian3d> gaussians_grad;
 };
 
@@ -30,8 +32,9 @@ public:
 
   virtual ~RasterizerBase() = default;
 
-  virtual void forward(const RasterizeParamsRuntime& params) = 0;
-  virtual void backward(const RasterizeParamsRuntime& params) = 0;
+  virtual void forward(const RasterizeContext& params) = 0;
+
+  virtual void backward(const RasterizeContext& params) = 0;
 
   /// Called when the gaussians are changed. (especially the number of gaussians)
   virtual void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians);

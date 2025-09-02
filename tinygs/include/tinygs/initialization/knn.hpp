@@ -6,6 +6,7 @@
 #include "tinygs/initialization/initialization.hpp"
 
 namespace tinygs {
+
 struct KnnParameters {
   int num_neighbors = 3;           // Number of neighbors to consider for distance calculation
   float min_distance = 1e-7f;      // Minimum distance threshold

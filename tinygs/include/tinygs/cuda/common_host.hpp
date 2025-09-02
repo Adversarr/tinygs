@@ -259,7 +259,17 @@ std::string type_to_string();
 
 template <typename T, uint32_t N, size_t A>
 std::string to_string(const tvec<T, N, A>& v) {
-	return fmt::format("tvec<{}, {}, {}>({})", type_to_string<T>(), N, A, join(v, ", "));
+  if constexpr (N == 1) {
+    return fmt::format("tvec<{}, {}, {}>({})", type_to_string<T>(), N, A, v[0]);
+  } else if constexpr (N == 2) {
+    return fmt::format("tvec<{}, {}, {}>({}, {})", type_to_string<T>(), N, A, v[0], v[1]);
+  } else if constexpr (N == 3) {
+    return fmt::format("tvec<{}, {}, {}>({}, {}, {})", type_to_string<T>(), N, A, v[0], v[1], v[2]);
+  } else if constexpr (N == 4) {
+    return fmt::format("tvec<{}, {}, {}>({}, {}, {}, {})", type_to_string<T>(), N, A, v[0], v[1], v[2], v[3]);
+  } else {
+    return fmt::format("tvec<{}, {}, {}>({})", type_to_string<T>(), N, A, join(v.elems, ", "));
+  }
 }
 
 template <typename T, uint32_t N, uint32_t M>
