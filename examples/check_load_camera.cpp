@@ -34,7 +34,7 @@ int main() {
     tinygs::ImageShape shape;
     shape.width = width;
     shape.height = height;
-    shape.channels = 3;
+    shape.channel = 3;
     
     auto start = std::chrono::system_clock::now();
     std::shared_ptr<tinygs::PngFolderDataset> dataset = std::make_shared<tinygs::PngFolderDataset>(

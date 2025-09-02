@@ -10,10 +10,10 @@ enum class ImageFormat {
 
 struct ImageShape {
   uint16_t width, height;
-  uint16_t channels; // 3, 4 is supported.
+  uint16_t channel; // 3, 4 is supported.
 
   TINYGS_HOST_DEVICE bool operator==(const ImageShape& other) const noexcept {
-    return width == other.width && height == other.height && channels == other.channels;
+    return width == other.width && height == other.height && channel == other.channel;
   }
 
   TINYGS_HOST_DEVICE bool operator!=(const ImageShape& other) const noexcept {
@@ -22,7 +22,7 @@ struct ImageShape {
 };
 
 inline std::string to_string(const ImageShape& shape) {
-  return fmt::format("ImageShape{{width={}, height={}, channels={}}}", shape.width, shape.height, shape.channels);
+  return fmt::format("ImageShape{{width={}, height={}, channels={}}}", shape.width, shape.height, shape.channel);
 }
 
 inline std::string to_string(const ImageFormat& format) {
@@ -42,6 +42,10 @@ template <typename T> struct Image {
 
   TINYGS_HOST_DEVICE explicit operator bool() const noexcept {
     return data != nullptr;
+  }
+
+  TINYGS_HOST_DEVICE uint32_t size() const noexcept {
+    return shape.width * shape.height * shape.channel;
   }
 };
 

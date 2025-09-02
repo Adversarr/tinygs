@@ -18,7 +18,7 @@ std::shared_ptr<tinygs::PngFolderDataset>& create_test_dataset() {
     tinygs::ImageShape shape;
     shape.width = width;
     shape.height = height;
-    shape.channels = 3;
+    shape.channel = 3;
 
     dataset = std::make_shared<tinygs::PngFolderDataset>(
         data_path + "inputs/images_480x640_1", camera_extrinsics_path,

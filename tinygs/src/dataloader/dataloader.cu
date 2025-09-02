@@ -14,7 +14,7 @@ void transfer_gpu(cudaStream_t stream, const Image<float> &gpu_data,
 
   uint32_t height = gpu_data.shape.height;
   uint32_t width = gpu_data.shape.width;
-  uint32_t channels = gpu_data.shape.channels;
+  uint32_t channels = gpu_data.shape.channel;
   uint32_t total_elements = height * width * channels;
 
   // TODO: support for multiple shapes

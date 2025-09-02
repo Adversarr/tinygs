@@ -40,7 +40,7 @@ int main() {
     tinygs::ImageShape shape;
     shape.width = width;
     shape.height = height;
-    shape.channels = 3;
+    shape.channel = 3;
     std::shared_ptr<tinygs::PngFolderDataset> dataset = std::make_shared<tinygs::PngFolderDataset>(
         DATA_PATH + "inputs/images_480x640_1", camera_extrinsics_path,
         camera_intrinsics_path, shape);
@@ -62,8 +62,8 @@ int main() {
     tinygs::GPUMemory<float> out_alpha(width * height * 1);
     io.output.image.shape.width = io.output.alpha.shape.width = width;
     io.output.image.shape.height = io.output.alpha.shape.height = height;
-    io.output.image.shape.channels = 3;
-    io.output.alpha.shape.channels = 1;
+    io.output.image.shape.channel = 3;
+    io.output.alpha.shape.channel = 1;
     io.output.image.format = io.output.alpha.format = tinygs::ImageFormat::HWC;
     io.output.image.data = out_image.data();
     io.output.alpha.data = out_alpha.data();

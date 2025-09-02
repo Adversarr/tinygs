@@ -99,7 +99,7 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
     throw std::runtime_error("No PNG files found in folder: " + folder_path);
   }
 
-  if (m_image_shape.channels != 3) {
+  if (m_image_shape.channel != 3) {
     throw std::runtime_error("Only 3 channels (RGB) are supported now.");
   }
 
@@ -110,13 +110,13 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
   }
 
   // Allocate pinned memory for all images
-  const size_t total_size = m_size * m_image_shape.height * m_image_shape.width * m_image_shape.channels * sizeof(float);
+  const size_t total_size = m_size * m_image_shape.height * m_image_shape.width * m_image_shape.channel * sizeof(float);
   CUDA_CHECK_THROW(cudaMallocHost(&m_data, total_size));
 
   // Load all images into memory
 #pragma omp parallel for
   for (size_t i = 0; i < m_size; ++i) {
-    load_single_image(i, m_image_paths[i], m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channels);
+    load_single_image(i, m_image_paths[i], m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
   }
   auto end = std::chrono::steady_clock::now();
 
@@ -144,7 +144,7 @@ Data PngFolderDataset::operator[](size_t index) const {
   Data data;
 
   // Set up image data
-  const float* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channels;
+  const float* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
   data.image.shape = image_shape();
   data.image.format = ImageFormat::CHW;  // Converted to CHW format
   data.image.data = image_ptr;

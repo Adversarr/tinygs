@@ -32,7 +32,7 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) noexcept {
   gpu_input.w2c = host_data.w2c;
   
   // Allocate GPU memory for the image if needed
-  size_t image_size = gpu_input.height * gpu_input.width * host_data.image.shape.channels;
+  size_t image_size = gpu_input.height * gpu_input.width * host_data.image.shape.channel;
   m_gpu_memory.resize(image_size);
   
   // Create GPU image structure
