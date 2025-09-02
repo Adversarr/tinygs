@@ -2,10 +2,12 @@
 #include <thrust/host_vector.h>
 
 #include "tinygs/core/gpu_gaussian.hpp"
+#include "utils/scope_timer.hpp"
 
 namespace tinygs {
 
 void GPUGaussian3d::copy_from_host(const Gaussian3d& gaussians) {
+  TINYGS_TIMER("GPUGaussian3d::copy_from_host");
   const size_t num_gaussians = gaussians.means_opacities.size();
 
   // Resize device vectors
@@ -14,6 +16,7 @@ void GPUGaussian3d::copy_from_host(const Gaussian3d& gaussians) {
   m_scales.resize(num_gaussians);
   m_sh_coefficients.resize(num_gaussians * kMaxSphericalHarmonicsCoefficients);
 
+  // TODO: directly copy use cudaMemcpy if the input is already in pinned memory
   // Copy directly from SoA host vectors to device vectors
   thrust::copy(gaussians.means_opacities.begin(), gaussians.means_opacities.end(), m_means_opacities.begin());
   thrust::copy(gaussians.rotations.begin(), gaussians.rotations.end(), m_rotations.begin());
@@ -22,6 +25,7 @@ void GPUGaussian3d::copy_from_host(const Gaussian3d& gaussians) {
 }
 
 void GPUGaussian3d::copy_to_host(Gaussian3d& gaussians) {
+  TINYGS_TIMER("GPUGaussian3d::co");
   const size_t num_gaussians = m_means_opacities.size();
 
   // Resize host container vectors

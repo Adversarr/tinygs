@@ -43,7 +43,7 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) noexcept {
   
   // Prepare GPU batch output
   GPUBatchOutput gpu_output;
-  gpu_output.image = Image<const float>{
+  gpu_output.image = Image<float>{
     gpu_image.shape,
     gpu_image.format,
     gpu_image.data

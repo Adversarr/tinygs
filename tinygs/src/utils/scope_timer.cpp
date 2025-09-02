@@ -28,17 +28,18 @@ void GlobalTimerRegistry::print_all_stats() const {
     return;
   }
   
+  int expected_max_func_name_length = 50;
   std::cout << "\n=== Timer Statistics ===\n";
-  std::cout << std::left << std::setw(25) << "Timer Name" 
+  std::cout << std::left << std::setw(expected_max_func_name_length) << "Timer Name" 
             << std::setw(10) << "Count"
             << std::setw(12) << "Total (ms)"
             << std::setw(12) << "Avg (ms)"
             << std::setw(12) << "Min (ms)"
             << std::setw(12) << "Max (ms)" << "\n";
-  std::cout << std::string(83, '-') << "\n";
+  std::cout << std::string(expected_max_func_name_length + 53, '-') << "\n";
   
   for (const auto& [name, stats] : timers_) {
-    std::cout << std::left << std::setw(25) << name
+    std::cout << std::left << std::setw(expected_max_func_name_length) << name.substr(0, expected_max_func_name_length)
               << std::setw(10) << stats.count
               << std::setw(12) << std::fixed << std::setprecision(3) << stats.total_time
               << std::setw(12) << std::fixed << std::setprecision(3) << stats.average_time()

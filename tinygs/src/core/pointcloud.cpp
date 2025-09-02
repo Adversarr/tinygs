@@ -1,5 +1,6 @@
 #include "tinygs/core/pointcloud.hpp"
 #include "cuda/common_host.hpp"
+#include "utils/scope_timer.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -12,6 +13,7 @@ namespace tinygs {
 static constexpr float RGB_NORMALIZATION_FACTOR = 255.0f;
 
 PointCloud load_from_colmap_file(const std::string &filename) {
+  TINYGS_TIMER("load_from_colmap_file");
   PointCloud pointcloud;
   std::ifstream file(filename);
 

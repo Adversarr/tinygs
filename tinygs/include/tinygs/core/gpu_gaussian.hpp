@@ -16,7 +16,7 @@ public:
 
   void copy_to_host(Gaussian3d& gaussians);
 
-  size_t num_gaussians() const { return m_means_opacities.size(); }
+  size_t size() const { return m_means_opacities.size(); }
 
   const thrust::device_vector<vec4>& means_opacities() const { return m_means_opacities; }
   const thrust::device_vector<vec4>& rotations() const { return m_rotations; }

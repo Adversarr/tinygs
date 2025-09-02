@@ -7,16 +7,19 @@ namespace tinygs {
 
 struct GPUBatchInput {
   uint32_t batch_size;  // Only 1 is support for now.
-  uint32_t height, width;
+  uint32_t width, height;
   float near, far;
   mat3x3 K;
   mat4x4 w2c;
+
+  // TODO: support multiple views.
   // // Ks is nullptr, K is used. Use Ks otherwise.
   // const float* Ks;
 };
 
 struct GPUBatchOutput {
-  Image<const float> image;
+  Image<float> image;
+  Image<float> alpha;
 };
 
 /**

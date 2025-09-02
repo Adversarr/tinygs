@@ -9,9 +9,12 @@ class InitializationBase {
 public:
   InitializationBase() = default;
   virtual ~InitializationBase() = default;
-  virtual void initialize(PointCloud& pointcloud) = 0;
+  virtual void initialize(const PointCloud& pointcloud) = 0;
 
   const Gaussian3d& gaussians() const { return m_gaussians; }
+
+  virtual void set_parameters(const json& params) = 0;
+  virtual json get_parameters() const = 0;
 
 protected:
   Gaussian3d m_gaussians;

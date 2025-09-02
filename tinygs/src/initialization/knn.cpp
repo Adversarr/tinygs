@@ -11,6 +11,7 @@
 #include "nanoflann.hpp"
 #include "tinygs/initialization/knn.hpp"
 #include "utils/scope_timer.hpp"
+#include <nlohmann/json.hpp>
 
 namespace tinygs {
 
@@ -48,6 +49,7 @@ std::vector<float> KnnInitialization::compute_mean_neighbor_distances(const std:
   KDTree index(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
   index.buildIndex();
 
+#pragma omp parallel for
   for (size_t i = 0; i < num_points; ++i) {
     const float query_pt[3] = {points[i].x, points[i].y, points[i].z};
 
@@ -55,9 +57,9 @@ std::vector<float> KnnInitialization::compute_mean_neighbor_distances(const std:
     std::vector<size_t> ret_indices(num_results);
     std::vector<float> out_dists_sqr(num_results);
 
-    nanoflann::KNNResultSet<float> resultSet(num_results);
-    resultSet.init(&ret_indices[0], &out_dists_sqr[0]);
-    index.findNeighbors(resultSet, &query_pt[0], nanoflann::SearchParameters(10));
+    nanoflann::KNNResultSet<float> result_set(num_results);
+    result_set.init(&ret_indices[0], &out_dists_sqr[0]);
+    index.findNeighbors(result_set, &query_pt[0], nanoflann::SearchParameters(10));
 
     float sum_dist = 0.0f;
     int valid_neighbors = 0;
@@ -104,8 +106,8 @@ vec3 KnnInitialization::rgb_to_sh(const vec3& rgb) const {
   return (rgb - vec3(0.5f)) / kInvSH;
 }
 
-void KnnInitialization::initialize(PointCloud& pointcloud) {
-  ScopeTimer timer("KnnInitialization::initialize");
+void KnnInitialization::initialize(const PointCloud& pointcloud) {
+  TINYGS_TIMER("KnnInitialization::initialize");
   std::vector<vec3> positions;
   std::vector<vec3> colors;
 
@@ -182,8 +184,12 @@ void KnnInitialization::initialize(PointCloud& pointcloud) {
     m_gaussians.scales[i] = vec3(log_scale, log_scale, log_scale);
 
     // Set spherical harmonics coefficients
-    vec3 sh_color = rgb_to_sh(colors[i]);
+    // vec3 sh_color = rgb_to_sh(colors[i]);
+    vec3 sh_color = colors[i]; // Use raw color for better initialization
     m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients] = sh_color;
+    for (int j = 1; j < kMaxSphericalHarmonicsCoefficients; ++j) {
+      m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients + j] = vec3(0.0f);
+    }
 
     // Initialize SH coefficients array
     for (int j = 1; j < kMaxSphericalHarmonicsCoefficients; ++j) {
@@ -194,6 +200,50 @@ void KnnInitialization::initialize(PointCloud& pointcloud) {
   log_info("Initialized {} gaussians with KNN method", m_gaussians.means_opacities.size());
   log_info("Scene scale: {}", scene_scale);
   log_info("SH degree: {}", m_params.sh_degree);
+}
+
+void KnnInitialization::set_parameters(const json& params) {
+  if (params.contains("num_neighbors")) {
+    m_params.num_neighbors = params["num_neighbors"].get<int>();
+  }
+  if (params.contains("min_distance")) {
+    m_params.min_distance = params["min_distance"].get<float>();
+  }
+  if (params.contains("default_distance")) {
+    m_params.default_distance = params["default_distance"].get<float>();
+  }
+  if (params.contains("init_scaling")) {
+    m_params.init_scaling = params["init_scaling"].get<float>();
+  }
+  if (params.contains("init_opacity")) {
+    m_params.init_opacity = params["init_opacity"].get<float>();
+  }
+  if (params.contains("sh_degree")) {
+    m_params.sh_degree = params["sh_degree"].get<int>();
+  }
+  if (params.contains("use_random_init")) {
+    m_params.use_random_init = params["use_random_init"].get<bool>();
+  }
+  if (params.contains("random_num_points")) {
+    m_params.random_num_points = params["random_num_points"].get<int>();
+  }
+  if (params.contains("random_extent")) {
+    m_params.random_extent = params["random_extent"].get<float>();
+  }
+}
+
+json KnnInitialization::get_parameters() const {
+  json params;
+  params["num_neighbors"] = m_params.num_neighbors;
+  params["min_distance"] = m_params.min_distance;
+  params["default_distance"] = m_params.default_distance;
+  params["init_scaling"] = m_params.init_scaling;
+  params["init_opacity"] = m_params.init_opacity;
+  params["sh_degree"] = m_params.sh_degree;
+  params["use_random_init"] = m_params.use_random_init;
+  params["random_num_points"] = m_params.random_num_points;
+  params["random_extent"] = m_params.random_extent;
+  return params;
 }
 
 }  // namespace tinygs

@@ -29,9 +29,9 @@ struct CameraIntrinsics {
   // Get 3x3 intrinsics matrix K
   TINYGS_HOST_DEVICE mat3x3 get_K() const {
     return mat3x3{
-      fx, 0.0f, cx,
-      0.0f, fy, cy,
-      0.0f, 0.0f, 1.0f
+      fx, 0.0f, 0.f,
+      0.0f, fy, 0.f,
+      cx,   cy, 1.0f
     };
   }
   
@@ -114,9 +114,9 @@ struct CameraExtrinsics {
   // Get world-to-camera transformation matrix
   TINYGS_HOST_DEVICE mat4x4 get_w2c() const {
     mat4x4 w2c{to_mat3(m_q)};
-    w2c[0][3] = m_t[0];
-    w2c[1][3] = m_t[1];
-    w2c[2][3] = m_t[2];
+    w2c[3][0] = m_t[0];
+    w2c[3][1] = m_t[1];
+    w2c[3][2] = m_t[2];
     return w2c;
   }
 

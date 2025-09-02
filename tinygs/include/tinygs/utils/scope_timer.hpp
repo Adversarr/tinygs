@@ -71,4 +71,6 @@ private:
 // Convenience macro for easy usage
 #define TINYGS_TIMER(name) tinygs::ScopeTimer timer_##__LINE__(name)
 
+#define TINYGS_TIMER_THIS_FUNCTION() tinygs::ScopeTimer timer_this_function(__PRETTY_FUNCTION__)
+
 }  // namespace tinygs

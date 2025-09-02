@@ -15,7 +15,7 @@ struct KnnParameters {
   int sh_degree = 3;               // Spherical harmonics degree
   bool use_random_init = false;    // Whether to use random initialization
   int random_num_points = 100000;  // Number of points for random initialization
-  float random_extent = 6.0f;      // Extent for random initialization
+  float random_extent = 1.0f;      // Extent for random initialization
 };
 
 // Initialize the GS size to be the average dist of the K nearest neighbors
@@ -31,10 +31,14 @@ private:
 public:
   explicit KnnInitialization(const KnnParameters& params = KnnParameters{});
 
-  void initialize(PointCloud& pointcloud) override;
+  void initialize(const PointCloud& pointcloud) override;
 
   // Parameter accessors
-  void set_parameters(const KnnParameters& params) { m_params = params; }
-  const KnnParameters& get_parameters() const { return m_params; }
+  void set_knn_parameters(const KnnParameters& params) { m_params = params; }
+  const KnnParameters& get_knn_parameters() const { return m_params; }
+
+  // JSON interface overrides
+  void set_parameters(const json& params) override;
+  json get_parameters() const override;
 };
 }  // namespace tinygs

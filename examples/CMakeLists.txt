@@ -17,4 +17,8 @@ if(OpenCV_FOUND)
     tinygs_add_example(vis_dataloader)
     target_link_libraries(vis_dataloader PRIVATE ${OpenCV_LIBS})
     target_include_directories(vis_dataloader PRIVATE ${OpenCV_INCLUDE_DIRS})
+
+    tinygs_add_example(vis_init)
+    target_link_libraries(vis_init PRIVATE ${OpenCV_LIBS})
+    target_include_directories(vis_init PRIVATE ${OpenCV_INCLUDE_DIRS})
 endif()

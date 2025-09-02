@@ -69,7 +69,8 @@ public:
 	using View = T*;
 	using ConstView = const T*;
 
-	GPUMemory() {}
+	GPUMemory() =default;
+
 	GPUMemory(size_t size, bool managed = false) : m_managed{managed} {
 		resize(size);
 	}
@@ -733,4 +734,96 @@ inline void free_all_gpu_memory_arenas() {
   global_gpu_memory_arenas().clear();
 }
 
-} // namespace tinygs
+template <typename T>
+class GPUBuffer {
+public:
+	/**
+	 * @brief Create a GPUBuffer object on global per-stream arena.
+	 * 
+	 * @param stream 
+	 * @param n_elems 
+	 */
+  GPUBuffer(cudaStream_t stream, size_t n_elems) : m_n_elems(n_elems) {
+    m_arena_alloc = std::make_unique<GPUMemoryArena::Allocation>(allocate_workspace(stream, n_elems * sizeof(T)));
+    m_data = static_cast<T*>(m_arena_alloc->data());
+  }
+
+	/**
+	 * @brief Create a GPUBuffer object on custom arena.
+	 * 
+	 * @param arena 
+	 * @param n_elems 
+	 * @param stream 
+	 */
+  explicit GPUBuffer(std::shared_ptr<GPUMemoryArena> arena, size_t n_elems, cudaStream_t stream = nullptr) :
+      m_arena_alloc(std::make_unique<GPUMemoryArena::Allocation>(
+          GPUMemoryArena::Allocation{stream, arena->allocate(n_elems * sizeof(T)), arena})) {
+    m_data = reinterpret_cast<T*>(m_arena_alloc->data());
+  }
+
+	/**
+	 * @brief Create a GPUBuffer object directly.
+	 * 
+	 * @param n_elems 
+	 */
+  explicit GPUBuffer(size_t n_elems) : m_n_elems(n_elems) {
+    m_malloc = std::make_unique<GPUMemory<T>>(n_elems);
+    m_data = m_malloc->data();
+  }
+
+  GPUBuffer() = default;
+
+	// handle externally allocated
+	explicit GPUBuffer(T* data, size_t n_elems) : m_data(data), m_n_elems(n_elems) {}
+
+  ~GPUBuffer() = default; // The allocation is handled automatically.
+
+	GPUBuffer(GPUBuffer&& other) noexcept {
+    std::swap(m_data, other.m_data);
+    std::swap(m_n_elems, other.m_n_elems);
+    std::swap(m_arena_alloc, other.m_arena_alloc);
+    std::swap(m_malloc, other.m_malloc);
+  }
+
+	GPUBuffer& operator=(GPUBuffer&& other) noexcept {
+    std::swap(m_data, other.m_data);
+    std::swap(m_n_elems, other.m_n_elems);
+    std::swap(m_arena_alloc, other.m_arena_alloc);
+    std::swap(m_malloc, other.m_malloc);
+    return *this;
+  }
+
+  T* data() { return m_data; }
+  const T* data() const { return m_data; }
+  size_t size() const { return m_n_elems; }
+  inline bool is_arena_alloc() const { return m_arena_alloc != nullptr; }
+  inline bool is_malloc() const { return m_malloc != nullptr; }
+	inline bool is_externally_alloc() const { return !is_arena_alloc() && !is_malloc(); }
+
+  void memcpy(const std::vector<T>& host_data) {
+    CUDA_CHECK_THROW(cudaMemcpy(m_data, host_data.data(), sizeof(T) * m_n_elems, cudaMemcpyHostToDevice));
+  }
+  void memcpy_async(cudaStream_t stream, const std::vector<T>& host_data) {
+    CUDA_CHECK_THROW(cudaMemcpyAsync(m_data, host_data.data(), sizeof(T) * m_n_elems, cudaMemcpyHostToDevice, stream));
+  }
+	void memset(int value) {
+		CUDA_CHECK_THROW(cudaMemset(m_data, value, sizeof(T) * m_n_elems));
+	}
+	void memset_async(cudaStream_t stream, int value) {
+		CUDA_CHECK_THROW(cudaMemsetAsync(m_data, value, sizeof(T) * m_n_elems, stream));
+	}
+
+	std::vector<T> to_cpu() {
+		std::vector<T> host_data(m_n_elems);
+		CUDA_CHECK_THROW(cudaMemcpy(host_data.data(), m_data, sizeof(T) * m_n_elems, cudaMemcpyDeviceToHost));
+		return host_data;
+	}
+
+private:
+  size_t m_n_elems = 0;
+  T* m_data{nullptr};
+  std::unique_ptr<GPUMemoryArena::Allocation> m_arena_alloc{nullptr};
+  std::unique_ptr<GPUMemory<T>> m_malloc{nullptr};
+};
+
+}  // namespace tinygs

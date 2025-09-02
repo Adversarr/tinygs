@@ -9,6 +9,7 @@
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/stbi/stbi_wrapper.h"
+#include "utils/scope_timer.hpp"
 
 namespace tinygs {
 
@@ -91,6 +92,7 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
     m_cameras(load_cameras(extrinsics_file_path)), 
     m_camera_intrinsics(load_intrinsics(intrinsics_file_path)),
     m_image_shape(image_shape) {
+  TINYGS_TIMER("PngFolderDataset::PngFolderDataset");
   auto start = std::chrono::steady_clock::now();
   m_size = std::min(m_image_paths.size(), m_cameras.size());
   if (m_size == 0) {
@@ -112,7 +114,7 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
   CUDA_CHECK_THROW(cudaMallocHost(&m_data, total_size));
 
   // Load all images into memory
-  #pragma omp parallel for
+#pragma omp parallel for
   for (size_t i = 0; i < m_size; ++i) {
     load_single_image(i, m_image_paths[i], m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channels);
   }
@@ -142,7 +144,7 @@ Data PngFolderDataset::operator[](size_t index) const {
   Data data;
 
   // Set up image data
-  float* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channels;
+  const float* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channels;
   data.image.shape = image_shape();
   data.image.format = ImageFormat::CHW;  // Converted to CHW format
   data.image.data = image_ptr;
