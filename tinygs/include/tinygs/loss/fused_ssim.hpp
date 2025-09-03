@@ -6,12 +6,17 @@ namespace tinygs {
 template <typename T>
 class FusedSSIMLoss final : public LossBase<T> {
 public:
+  FusedSSIMLoss();
+  virtual ~FusedSSIMLoss();
 
   void evaluate(LossContext<T> ctx) override;
+
+  struct Impl;
 
 private:
   float m_c1 = 0.01f * 0.01f;
   float m_c2 = 0.03f * 0.03f;
+  std::unique_ptr<Impl> m_impl;
 };
 
 }

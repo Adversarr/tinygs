@@ -1,3 +1,4 @@
+#include "cuda/gpu_memory.hpp"
 #include <cooperative_groups.h>
 #include <algorithm>
 #include <iostream>
@@ -698,80 +699,80 @@ __global__ void fusedssim_fwd_kernel(int H, int W, int CH, float C1, float C2,
     }
 }
 
-__global__ void
-fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
-                               const float *__restrict__ img1, // pred
-                               const float *__restrict__ img2, // targ
-                               float *__restrict__ ssim_map,   // out
-                               float *__restrict__ dL_dimg1,   // grad
-                               float scale) {
-  auto block = cg::this_thread_block();
-  const int bIdx = block.group_index().z; // batch index
-  const int pix_y = block.group_index().y * BLOCK_Y + block.thread_index().y;
-  const int pix_x = block.group_index().x * BLOCK_X + block.thread_index().x;
-  const int pix_id = pix_y * W + pix_x;
-  const int num_pix = H * W;
+__global__ void fusedssim_fwd_bwd_kernel_fused(
+    int H, int W, int CH, float C1, float C2, const float *img1,
+    const float *img2, float *ssim_map, float *dL_dimg1, float scale,
+    // we still need these buffers to exchange data between blocks.
+    float *__restrict__ dm_dmu1, float *__restrict__ dm_dsigma1_sq,
+    float *__restrict__ dm_dsigma12) {
+    auto block = cg::this_thread_block();
+    const int bIdx   = block.group_index().z;  // batch index
+    const int pix_y  = block.group_index().y * BLOCK_Y + block.thread_index().y;
+    const int pix_x  = block.group_index().x * BLOCK_X + block.thread_index().x;
+    const int pix_id = pix_y * W + pix_x;
+    const int num_pix = H * W;
 
-  // Shared memory for the tile (img1, img2)
-  __shared__ float sTile[SHARED_Y][SHARED_X][2];
-  // After horizontal pass, store partial sums here
-  // xconv[y][x] -> (sumX, sumX^2, sumY, sumY^2, sumXY)
-  __shared__ float xconv[CONV_Y][CONV_X][5];
+    /// NOTE: Efficiently reuse the shared memory for the fused data:
+    // __shared__ float sTile[SHARED_Y][SHARED_X][2];
+    // __shared__ float xconv[CONV_Y][CONV_X][5];
+    // Shared memory for the tile (img1, img2)
+    __shared__ union {
+        float sTile[SHARED_Y][SHARED_X][2];
+        float sData[3][SHARED_Y][SHARED_X];
+    };
+    // After horizontal pass, store partial sums here
+    // xconv[y][x] -> (sumX, sumX^2, sumY, sumY^2, sumXY)
+    __shared__ union {
+        float xconv[CONV_Y][CONV_X][5];
+        float sScratch[CONV_Y][CONV_X][3];
+    };
 
-  // Shared memory for backward pass - store partial derivatives
-  __shared__ float sGradData[3][SHARED_Y][SHARED_X];
-  __shared__ float sGradScratch[CONV_Y][CONV_X][3];
+    // Each block processes B x C sub-batches. We loop over channels:
+    for (int c = 0; c < CH; ++c) {
+        // ------------------------------------------------------------
+        // 1) Load (img1, img2) tile + halo into shared memory
+        // ------------------------------------------------------------
+        {
+            const int tileSize = SHARED_Y * SHARED_X;
+            const int threads = BLOCK_X * BLOCK_Y;
+            const int steps = (tileSize + threads - 1) / threads;
 
-  // Each block processes B x C sub-batches. We loop over channels:
-  for (int c = 0; c < CH; ++c) {
-    float p1 = 0.f, p2 = 0.f;
-    if (pix_x < W && pix_y < H) {
-      p1 = get_pix_value(img1, bIdx, c, pix_y, pix_x, CH, H, W);
-      p2 = get_pix_value(img2, bIdx, c, pix_y, pix_x, CH, H, W);
-    }
+            const int tileStartY = block.group_index().y * BLOCK_Y;
+            const int tileStartX = block.group_index().x * BLOCK_X;
 
-    // ============================================================
-    // FORWARD PASS
-    // ============================================================
+            for (int s = 0; s < steps; ++s) {
+                int tid = s * threads + block.thread_rank();
+                if (tid < tileSize) {
+                    int local_y = tid / SHARED_X;
+                    int local_x = tid % SHARED_X;
+                    int gy = tileStartY + local_y - HALO;
+                    int gx = tileStartX + local_x - HALO;
 
-    // Load (img1, img2) tile + halo into shared memory
-    {
-      const int tileSize = SHARED_Y * SHARED_X;
-      const int threads = BLOCK_X * BLOCK_Y;
-      const int steps = (tileSize + threads - 1) / threads;
+                    float X = get_pix_value(img1, bIdx, c, gy, gx, CH, H, W);
+                    float Y = get_pix_value(img2, bIdx, c, gy, gx, CH, H, W);
 
-      const int tileStartY = block.group_index().y * BLOCK_Y;
-      const int tileStartX = block.group_index().x * BLOCK_X;
-
-      for (int s = 0; s < steps; ++s) {
-        int tid = s * threads + block.thread_rank();
-        if (tid < tileSize) {
-          int local_y = tid / SHARED_X;
-          int local_x = tid % SHARED_X;
-          int gy = tileStartY + local_y - HALO;
-          int gx = tileStartX + local_x - HALO;
-
-          float X = get_pix_value(img1, bIdx, c, gy, gx, CH, H, W);
-          float Y = get_pix_value(img2, bIdx, c, gy, gx, CH, H, W);
-
-          sTile[local_y][local_x][0] = X;
-          sTile[local_y][local_x][1] = Y;
+                    sTile[local_y][local_x][0] = X;
+                    sTile[local_y][local_x][1] = Y;
+                }
+            }
         }
-      }
-    }
-    block.sync();
+        block.sync();
 
-    // Horizontal convolution (11x1) in shared memory
-    {
-      int ly = threadIdx.y;
-      int lx = threadIdx.x + HALO; // skip left halo
+        // ------------------------------------------------------------
+        // 2) Horizontal convolution (11x1) in shared memory
+        //    We'll accumulate symmetrical pairs around center.
+        // ------------------------------------------------------------
+        {
+            int ly = threadIdx.y;
+            int lx = threadIdx.x + HALO;  // skip left halo
 
-      float sumX = 0.f;
-      float sumX2 = 0.f;
-      float sumY = 0.f;
-      float sumY2 = 0.f;
-      float sumXY = 0.f;
+            float sumX   = 0.f;
+            float sumX2  = 0.f;
+            float sumY   = 0.f;
+            float sumY2  = 0.f;
+            float sumXY  = 0.f;
 
+            // #pragma unroll for those 5 pairs
 #pragma unroll
             for (int d = 1; d <= HALO; ++d) {
                 float w = cGauss[HALO - d];
@@ -846,8 +847,9 @@ fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
         }
         block.sync();
 
-        // Vertical convolution (1x11) + final SSIM + compute partial derivatives
-        float d_m_dmu1 = 0.f, d_m_dsigma1_sq = 0.f, d_m_dsigma12 = 0.f;
+        // ------------------------------------------------------------
+        // 3) Vertical convolution (1x11) + final SSIM
+        // ------------------------------------------------------------
         {
             int ly = threadIdx.y + HALO;
             int lx = threadIdx.x;
@@ -895,26 +897,47 @@ fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
                 float val = (C_ * D_) / (A * B);
 
                 int global_idx = bIdx * CH * num_pix + c * num_pix + pix_id;
-                ssim_map[global_idx] = fmaf(val, scale, ssim_map[global_idx]);
+                ssim_map[global_idx] += val * scale; // loss
 
-                // Compute partial derivatives for backward pass
-                d_m_dmu1 = (
-                    (mu2 * 2.f * D_) / (A * B)
-                    - (mu2 * 2.f * C_) / (A * B)
-                    - (mu1 * 2.f * C_ * D_) / (A * A * B)
-                    + (mu1 * 2.f * C_ * D_) / (A * B * B)
-                );
-                d_m_dsigma1_sq = (-C_ * D_) / (A * B * B);
-                d_m_dsigma12   = (2.f * C_) / (A * B);
+                if (dm_dmu1) {
+                    // partial derivatives
+                    float d_m_dmu1 = (
+                        (mu2 * 2.f * D_) / (A * B)
+                        - (mu2 * 2.f * C_) / (A * B)
+                        - (mu1 * 2.f * C_ * D_) / (A * A * B)
+                        + (mu1 * 2.f * C_ * D_) / (A * B * B)
+                    );
+                    float d_m_dsigma1_sq = (-C_ * D_) / (A * B * B);
+                    float d_m_dsigma12   = (2.f * C_) / (A * B);
+
+                    dm_dmu1[global_idx]       = d_m_dmu1;
+                    dm_dsigma1_sq[global_idx] = d_m_dsigma1_sq;
+                    dm_dsigma12[global_idx]   = d_m_dsigma12;
+                }
             }
         }
-        block.sync();
+    }
 
-        // ============================================================
-        // BACKWARD PASS
-        // ============================================================
-        
-        // Load gradient data and fuse with partial derivatives
+    // auto block = cg::this_thread_block();
+    // const int pix_y  = block.group_index().y * BLOCK_Y + block.thread_index().y;
+    // const int pix_x  = block.group_index().x * BLOCK_X + block.thread_index().x;
+    // const int pix_id = pix_y * W + pix_x;
+    // const int num_pix = H * W;
+    // const int bIdx   = block.group_index().z;
+
+    // Shared memory for the fused data:
+    // [0]: dm_dmu1*dL, [1]: dm_dsigma1_sq*dL, [2]: dm_dsigma12*dL
+    // __shared__ float sData[3][SHARED_Y][SHARED_X];
+    // __shared__ float sScratch[CONV_Y][CONV_X][3];
+
+    for (int c = 0; c < CH; ++c) {
+        float p1 = 0.f, p2 = 0.f;
+        if (pix_x < W && pix_y < H) {
+            p1 = get_pix_value(img1, bIdx, c, pix_y, pix_x, CH, H, W);
+            p2 = get_pix_value(img2, bIdx, c, pix_y, pix_x, CH, H, W);
+        }
+
+        // (1) Load + fuse multiplication
         {
             const int start_y = block.group_index().y * BLOCK_Y;
             const int start_x = block.group_index().x * BLOCK_X;
@@ -930,29 +953,25 @@ fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
                 for (int col = lane_id; col < SHARED_X; col += 32) {
                     int gx = start_x + col - HALO;
 
-                    // For fused kernel, we assume dL_dmap = 1.0 (unit gradient)
-                    // In practice, this would come from upstream loss
-                    float chain = 1.0f;
-                    
-                    // Use the partial derivatives computed in forward pass
-                    float vmu, vs1, vs12;
-                    if (gx == pix_x && gy == pix_y && gx >= 0 && gx < W && gy >= 0 && gy < H) {
-                        vmu = d_m_dmu1;
-                        vs1 = d_m_dsigma1_sq;
-                        vs12 = d_m_dsigma12;
-                    } else {
-                        vmu = vs1 = vs12 = 0.0f;
+                    // dL_dmap == in_range ? 1 : 0;
+                    // float chain = get_pix_value(dL_dmap,      bIdx, c, gy, gx, CH, H, W);
+                    float chain = 0.f;
+                    if (gx >= 0 && gx < W && gy >= 0 && gy < H) {
+                        chain = 1.0f;
                     }
+                    float vmu   = get_pix_value(dm_dmu1,      bIdx, c, gy, gx, CH, H, W);
+                    float vs1   = get_pix_value(dm_dsigma1_sq,bIdx, c, gy, gx, CH, H, W);
+                    float vs12  = get_pix_value(dm_dsigma12,  bIdx, c, gy, gx, CH, H, W);
 
-                    sGradData[0][row][col] = vmu  * chain;
-                    sGradData[1][row][col] = vs1  * chain;
-                    sGradData[2][row][col] = vs12 * chain;
+                    sData[0][row][col] = vmu  * chain;
+                    sData[1][row][col] = vs1  * chain;
+                    sData[2][row][col] = vs12 * chain;
                 }
             }
         }
         block.sync();
 
-        // Horizontal pass for gradients
+        // (2) Horizontal pass
         {
             int ly = threadIdx.y;
             int lx = threadIdx.x + HALO;
@@ -965,13 +984,13 @@ fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
 #pragma unroll
                     for (int d = 1; d <= HALO; ++d) {
                         float w = cGauss[HALO - d];
-                        float left0  = sGradData[0][yy][lx - d];
-                        float left1  = sGradData[1][yy][lx - d];
-                        float left2  = sGradData[2][yy][lx - d];
+                        float left0  = sData[0][yy][lx - d];
+                        float left1  = sData[1][yy][lx - d];
+                        float left2  = sData[2][yy][lx - d];
 
-                        float right0 = sGradData[0][yy][lx + d];
-                        float right1 = sGradData[1][yy][lx + d];
-                        float right2 = sGradData[2][yy][lx + d];
+                        float right0 = sData[0][yy][lx + d];
+                        float right1 = sData[1][yy][lx + d];
+                        float right2 = sData[2][yy][lx + d];
 
                         accum0 += (left0 + right0) * w;
                         accum1 += (left1 + right1) * w;
@@ -980,23 +999,23 @@ fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
                     // center
                     {
                         float wc = cGauss[HALO];
-                        float c0 = sGradData[0][yy][lx];
-                        float c1 = sGradData[1][yy][lx];
-                        float c2 = sGradData[2][yy][lx];
+                        float c0 = sData[0][yy][lx];
+                        float c1 = sData[1][yy][lx];
+                        float c2 = sData[2][yy][lx];
                         accum0 += c0 * wc;
                         accum1 += c1 * wc;
                         accum2 += c2 * wc;
                     }
 
-                    sGradScratch[yy][threadIdx.x][0] = accum0;
-                    sGradScratch[yy][threadIdx.x][1] = accum1;
-                    sGradScratch[yy][threadIdx.x][2] = accum2;
+                    sScratch[yy][threadIdx.x][0] = accum0;
+                    sScratch[yy][threadIdx.x][1] = accum1;
+                    sScratch[yy][threadIdx.x][2] = accum2;
                 }
             }
         }
         block.sync();
 
-        // Vertical pass -> finalize dL/d(img1)
+        // (3) Vertical pass -> finalize dL/d(img1)
         if (pix_x < W && pix_y < H) {
             int ly = threadIdx.y + HALO;
             int lx = threadIdx.x;
@@ -1006,8 +1025,8 @@ fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
 #pragma unroll
             for (int d = 1; d <= HALO; ++d) {
                 float w = cGauss[HALO - d];
-                float* top = sGradScratch[ly - d][lx];
-                float* bot = sGradScratch[ly + d][lx];
+                float* top = sScratch[ly - d][lx];
+                float* bot = sScratch[ly + d][lx];
 
                 sum0 += (top[0] + bot[0]) * w;
                 sum1 += (top[1] + bot[1]) * w;
@@ -1016,7 +1035,7 @@ fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
             // center
             {
                 float wc = cGauss[HALO];
-                float* ctr = sGradScratch[ly][lx];
+                float* ctr = sScratch[ly][lx];
                 sum0 += ctr[0] * wc;
                 sum1 += ctr[1] * wc;
                 sum2 += ctr[2] * wc;
@@ -1026,13 +1045,40 @@ fusedssim_fwd_bwd_kernel_fused(int H, int W, int CH, float C1, float C2,
             float dL_dpix = sum0 + (2.f * p1) * sum1 + (p2) * sum2;
 
             int out_idx = bIdx * CH * num_pix + c * num_pix + pix_id;
-            dL_dimg1[out_idx] = fmaf(dL_dpix, scale, dL_dimg1[out_idx]);
+            // dL_dimg1[out_idx] = dL_dpix;
+            dL_dimg1[out_idx] += dL_dpix * scale;
         }
         block.sync();
     }
 }
 
 namespace tinygs {
+
+template <typename T>
+struct FusedSSIMLoss<T>::Impl {
+    GPUBuffer<T> dm_dmu1;
+    GPUBuffer<T> dm_dsigma1_sq;
+    GPUBuffer<T> dm_dsigma12;
+
+    void ensure(size_t total, cudaStream_t stream) {
+      if (!dm_dmu1 || dm_dmu1.size() < total) {
+        dm_dmu1 = GPUBuffer<T>(stream, total);
+      }
+      if (!dm_dsigma1_sq || dm_dsigma1_sq.size() < total) {
+        dm_dsigma1_sq = GPUBuffer<T>(stream, total);
+      }
+      if (!dm_dsigma12 || dm_dsigma12.size() < total) {
+        dm_dsigma12 = GPUBuffer<T>(stream, total);
+      }
+    }
+};
+
+template <typename T>
+FusedSSIMLoss<T>::~FusedSSIMLoss() {}
+
+template <typename T> inline FusedSSIMLoss<T>::FusedSSIMLoss() {
+  m_impl = std::make_unique<Impl>();
+}
 
 template<> 
 void FusedSSIMLoss<float>::evaluate(LossContext<float> ctx) {
@@ -1043,6 +1089,7 @@ void FusedSSIMLoss<float>::evaluate(LossContext<float> ctx) {
     dim3 grid((W + BLOCK_X - 1) / BLOCK_X, (H + BLOCK_Y - 1) / BLOCK_Y,
               /*batch_size*/ 1);
     dim3 block(BLOCK_X, BLOCK_Y);
+    m_impl->ensure(H * W * CH, ctx.stream);
 
     if (ctx.grad) {
         fusedssim_fwd_bwd_kernel_fused<<<grid, block>>>(
@@ -1050,18 +1097,22 @@ void FusedSSIMLoss<float>::evaluate(LossContext<float> ctx) {
             ctx.pred.data,
             ctx.target.data,
             ctx.loss.data,
-            ctx.grad.data
+            ctx.grad.data,
+            ctx.scale,
+            m_impl->dm_dmu1.data(),
+            m_impl->dm_dsigma1_sq.data(),
+            m_impl->dm_dsigma12.data()
         );
     } else {
         fusedssim_fwd_kernel<<<grid, block>>>(
             H, W, CH, m_c1, m_c2,
             ctx.pred.data,
             ctx.target.data,
-            ctx.loss.data
+            ctx.loss.data,
+            ctx.scale
         );
     }
 }
-
 
 template class FusedSSIMLoss<float>;
 

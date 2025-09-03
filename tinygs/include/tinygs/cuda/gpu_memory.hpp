@@ -799,6 +799,7 @@ public:
   inline bool is_arena_alloc() const { return m_arena_alloc != nullptr; }
   inline bool is_malloc() const { return m_malloc != nullptr; }
 	inline bool is_externally_alloc() const { return !is_arena_alloc() && !is_malloc(); }
+	inline explicit operator bool() const { return m_data != nullptr; }
 
   void memcpy(const std::vector<T>& host_data) {
     CUDA_CHECK_THROW(cudaMemcpy(m_data, host_data.data(), sizeof(T) * m_n_elems, cudaMemcpyHostToDevice));
