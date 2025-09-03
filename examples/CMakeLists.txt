@@ -21,4 +21,8 @@ if(OpenCV_FOUND)
     tinygs_add_example(vis_init)
     target_link_libraries(vis_init PRIVATE ${OpenCV_LIBS})
     target_include_directories(vis_init PRIVATE ${OpenCV_INCLUDE_DIRS})
+
+    tinygs_add_example(manual_train)
+    target_link_libraries(manual_train PRIVATE ${OpenCV_LIBS})
+    target_include_directories(manual_train PRIVATE ${OpenCV_INCLUDE_DIRS})
 endif()

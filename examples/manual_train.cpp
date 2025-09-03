@@ -1,0 +1,161 @@
+#include <cuda_runtime.h>
+
+#include <algorithm>
+#include <iostream>
+#include <opencv2/opencv.hpp>
+#include <tinygs/core/camera.hpp>
+
+#include "tinygs/core/gpu_gaussian.hpp"
+#include "tinygs/core/pointcloud.hpp"
+#include "tinygs/cuda/common_host.hpp"
+#include "tinygs/dataloader/simple.hpp"
+#include "tinygs/dataset/png_folder.hpp"
+#include "tinygs/initialization/knn.hpp"
+#include "tinygs/loss/l1.hpp"
+#include "tinygs/optim/adamw.hpp"
+#include "tinygs/rasterizer/fastgs.hpp"
+#include "tinygs/utils/file.hpp"
+#include "tinygs/utils/scope_timer.hpp"
+
+using namespace tinygs;
+
+int main() {
+  spdlog::set_level(spdlog::level::debug);
+  try {
+    std::string DATA_PATH = "/data/accgs/1751090600427/";
+    std::string camera_intrinsics_path = DATA_PATH + "inputs/slam/cameras.txt";
+    std::string camera_extrinsics_path = DATA_PATH + "inputs/traj_full.txt.bak";
+
+    auto pc = tinygs::load_from_colmap_file(DATA_PATH + "inputs/slam/points3D.txt");
+    log_info("#points: {}", pc.points.size());
+
+    tinygs::KnnInitialization knn;
+    knn.initialize(pc);
+    auto init_result = knn.gaussians();
+
+    int width = 480, height = 640;
+    tinygs::ImageShape shape;
+    shape.width = width;
+    shape.height = height;
+    shape.channel = 3;
+    std::shared_ptr<tinygs::PngFolderDataset> dataset = std::make_shared<tinygs::PngFolderDataset>(  //
+        DATA_PATH + "inputs/images_480x640_1",                                                       //
+        camera_extrinsics_path,                                                                      //
+        camera_intrinsics_path,                                                                      //
+        shape);
+
+    tinygs::SimpleDataLoader loader(dataset);
+
+    // Prepare Render data.
+    auto gs3d = std::make_shared<tinygs::GPUGaussian3d>();
+    gs3d->copy_from_host(init_result);
+    std::shared_ptr<tinygs::GPUGaussian3d> grads = gs3d->clone_async();
+    grads->memset();
+
+    tinygs::GPUBatchInputOutput io;
+    io.input.width = width;
+    io.input.height = height;
+    io.input.batch_size = 1;
+    io.input.near = 0.001f;
+    io.input.far = 10000.0f;
+
+    tinygs::GPUMemory<float> out_image(width * height * 3);
+    tinygs::GPUMemory<float> out_alpha(width * height * 1);
+    io.output.image.shape.width = io.output.alpha.shape.width = width;
+    io.output.image.shape.height = io.output.alpha.shape.height = height;
+    io.output.image.shape.channel = 3;
+    io.output.alpha.shape.channel = 1;
+    io.output.image.format = io.output.alpha.format = tinygs::ImageFormat::HWC;
+    io.output.image.data = out_image.data();
+    io.output.alpha.data = out_alpha.data();
+    tinygs::RasterizeContext params;
+    params.inference = true;
+    params.fwd_input = io.input;
+    params.fwd_output = io.output;
+    params.gaussians_grad = grads;
+
+    // Rendering.
+    tinygs::FastGSRasterizer rasterizer;
+    rasterizer.set_gaussians(gs3d);
+
+    // Optimizer
+    auto optimizer = std::make_unique<tinygs::AdamW>(gs3d, grads);
+
+    // Loss
+    GPUBuffer<float> loss_buffer = GPUBuffer<float>(shape.width * shape.height * 4);
+    tinygs::GPUMemory<float> out_image_grad(width * height * 3);
+    out_image_grad.memset(0);
+    auto l1_loss = std::make_unique<tinygs::L1Loss>();
+    LossContext loss_ctx;
+    loss_ctx.loss = Image<float>(shape, ImageFormat::CHW, loss_buffer.data());
+    loss_ctx.pred = params.fwd_output.image;
+    loss_ctx.grad = Image<float>(shape, ImageFormat::CHW, out_image_grad.data());
+    loss_ctx.scale = 1.0f / ((float) width * height * 3);
+
+    int frame_count = 0;
+    bool should_stop = false;
+    while (!should_stop) {
+      grads->memset();
+      loss_buffer.memset(0);
+      out_image_grad.memset(0);
+      auto data = loader.next();
+      io.input.K = data.input.K;
+      io.input.w2c = data.input.w2c;
+      params.fwd_input = io.input;
+      loss_ctx.target = data.output.image;
+
+      rasterizer.forward(params);
+
+      l1_loss->evaluate(loss_ctx);
+
+      log_info("loss: {}", sum_loss(loss_ctx));
+
+      params.grad_output.image = loss_ctx.grad;
+      params.grad_output.alpha = Image<float>(  //
+          shape, ImageFormat::CHW,              //
+          loss_buffer.data() + shape.width * shape.height * 3);
+      rasterizer.backward(params);
+      optimizer->step(0.0f);
+
+      // Visualize RGB
+      std::vector<float> h_img(width * height * 3);
+      out_image.copy_to_host(h_img); // CHW format 
+
+      std::vector<uint8_t> h_img_hwc(width * height * 3);
+      for (int h = 0; h < height; h++) {
+        for (int w = 0; w < width; w++) {
+          for (int c = 0; c < 3; c++) {
+            // CHW format: data is stored as [C0H0W0, C0H0W1, ..., C0H1W0, ..., C1H0W0, ...]
+            int chw_idx = c * height * width + h * width + w;
+            // HWC format: data is stored as [H0W0C0, H0W0C1, H0W0C2, H0W1C0, ...]
+            int hwc_idx = h * width * 3 + w * 3 + c;
+            h_img_hwc[hwc_idx] = static_cast<uint8_t>(h_img[chw_idx] * 255.0f);
+          }
+        }
+      }
+
+      cv::Mat vis_image(height, width, CV_8UC3, h_img_hwc.data());
+      
+      // Add frame counter to the image
+      std::string frame_text = "Frame: " + std::to_string(frame_count);
+      cv::putText(vis_image, frame_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
+      
+      cv::imshow("Visualization", vis_image);
+      
+      // Wait for key press
+      char key = cv::waitKey(0);
+      if (key == 'q' || key == 'Q') {
+        break;
+      }
+      
+      frame_count++;
+    }
+
+    cv::destroyAllWindows();
+    tinygs::GlobalTimerRegistry::get_instance().print_all_stats();
+    return EXIT_SUCCESS;
+  } catch (const std::exception &e) {
+    log_error("Error: {}", e.what());
+    return EXIT_FAILURE;
+  }
+}

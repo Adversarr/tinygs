@@ -1,5 +1,5 @@
 #pragma once
-#include "cuda/gpu_memory.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/optim/optim.hpp"
 
 namespace tinygs {
@@ -30,6 +30,7 @@ public:
   void step(float scale) override;
   void pre_remove(char* kept_flag) override;
   void post_duplicate(int* indices, int* new_indices, int num_duplicate) override;
+
 private:
   AdamWParameters m_adam_params;
 

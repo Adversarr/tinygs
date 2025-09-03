@@ -1,16 +1,18 @@
 #pragma once
 
-#include "core/image.hpp"
+#include "tinygs/core/image.hpp"
 namespace tinygs {
 
 struct LossContext {
   float scale = 1.0f;
-  Image<const float> pred;
+  Image<float> pred;
   Image<const float> target;
   Image<float> loss;
   Image<float> grad;
   cudaStream_t stream = nullptr;
 };
+
+float sum_loss(const LossContext& ctx);
 
 /**
  * @brief Base class for loss function. (only per-pixel is supported)

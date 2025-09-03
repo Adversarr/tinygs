@@ -14,6 +14,7 @@ public:
   void forward();
   void backward();
   void optimizer_step();
+  void strategy_step();
 
   /// @brief Launch training for num_steps steps.
   void train(int num_steps);

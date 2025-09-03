@@ -40,6 +40,16 @@ template <typename T> struct Image {
   ImageFormat format = ImageFormat::HWC;
   T* data;
 
+  Image() = default;
+  Image(ImageShape shape, ImageFormat format, T* data) : shape(shape), format(format), data(data) {}
+  Image(const Image& other) = default;
+  Image(Image&& other) = default;
+  Image& operator=(const Image& other) = default;
+  Image& operator=(Image&& other) = default;
+
+  template <typename T2>
+  Image(const Image<T2>& other) : shape(other.shape), format(other.format), data(other.data) {}
+
   TINYGS_HOST_DEVICE explicit operator bool() const noexcept {
     return data != nullptr;
   }

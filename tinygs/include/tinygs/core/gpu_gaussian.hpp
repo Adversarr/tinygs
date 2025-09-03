@@ -32,6 +32,10 @@ public:
   thrust::device_vector<vec3>& sh_coefficients() { return m_sh_coefficients; }
   thrust::device_vector<vec2>& densification_info() { return m_densification_info; }
 
+  std::unique_ptr<GPUGaussian3d> clone_async(cudaStream_t stream = 0);
+
+  void memset(cudaStream_t stream = 0, char value = 0);
+
 private:
   /// NOTE: Change to gaussians is not frequent, thrust generally have a good performance
   /// NOTE: SoA of Gaussian3d in GPU memory

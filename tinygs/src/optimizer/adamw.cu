@@ -238,6 +238,21 @@ void AdamW::step(float scale) {
   );
 }
 
+AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad,
+      const AdamWParameters& params):
+  OptimizerBase(gaussians, gaussians_grad), m_adam_params(params) {
+  // Resize and reset all internal buffers
+  AdamW::reset();
+}
+
+void AdamW::pre_remove(char* kept_flag) {
+  throw std::runtime_error("Not implemented yet.");
+}
+
+void AdamW::post_duplicate(int* indices, int* new_indices, int num_duplicate) {
+  throw std::runtime_error("Not implemented yet.");
+}
+
 void AdamW::reset() {
   size_t num_gaussians = m_gaussians->size();
 

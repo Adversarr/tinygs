@@ -40,14 +40,14 @@ public:
 
   virtual void step(float scale) = 0;
 
-  virtual void reset();
+  virtual void reset(){}
 
   /**
    * @brief Pre-remove flagged gaussians, remove the gaussian's momentum buffer also.
    *
    * @param kept_flag
    */
-  virtual void pre_remove(char* kept_flag);
+  virtual void pre_remove(char* kept_flag){}
 
   /**
    * @brief After the gaussian is duplicated, update the momentum buffers for them.
@@ -56,7 +56,7 @@ public:
    * @param new_indices The indices of gaussians after duplication.
    * @param num_duplicate The number of duplicated gaussians.
    */
-  virtual void post_duplicate(int* indices, int* new_indices, int num_duplicate);
+  virtual void post_duplicate(int* indices, int* new_indices, int num_duplicate){}
 
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
