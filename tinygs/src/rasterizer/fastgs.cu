@@ -66,7 +66,8 @@ struct FastGSRasterizer::Impl {
   }
 
   void copy_from_ours(const GPUGaussian3d& ours) {
-    const auto& mean_opacity = ours.means_opacities();
+    const auto& means = ours.means();
+    const auto& opacities = ours.opacities();
     const auto& scale = ours.scales();
     const auto& rotation = ours.rotations();
     const auto& sh_coeffs = ours.sh_coefficients();
@@ -86,7 +87,8 @@ struct FastGSRasterizer::Impl {
           o_primitive_opacity = thrust::raw_pointer_cast(primitive_opacity.data()),
           o_primitive_sh_coeffs_0 = thrust::raw_pointer_cast(primitive_sh_coeffs_0.data()),
           o_primitive_sh_coeffs_rest = thrust::raw_pointer_cast(primitive_sh_coeffs_rest.data()),
-          i_mean_opacity = thrust::raw_pointer_cast(mean_opacity.data()),
+          i_means = thrust::raw_pointer_cast(means.data()),
+          i_opacities = thrust::raw_pointer_cast(opacities.data()),
           i_scale = thrust::raw_pointer_cast(scale.data()),
           i_rotation = thrust::raw_pointer_cast(rotation.data()),
           i_sh_coeffs = thrust::raw_pointer_cast(sh_coeffs.data())
@@ -96,8 +98,8 @@ struct FastGSRasterizer::Impl {
       const int sh_coeffs_rest_offset = idx * (kMaxSphericalHarmonicsCoefficients - 1);
 
       // Perform assignments
-      o_primitive_mean3d[idx] = make_float3(i_mean_opacity[idx].xyz());
-      o_primitive_opacity[idx] = i_mean_opacity[idx].w;
+      o_primitive_mean3d[idx] = make_float3(i_means[idx]);
+      o_primitive_opacity[idx] = i_opacities[idx];
       o_primitive_scale[idx] = make_float3(i_scale[idx]);
       o_primitive_rotation[idx] = make_float4(i_rotation[idx]);
       o_primitive_sh_coeffs_0[idx] = make_float3(i_sh_coeffs[sh_coeffs_offset]);
@@ -112,7 +114,8 @@ struct FastGSRasterizer::Impl {
   }
 
   void copy_to_ours(GPUGaussian3d& ours) {
-    auto& mean_opacity = ours.means_opacities();
+    auto& means = ours.means();
+    auto& opacities = ours.opacities();
     auto& scale = ours.scales();
     auto& rotation = ours.rotations();
     auto& sh_coeffs = ours.sh_coefficients();
@@ -132,7 +135,8 @@ struct FastGSRasterizer::Impl {
           i_primitive_opacity = thrust::raw_pointer_cast(primitive_opacity.data()),
           i_primitive_sh_coeffs_0 = thrust::raw_pointer_cast(primitive_sh_coeffs_0.data()),
           i_primitive_sh_coeffs_rest = thrust::raw_pointer_cast(primitive_sh_coeffs_rest.data()),
-          o_mean_opacity = thrust::raw_pointer_cast(mean_opacity.data()),
+          o_means = thrust::raw_pointer_cast(means.data()),
+          o_opacities = thrust::raw_pointer_cast(opacities.data()),
           o_scale = thrust::raw_pointer_cast(scale.data()),
           o_rotation = thrust::raw_pointer_cast(rotation.data()),
           o_sh_coeffs = thrust::raw_pointer_cast(sh_coeffs.data())
@@ -142,7 +146,8 @@ struct FastGSRasterizer::Impl {
       const int sh_coeffs_rest_offset = idx * (kMaxSphericalHarmonicsCoefficients - 1);
 
       // Perform assignments
-      o_mean_opacity[idx] = vec4(to_vec3(i_primitive_mean3d[idx]), i_primitive_opacity[idx]);
+      o_means[idx] = to_vec3(i_primitive_mean3d[idx]);
+      o_opacities[idx] = i_primitive_opacity[idx];
       o_scale[idx] = to_vec3(i_primitive_scale[idx]);
       o_rotation[idx] = to_vec4(i_primitive_rotation[idx]);
       o_sh_coeffs[sh_coeffs_offset] = to_vec3(i_primitive_sh_coeffs_0[idx]);

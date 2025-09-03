@@ -930,6 +930,8 @@ __global__ void fusedssim_fwd_bwd_kernel_fused(
     // __shared__ float sData[3][SHARED_Y][SHARED_X];
     // __shared__ float sScratch[CONV_Y][CONV_X][3];
 
+    __syncthreads();
+
     for (int c = 0; c < CH; ++c) {
         float p1 = 0.f, p2 = 0.f;
         if (pix_x < W && pix_y < H) {
@@ -1054,34 +1056,33 @@ __global__ void fusedssim_fwd_bwd_kernel_fused(
 
 namespace tinygs {
 
-template <typename T>
-struct FusedSSIMLoss<T>::Impl {
-    GPUBuffer<T> dm_dmu1;
-    GPUBuffer<T> dm_dsigma1_sq;
-    GPUBuffer<T> dm_dsigma12;
+
+struct FusedSSIMLoss::Impl {
+    GPUBuffer<float> dm_dmu1;
+    GPUBuffer<float> dm_dsigma1_sq;
+    GPUBuffer<float> dm_dsigma12;
 
     void ensure(size_t total, cudaStream_t stream) {
       if (!dm_dmu1 || dm_dmu1.size() < total) {
-        dm_dmu1 = GPUBuffer<T>(stream, total);
+        dm_dmu1 = GPUBuffer<float>(stream, total);
       }
       if (!dm_dsigma1_sq || dm_dsigma1_sq.size() < total) {
-        dm_dsigma1_sq = GPUBuffer<T>(stream, total);
+        dm_dsigma1_sq = GPUBuffer<float>(stream, total);
       }
       if (!dm_dsigma12 || dm_dsigma12.size() < total) {
-        dm_dsigma12 = GPUBuffer<T>(stream, total);
+        dm_dsigma12 = GPUBuffer<float>(stream, total);
       }
     }
 };
 
-template <typename T>
-FusedSSIMLoss<T>::~FusedSSIMLoss() {}
+FusedSSIMLoss::~FusedSSIMLoss() {}
 
-template <typename T> inline FusedSSIMLoss<T>::FusedSSIMLoss() {
+inline FusedSSIMLoss::FusedSSIMLoss() {
   m_impl = std::make_unique<Impl>();
 }
 
-template<> 
-void FusedSSIMLoss<float>::evaluate(LossContext<float> ctx) {
+
+void FusedSSIMLoss::evaluate(LossContext ctx) {
     int H = ctx.pred.shape.height;
     int W = ctx.pred.shape.width;
     int CH = ctx.pred.shape.channel;
@@ -1092,7 +1093,9 @@ void FusedSSIMLoss<float>::evaluate(LossContext<float> ctx) {
     m_impl->ensure(H * W * CH, ctx.stream);
 
     if (ctx.grad) {
-        fusedssim_fwd_bwd_kernel_fused<<<grid, block>>>(
+        constexpr size_t shared_mem_size =
+            sizeof(float) * (BLOCK_X + 2 * HALO) * BLOCK_Y * 3;
+        fusedssim_fwd_bwd_kernel_fused<<<grid, block, shared_mem_size, ctx.stream>>>(
             H, W, CH, m_c1, m_c2,
             ctx.pred.data,
             ctx.target.data,
@@ -1104,7 +1107,7 @@ void FusedSSIMLoss<float>::evaluate(LossContext<float> ctx) {
             m_impl->dm_dsigma12.data()
         );
     } else {
-        fusedssim_fwd_kernel<<<grid, block>>>(
+        fusedssim_fwd_kernel<<<grid, block, 0, ctx.stream>>>(
             H, W, CH, m_c1, m_c2,
             ctx.pred.data,
             ctx.target.data,
@@ -1113,7 +1116,5 @@ void FusedSSIMLoss<float>::evaluate(LossContext<float> ctx) {
         );
     }
 }
-
-template class FusedSSIMLoss<float>;
 
 }

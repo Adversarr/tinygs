@@ -3,22 +3,19 @@
 #include "core/image.hpp"
 namespace tinygs {
 
-template<typename T>
 struct LossContext {
   float scale = 1.0f;
-  Image<const T> pred;
-  Image<const T> target;
-  Image<T> loss;
-  Image<T> grad;
+  Image<const float> pred;
+  Image<const float> target;
+  Image<float> loss;
+  Image<float> grad;
   cudaStream_t stream = nullptr;
 };
 
 /**
  * @brief Base class for loss function. (only per-pixel is supported)
  * 
- * @tparam T The data type of the image.
  */
-template <typename T>
 class LossBase {
 public:
   LossBase() = default;
@@ -32,7 +29,7 @@ public:
    * @param loss The loss image.
    * @param grad The gradient image.
    */
-  virtual void evaluate(LossContext<T> ctx) = 0;
+  virtual void evaluate(LossContext ctx) = 0;
 };
 
 } // namespace tinygs

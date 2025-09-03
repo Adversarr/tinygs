@@ -77,7 +77,8 @@ void RandomInitialization::initialize(const PointCloud&  /*pointcloud*/) {
   
   // Clear existing gaussians and resize to fit new data
   const size_t num_points = positions.size();
-  m_gaussians.means_opacities.resize(num_points);
+  m_gaussians.means.resize(num_points);
+  m_gaussians.opacities.resize(num_points);
   m_gaussians.rotations.resize(num_points);
   m_gaussians.scales.resize(num_points);
   m_gaussians.sh_coefficients.resize(num_points * kMaxSphericalHarmonicsCoefficients);
@@ -86,7 +87,8 @@ void RandomInitialization::initialize(const PointCloud&  /*pointcloud*/) {
 #pragma omp parallel for
   for (size_t i = 0; i < num_points; ++i) {
     // Set position and opacity
-    m_gaussians.means_opacities[i] = vec4(positions[i].x, positions[i].y, positions[i].z, m_params.init_opacity);
+    m_gaussians.means[i] = vec3(positions[i].x, positions[i].y, positions[i].z);
+    m_gaussians.opacities[i] = m_params.init_opacity;
     
     // Set rotation (identity quaternion: w=1, x=0, y=0, z=0)
     m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
@@ -116,7 +118,7 @@ void RandomInitialization::initialize(const PointCloud&  /*pointcloud*/) {
     }
   }
   
-  log_info("Initialized {} gaussians with random method", m_gaussians.means_opacities.size());
+  log_info("Initialized {} gaussians with random method", m_gaussians.means.size());
   log_info("Extent: {}", m_params.extent);
   log_info("SH degree: {}", m_params.sh_degree);
   log_info("Uniform scale: {}", m_params.use_uniform_scale);

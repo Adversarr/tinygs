@@ -3,13 +3,12 @@
 
 namespace tinygs {
 
-template <typename T>
-class FusedSSIMLoss final : public LossBase<T> {
+class FusedSSIMLoss final : public LossBase {
 public:
   FusedSSIMLoss();
   virtual ~FusedSSIMLoss();
 
-  void evaluate(LossContext<T> ctx) override;
+  void evaluate(LossContext ctx) override;
 
   struct Impl;
 
@@ -19,4 +18,4 @@ private:
   std::unique_ptr<Impl> m_impl;
 };
 
-}
+} // namespace tinygs

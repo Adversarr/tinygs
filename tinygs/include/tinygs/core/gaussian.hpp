@@ -24,7 +24,8 @@ struct Gaussian2dItem {
  * 
  */
 struct Gaussian3d {
-  std::vector<vec4> means_opacities;
+  std::vector<vec3> means;
+  std::vector<float> opacities;
   std::vector<vec4> rotations;
   std::vector<vec3> scales;
   std::vector<vec3> sh_coefficients;

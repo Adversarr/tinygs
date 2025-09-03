@@ -4,6 +4,7 @@
 add_executable(tinygs_benchmarks
     benchmark_main.cpp
     benchmark_dataloader.cpp
+    benchmark_fastgs.cpp
 )
 
 # Link libraries

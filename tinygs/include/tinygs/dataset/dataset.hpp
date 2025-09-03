@@ -32,6 +32,7 @@ public:
   /// @return The data at the given index.
   virtual Data operator[](size_t idx) const = 0;
 
+  // TODO: Pose Optimizer.
 };
 
 } // namespace tinygs

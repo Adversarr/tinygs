@@ -745,7 +745,7 @@ public:
 	 */
   GPUBuffer(cudaStream_t stream, size_t n_elems) : m_n_elems(n_elems) {
     m_arena_alloc = std::make_unique<GPUMemoryArena::Allocation>(allocate_workspace(stream, n_elems * sizeof(T)));
-    m_data = static_cast<T*>(m_arena_alloc->data());
+    m_data = reinterpret_cast<T*>(m_arena_alloc->data());
   }
 
 	/**

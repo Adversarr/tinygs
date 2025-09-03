@@ -132,7 +132,8 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
 
   // Clear existing gaussians and resize to fit new data
   const size_t num_points = positions.size();
-  m_gaussians.means_opacities.resize(num_points);
+  m_gaussians.means.resize(num_points);
+  m_gaussians.opacities.resize(num_points);
   m_gaussians.rotations.resize(num_points, vec4(1.0f, 0.0f, 0.0f, 0.0f));
   m_gaussians.scales.resize(num_points);
   m_gaussians.sh_coefficients.resize(num_points * kMaxSphericalHarmonicsCoefficients);
@@ -141,7 +142,8 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   // Initialize gaussians using SoA structure
   for (size_t i = 0; i < num_points; ++i) {
     // Set position and opacity
-    m_gaussians.means_opacities[i] = vec4(positions[i].x, positions[i].y, positions[i].z, init_opa);
+    m_gaussians.means[i] = vec3(positions[i].x, positions[i].y, positions[i].z);
+    m_gaussians.opacities[i] = init_opa;
 
     // Set rotation (identity quaternion: w=1, x=0, y=0, z=0)
     m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
@@ -176,7 +178,7 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   color_std = sqrt(color_std / static_cast<float>(num_points));
   log_info("Color mean={}, std={}", to_string(color_mean), to_string(color_std));
 
-  log_info("Initialized {} gaussians with KNN method", m_gaussians.means_opacities.size());
+  log_info("Initialized {} gaussians with KNN method", m_gaussians.means.size());
   log_info("Scene scale: {}", scene_scale);
   log_info("SH degree: {}", m_params.sh_degree);
 }

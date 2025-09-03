@@ -2,13 +2,13 @@
 #include "loss.hpp"
 
 namespace tinygs {
-template <typename T>
-class L1Loss : public LossBase<T> {
+
+class L1Loss : public LossBase {
 public:
   L1Loss() = default;
   ~L1Loss() = default;
 
-  void evaluate(LossContext<T> ctx) override;
+  void evaluate(LossContext ctx) override;
 };
 
 } // namespace tinygs
