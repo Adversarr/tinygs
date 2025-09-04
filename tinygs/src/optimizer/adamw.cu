@@ -152,29 +152,11 @@ __global__ void launch_gaussian_adam_step_SoA(
     );
   }
 
-  // { // rotations
-  //   vec4& val = rotations[idx];
-  //   const vec4& grad = rotations_grad[idx];
-  //   vec4& first_moment = rotations_first_second[idx * 2];
-  //   vec4& second_moment = rotations_first_second[idx * 2 + 1];
-  //   adam_step_func(
-  //     val, grad, first_moment, second_moment,
-  //     general_p.rotations_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
-  //     general_p.rotations_l2, general_p.rotations_l1,
-  //     0.0f,
-  //     general_p.max_grad_1,
-  //     loss_scale,
-  //     lower_lr_bound,
-  //     upper_lr_bound,
-  //     this_lr_scale
-  //   );
-  // }
-
-  {
-    vec4 val = rotations[idx];
+  { // rotations
+    vec4& val = rotations[idx];
     const vec4& grad = rotations_grad[idx];
-    vec4 first_moment = rotations_first_second[idx * 2];
-    vec4 second_moment = rotations_first_second[idx * 2 + 1];
+    vec4& first_moment = rotations_first_second[idx * 2];
+    vec4& second_moment = rotations_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
       general_p.rotations_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
@@ -186,29 +168,6 @@ __global__ void launch_gaussian_adam_step_SoA(
       upper_lr_bound,
       this_lr_scale
     );
-    rotations[idx] = val;
-    rotations_first_second[idx * 2] = first_moment;
-    rotations_first_second[idx * 2 + 1] = second_moment;
-    // for (int j = 0; j < 4; ++j) {
-    //   float val = rotations[idx][j];
-    //   const float grad = rotations_grad[idx][j];
-    //   float first_moment = rotations_first_second[idx * 2][j];
-    //   float second_moment = rotations_first_second[idx * 2 + 1][j];
-    //   adam_step_func(
-    //     val, grad, first_moment, second_moment,
-    //     general_p.rotations_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
-    //     general_p.rotations_l2, general_p.rotations_l1,
-    //     0.0f,
-    //     general_p.max_grad_1,
-    //     loss_scale,
-    //     lower_lr_bound,
-    //     upper_lr_bound,
-    //     this_lr_scale
-    //   );
-    //   // rotations[idx][j] = val;
-    //   // rotations_first_second[idx * 2][j] = first_moment;
-    //   // rotations_first_second[idx * 2 + 1][j] = second_moment;
-    // }
   }
 
   { // scales
@@ -308,12 +267,127 @@ AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussi
   AdamW::reset();
 }
 
-void AdamW::pre_remove(char* kept_flag) {
-  throw std::runtime_error("Not implemented yet.");
+template <typename T> static void filter(
+  thrust::device_vector<T>& in_out,
+  char* kept_flag,
+  int num_kept,
+  cudaStream_t stream
+) {
+  T* d_in = thrust::raw_pointer_cast(in_out.data());
+  size_t num_items = in_out.size();
+  GPUBuffer<int> d_num_selected_out(stream, 1);
+  size_t temp_storage_bytes = 0;
+  CUDA_CHECK_THROW(cub::DeviceSelect::Flagged( //
+      nullptr, temp_storage_bytes,             //
+      d_in, kept_flag, d_num_selected_out.data(), num_items, stream));
+  GPUBuffer<int> d_temp_storage(stream, temp_storage_bytes);
+  CUDA_CHECK_THROW(cub::DeviceSelect::Flagged(           //
+      (void *)d_temp_storage.data(), temp_storage_bytes, //
+      d_in, kept_flag, d_num_selected_out.data(), num_items, stream));
+  in_out.resize(num_kept);
 }
 
-void AdamW::post_duplicate(int* indices, int* new_indices, int num_duplicate) {
-  throw std::runtime_error("Not implemented yet.");
+void AdamW::remove(char* kept_flag, int num_kept) {
+  // filters the gaussians' first second.
+  int num_items = m_gaussians->size();
+
+  filter(m_means_first_second, kept_flag, num_kept, 0);
+  filter(m_opacities_first_second, kept_flag, num_kept, 0);
+  filter(m_rotations_first_second, kept_flag, num_kept, 0);
+  filter(m_scales_first_second, kept_flag, num_kept, 0);
+  filter(m_sh_coefficient_0_first_second, kept_flag, num_kept, 0);
+  filter(m_sh_coefficients_rest_first_second, kept_flag, num_kept, 0);
+  filter(m_gaussian_steps, kept_flag, num_kept, 0);
+}
+
+__global__ static void duplicate_optimizer_state_kernel(
+  // Means
+  vec3* __restrict__ means_first_second,
+  // Opacities
+  float* __restrict__ opacities_first_second,
+  // Rotations
+  vec4* __restrict__ rotations_first_second,
+  // Scales
+  vec3* __restrict__ scales_first_second,
+  // Spherical Harmonics
+  vec3* __restrict__ sh_coefficient_0_first_second,
+  vec3* __restrict__ sh_coefficients_rest_first_second,
+  // Step counts
+  uint32_t* __restrict__ gaussian_steps,
+  // Indices
+  const int* __restrict__ indices,
+  const int* __restrict__ new_indices,
+  uint32_t num_duplicate,
+  uint32_t num_sh_rest_per_gaussian
+) {
+  auto idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_duplicate) return;
+
+  const int src_idx = indices[idx];
+  const int dst_idx = new_indices[idx];
+
+  // Copy means first and second moments
+  means_first_second[dst_idx * 2] = means_first_second[src_idx * 2];
+  means_first_second[dst_idx * 2 + 1] = means_first_second[src_idx * 2 + 1];
+
+  // Copy opacities first and second moments
+  opacities_first_second[dst_idx * 2] = opacities_first_second[src_idx * 2];
+  opacities_first_second[dst_idx * 2 + 1] = opacities_first_second[src_idx * 2 + 1];
+
+  // Copy rotations first and second moments
+  rotations_first_second[dst_idx * 2] = rotations_first_second[src_idx * 2];
+  rotations_first_second[dst_idx * 2 + 1] = rotations_first_second[src_idx * 2 + 1];
+
+  // Copy scales first and second moments
+  scales_first_second[dst_idx * 2] = scales_first_second[src_idx * 2];
+  scales_first_second[dst_idx * 2 + 1] = scales_first_second[src_idx * 2 + 1];
+
+  // Copy sh_coefficient_0 first and second moments
+  sh_coefficient_0_first_second[dst_idx * 2] = sh_coefficient_0_first_second[src_idx * 2];
+  sh_coefficient_0_first_second[dst_idx * 2 + 1] = sh_coefficient_0_first_second[src_idx * 2 + 1];
+
+  // Copy sh_coefficients_rest first and second moments
+  for (uint32_t i = 0; i < num_sh_rest_per_gaussian; i++) {
+    const int src_sh_idx = src_idx * num_sh_rest_per_gaussian + i;
+    const int dst_sh_idx = dst_idx * num_sh_rest_per_gaussian + i;
+    sh_coefficients_rest_first_second[dst_sh_idx * 2] = sh_coefficients_rest_first_second[src_sh_idx * 2];
+    sh_coefficients_rest_first_second[dst_sh_idx * 2 + 1] = sh_coefficients_rest_first_second[src_sh_idx * 2 + 1];
+  }
+
+  // Copy step count
+  gaussian_steps[dst_idx] = gaussian_steps[src_idx];
+}
+
+void AdamW::duplicate(int* /*indices*/, int* /*new_indices*/, int num_duplicate) {
+  if (num_duplicate == 0) return;
+  reset(); return;
+
+  const uint32_t num_sh_rest_per_gaussian = kMaxSphericalHarmonicsCoefficients - 1;
+
+  // Resize vectors to accommodate duplicated gaussians
+  m_means_first_second.resize(m_gaussians->size() * 2, vec3(0.f));
+  m_opacities_first_second.resize(m_gaussians->size() * 2, 0.f);
+  m_rotations_first_second.resize(m_gaussians->size() * 2, vec4(0.f));
+  m_scales_first_second.resize(m_gaussians->size() * 2, vec3(0.f));
+  m_sh_coefficient_0_first_second.resize(m_gaussians->size() * 2, vec3(0.f));
+  m_sh_coefficients_rest_first_second.resize(m_gaussians->size() * 2 * num_sh_rest_per_gaussian, vec3(0.f));
+  m_gaussian_steps.resize(m_gaussians->size(), 0);
+
+  // const int grid = (num_duplicate + 255) / 256;
+  // duplicate_optimizer_state_kernel<<<grid, 256>>>(
+  //   thrust::raw_pointer_cast(m_means_first_second.data()),
+  //   thrust::raw_pointer_cast(m_opacities_first_second.data()),
+  //   thrust::raw_pointer_cast(m_rotations_first_second.data()),
+  //   thrust::raw_pointer_cast(m_scales_first_second.data()),
+  //   thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
+  //   thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
+  //   thrust::raw_pointer_cast(m_gaussian_steps.data()),
+  //   indices,
+  //   new_indices,
+  //   num_duplicate,
+  //   num_sh_rest_per_gaussian
+  // );
+  CUDA_CHECK_THROW(cudaDeviceSynchronize());
 }
 
 void AdamW::reset() {

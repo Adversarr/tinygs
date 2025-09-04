@@ -442,6 +442,7 @@ namespace fast_gs::rasterization::kernels::forward {
         if (inside) {
             const int pixel_idx = width * pixel_coords.y + pixel_coords.x;
             const int n_pixels = width * height;
+          assert (pixel_idx + n_pixels * 2 < n_pixels * 3 && pixel_idx >= 0);
             // store results
             image[pixel_idx] = color_pixel.x;
             image[pixel_idx + n_pixels] = color_pixel.y;

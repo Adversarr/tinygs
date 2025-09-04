@@ -24,7 +24,6 @@ public:
   const thrust::device_vector<vec3>& scales() const { return m_scales; }
   const thrust::device_vector<vec3>& sh_coefficient_0() const { return m_sh_coefficient_0; }
   const thrust::device_vector<vec3>& sh_coefficients_rest() const { return m_sh_coefficients_rest; }
-  const thrust::device_vector<vec2>& densification_info() const { return m_densification_info; }
 
   thrust::device_vector<vec3>& means() { return m_means; }
   thrust::device_vector<float>& opacities() { return m_opacities; }
@@ -32,13 +31,16 @@ public:
   thrust::device_vector<vec3>& scales() { return m_scales; }
   thrust::device_vector<vec3>& sh_coefficient_0() { return m_sh_coefficient_0; }
   thrust::device_vector<vec3>& sh_coefficients_rest() { return m_sh_coefficients_rest; }
-  thrust::device_vector<vec2>& densification_info() { return m_densification_info; }
 
   std::unique_ptr<GPUGaussian3d> clone_async(cudaStream_t stream = 0);
   std::unique_ptr<GPUGaussian3d> clone();
 
   void memset_async(char value, cudaStream_t stream);
   void memset(char value);
+
+  void remove(char* kept_flag, int num_kept);
+
+  void append(int num_dup);
 
 private:
   /// NOTE: Change to gaussians is not frequent, thrust generally have a good performance
@@ -49,8 +51,6 @@ private:
   int m_current_sh_degree = 0;
   float m_scene_scale = 0.0f;
 
-  // screen space gradient to indicate which gaussian to densify
-  thrust::device_vector<vec2> m_densification_info;
   // means
   thrust::device_vector<vec3> m_means;
   // opacities

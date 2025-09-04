@@ -1,8 +1,10 @@
 #include <thrust/copy.h>
 #include <thrust/host_vector.h>
+#include <cub/cub.cuh>
 
 #include "cuda/common_host.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "utils/scope_timer.hpp"
 
 namespace tinygs {
@@ -66,6 +68,47 @@ void GPUGaussian3d::memset(char value) {
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_scales.data()), value, sizeof(float3) * m_scales.size()));
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh_coefficient_0.data()), value, sizeof(float3) * m_sh_coefficient_0.size()));
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh_coefficients_rest.data()), value, sizeof(float3) * m_sh_coefficients_rest.size()));
+}
+
+template <typename T> static void filter(
+  thrust::device_vector<T>& in_out,
+  char* kept_flag,
+  int num_kept,
+  cudaStream_t stream
+) {
+  T* d_in = thrust::raw_pointer_cast(in_out.data());
+  size_t num_items = in_out.size();
+  GPUBuffer<int> d_num_selected_out(stream, 1);
+  size_t temp_storage_bytes = 0;
+  CUDA_CHECK_THROW(cub::DeviceSelect::Flagged( //
+      nullptr, temp_storage_bytes,             //
+      d_in, kept_flag, d_num_selected_out.data(), num_items, stream));
+  GPUBuffer<int> d_temp_storage(stream, temp_storage_bytes);
+  CUDA_CHECK_THROW(cub::DeviceSelect::Flagged(           //
+      (void *)d_temp_storage.data(), temp_storage_bytes, //
+      d_in, kept_flag, d_num_selected_out.data(), num_items, stream));
+  in_out.resize(num_kept);
+}
+
+void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
+  // Filter all gaussian data based on kept_flag
+  filter(m_means, kept_flag, num_kept, 0);
+  filter(m_opacities, kept_flag, num_kept, 0);
+  filter(m_rotations, kept_flag, num_kept, 0);
+  filter(m_scales, kept_flag, num_kept, 0);
+  filter(m_sh_coefficient_0, kept_flag, num_kept, 0);
+  filter(m_sh_coefficients_rest, kept_flag, num_kept, 0);
+}
+
+void GPUGaussian3d::append(int num_dup) {
+  assert(num_dup > 0);
+  const size_t target_size = this->size() + static_cast<size_t>(num_dup);
+  m_means.resize(target_size);
+  m_opacities.resize(target_size);
+  m_rotations.resize(target_size);
+  m_scales.resize(target_size);
+  m_sh_coefficient_0.resize(target_size);
+  m_sh_coefficients_rest.resize(target_size);
 }
 
 std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {

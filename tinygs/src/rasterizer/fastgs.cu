@@ -58,13 +58,13 @@ FastGSRasterizer::FastGSRasterizer() {
     m_impl->arena = m_memory_arena;
 }
 
-void FastGSRasterizer::forward(const RasterizeContext& params) {
+void FastGSRasterizer::forward(const RasterizeContext& ctx) {
   TINYGS_TIMER("FastGSRasterizer::forward");
     if (!m_gaussians) {
         throw std::runtime_error("Gaussians not set");
     }
 
-    const mat4x4 &w2c = params.fwd_input.w2c;
+    const mat4x4 &w2c = ctx.fwd_input.w2c;
     mat4x4 c2w = inverse(w2c);
 
     m_impl->w2c.at(0) = {w2c[0][0], w2c[1][0], w2c[2][0], w2c[3][0]};
@@ -89,10 +89,10 @@ void FastGSRasterizer::forward(const RasterizeContext& params) {
       return m_impl->alloc("per_bucket_buffers", size);
     };
 
-    const float fx = params.fwd_input.K[0][0];
-    const float fy = params.fwd_input.K[1][1];
-    const float cx = params.fwd_input.K[2][0];
-    const float cy = params.fwd_input.K[2][1];
+    const float fx = ctx.fwd_input.K[0][0];
+    const float fy = ctx.fwd_input.K[1][1];
+    const float cx = ctx.fwd_input.K[2][0];
+    const float cy = ctx.fwd_input.K[2][1];
 
     const auto& means = m_gaussians->means();
     const auto& scales = m_gaussians->scales();
@@ -117,19 +117,19 @@ void FastGSRasterizer::forward(const RasterizeContext& params) {
             /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_rest.data())),
             /* w2c */ m_impl->w2c.data(),
             /* cam_position */ m_impl->cam_position.data(),
-            /* image */ params.fwd_output.image.data,
-            /* alpha */ params.fwd_output.alpha.data,
+            /* image */ ctx.fwd_output.image.data,
+            /* alpha */ ctx.fwd_output.alpha.data,
             /* n_primitives */ m_gaussians->size(),
-            /* active_sh_bases */ kMaxSphericalHarmonicsCoefficients, // TODO: fix
+            /* active_sh_bases */ 1, // TODO: fix
             /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
-            /* width */ params.fwd_input.width,
-            /* height */ params.fwd_input.height,
+            /* width */ ctx.fwd_input.width,
+            /* height */ ctx.fwd_input.height,
             /* fx */ fx,
             /* fy */ fy,
             /* cx */ cx,
             /* cy */ cy,
-            /* near */ params.fwd_input.near,
-            /* far */ params.fwd_input.far);
+            /* near */ ctx.fwd_input.near,
+            /* far */ ctx.fwd_input.far);
     m_impl->n_visible_primitives = n_visible_primitives;
     m_impl->n_instances = n_instances;
     m_impl->n_buckets = n_buckets;
@@ -169,6 +169,17 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   // thrust::fill(sh_coeffs_rest_grad.begin(), sh_coeffs_rest_grad.end(), vec3(0.0f, 0.0f, 0.0f));
   m_impl->w2c_grad.memset(0);
 
+  float* densification_info = nullptr;
+  if (!params.densification_info) {
+    static bool warned = false;
+    if (!warned) {
+      log_warning("Densification info is not provided, pass as nullptr");
+      warned = true;
+    }
+  } else {
+    densification_info = params.densification_info->data();
+  }
+
   fast_gs::rasterization::backward(
     /* grad_image */ params.grad_output.image.data,
     /* grad_alpha */ params.grad_output.alpha.data,
@@ -193,14 +204,14 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* grad_mean2d_helper */  reinterpret_cast<float2*>(grad_mean2d_helper),
     /* grad_conic_helper */ reinterpret_cast<float*>(grad_conic_helper),
     /* grad_w2c */ m_impl->w2c_grad.data(),
-    /* densification_info */ nullptr, // TODO: fix
+    /* densification_info */ densification_info,
     /* n_primitives */ n_gaussians,
     /* n_visible_primitives */ m_impl->n_visible_primitives,
     /* n_instances */ m_impl->n_instances,
     /* n_buckets */ m_impl->n_buckets,
     /* primitive_primitive_indices_selector */ m_impl->primitive_primitive_indices_selector,
     /* instance_primitive_indices_selector */ m_impl->instance_primitive_indices_selector,
-    /* active_sh_bases */ kMaxSphericalHarmonicsCoefficients,
+    /* active_sh_bases */ 1,
     /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
     /* width */ params.fwd_input.width,
     /* height */ params.fwd_input.height,
@@ -209,7 +220,6 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* cx */ cx,
     /* cy */ cy
   );
-  CUDA_CHECK_THROW(cudaDeviceSynchronize());
 }
 
 FastGSRasterizer::~FastGSRasterizer() {}

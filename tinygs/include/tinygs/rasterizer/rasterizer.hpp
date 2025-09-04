@@ -19,11 +19,13 @@ struct RasterizeContext {
   /// Put all the computation to this stream
   cudaStream_t stream = nullptr;
 
+  float scene_scale = 1.0f;
   GPUBatchInput fwd_input;
   GPUBatchOutput fwd_output;
   GPUBatchInput grad_input;
   GPUBatchOutput grad_output;
   std::shared_ptr<GPUGaussian3d> gaussians_grad;
+  std::shared_ptr<GPUBuffer<float>> densification_info;
 };
 
 class RasterizerBase {

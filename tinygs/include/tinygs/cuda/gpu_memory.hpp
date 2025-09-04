@@ -49,7 +49,7 @@
 
 namespace tinygs {
 
-#define DEBUG_GUARD_SIZE 0
+#define DEBUG_GUARD_SIZE 16
 
 inline std::atomic<size_t>& total_n_bytes_allocated() {
 	static std::atomic<size_t> s_total_n_bytes_allocated{0};

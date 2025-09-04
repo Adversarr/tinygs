@@ -46,8 +46,9 @@ public:
    * @brief Pre-remove flagged gaussians, remove the gaussian's momentum buffer also.
    *
    * @param kept_flag
+   * @param num_kept The number of gaussians to remove.
    */
-  virtual void pre_remove(char* kept_flag){}
+  virtual void remove(char* kept_flag, int num_kept){}
 
   /**
    * @brief After the gaussian is duplicated, update the momentum buffers for them.
@@ -56,7 +57,7 @@ public:
    * @param new_indices The indices of gaussians after duplication.
    * @param num_duplicate The number of duplicated gaussians.
    */
-  virtual void post_duplicate(int* indices, int* new_indices, int num_duplicate){}
+  virtual void duplicate(int* indices, int* new_indices, int num_duplicate){}
 
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
