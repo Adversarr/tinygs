@@ -39,7 +39,8 @@ private:
   thrust::device_vector<float> m_opacities_first_second;
   thrust::device_vector<vec4> m_rotations_first_second;
   thrust::device_vector<vec3> m_scales_first_second;
-  thrust::device_vector<vec3> m_sh_coefficients_first_second;
+  thrust::device_vector<vec3> m_sh_coefficient_0_first_second;
+  thrust::device_vector<vec3> m_sh_coefficients_rest_first_second;
   thrust::device_vector<uint32_t> m_gaussian_steps;
 };
 

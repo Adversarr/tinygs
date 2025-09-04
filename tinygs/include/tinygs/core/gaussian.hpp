@@ -28,7 +28,8 @@ struct Gaussian3d {
   std::vector<float> opacities;
   std::vector<vec4> rotations;
   std::vector<vec3> scales;
-  std::vector<vec3> sh_coefficients;
+  std::vector<vec3> sh_coefficient_0;
+  std::vector<vec3> sh_coefficients_rest;
 };
 
 }  // namespace tinygs

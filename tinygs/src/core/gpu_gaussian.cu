@@ -16,7 +16,8 @@ void GPUGaussian3d::copy_from_host(const Gaussian3d& gaussians) {
   m_opacities.resize(num_gaussians);
   m_rotations.resize(num_gaussians);
   m_scales.resize(num_gaussians);
-  m_sh_coefficients.resize(num_gaussians * kMaxSphericalHarmonicsCoefficients);
+  m_sh_coefficient_0.resize(num_gaussians);
+  m_sh_coefficients_rest.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
 
   // TODO: directly copy use cudaMemcpy if the input is already in pinned memory
   // Copy directly from SoA host vectors to device vectors
@@ -24,7 +25,8 @@ void GPUGaussian3d::copy_from_host(const Gaussian3d& gaussians) {
   thrust::copy(gaussians.opacities.begin(), gaussians.opacities.end(), m_opacities.begin());
   thrust::copy(gaussians.rotations.begin(), gaussians.rotations.end(), m_rotations.begin());
   thrust::copy(gaussians.scales.begin(), gaussians.scales.end(), m_scales.begin());
-  thrust::copy(gaussians.sh_coefficients.begin(), gaussians.sh_coefficients.end(), m_sh_coefficients.begin());
+  thrust::copy(gaussians.sh_coefficient_0.begin(), gaussians.sh_coefficient_0.end(), m_sh_coefficient_0.begin());
+  thrust::copy(gaussians.sh_coefficients_rest.begin(), gaussians.sh_coefficients_rest.end(), m_sh_coefficients_rest.begin());
 }
 
 void GPUGaussian3d::copy_to_host(Gaussian3d& gaussians) {
@@ -36,14 +38,16 @@ void GPUGaussian3d::copy_to_host(Gaussian3d& gaussians) {
   gaussians.opacities.resize(num_gaussians);
   gaussians.rotations.resize(num_gaussians);
   gaussians.scales.resize(num_gaussians);
-  gaussians.sh_coefficients.resize(num_gaussians * kMaxSphericalHarmonicsCoefficients);
+  gaussians.sh_coefficient_0.resize(num_gaussians);
+  gaussians.sh_coefficients_rest.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
 
   // Copy directly from device vectors to SoA host vectors
   thrust::copy(m_means.begin(), m_means.end(), gaussians.means.begin());
   thrust::copy(m_opacities.begin(), m_opacities.end(), gaussians.opacities.begin());
   thrust::copy(m_rotations.begin(), m_rotations.end(), gaussians.rotations.begin());
   thrust::copy(m_scales.begin(), m_scales.end(), gaussians.scales.begin());
-  thrust::copy(m_sh_coefficients.begin(), m_sh_coefficients.end(), gaussians.sh_coefficients.begin());
+  thrust::copy(m_sh_coefficient_0.begin(), m_sh_coefficient_0.end(), gaussians.sh_coefficient_0.begin());
+  thrust::copy(m_sh_coefficients_rest.begin(), m_sh_coefficients_rest.end(), gaussians.sh_coefficients_rest.begin());
 }
 
 void GPUGaussian3d::memset_async(char value, cudaStream_t stream) {
@@ -51,7 +55,8 @@ void GPUGaussian3d::memset_async(char value, cudaStream_t stream) {
   CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_opacities.data()), value, sizeof(float) * m_opacities.size(), stream));
   CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_rotations.data()), value, sizeof(float4) * m_rotations.size(), stream));
   CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_scales.data()), value, sizeof(float3) * m_scales.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh_coefficients.data()), value, sizeof(float3) * m_sh_coefficients.size(), stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh_coefficient_0.data()), value, sizeof(float3) * m_sh_coefficient_0.size(), stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh_coefficients_rest.data()), value, sizeof(float3) * m_sh_coefficients_rest.size(), stream));
 }
 
 void GPUGaussian3d::memset(char value) {
@@ -59,7 +64,8 @@ void GPUGaussian3d::memset(char value) {
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_opacities.data()), value, sizeof(float) * m_opacities.size()));
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_rotations.data()), value, sizeof(float4) * m_rotations.size()));
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_scales.data()), value, sizeof(float3) * m_scales.size()));
-  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh_coefficients.data()), value, sizeof(float3) * m_sh_coefficients.size()));
+  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh_coefficient_0.data()), value, sizeof(float3) * m_sh_coefficient_0.size()));
+  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh_coefficients_rest.data()), value, sizeof(float3) * m_sh_coefficients_rest.size()));
 }
 
 std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {
@@ -68,7 +74,8 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {
   gaussians->m_opacities.resize(m_opacities.size());
   gaussians->m_rotations.resize(m_rotations.size());
   gaussians->m_scales.resize(m_scales.size());
-  gaussians->m_sh_coefficients.resize(m_sh_coefficients.size());
+  gaussians->m_sh_coefficient_0.resize(m_sh_coefficient_0.size());
+  gaussians->m_sh_coefficients_rest.resize(m_sh_coefficients_rest.size());
 
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_means.data()),
@@ -99,9 +106,16 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {
       stream));
 
   CUDA_CHECK_THROW(cudaMemcpyAsync(
-      thrust::raw_pointer_cast(gaussians->m_sh_coefficients.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients.data()),
-      sizeof(float3) * m_sh_coefficients.size(),
+      thrust::raw_pointer_cast(gaussians->m_sh_coefficient_0.data()),
+      thrust::raw_pointer_cast(m_sh_coefficient_0.data()),
+      sizeof(float3) * m_sh_coefficient_0.size(),
+      cudaMemcpyDeviceToDevice,
+      stream));
+
+  CUDA_CHECK_THROW(cudaMemcpyAsync(
+      thrust::raw_pointer_cast(gaussians->m_sh_coefficients_rest.data()),
+      thrust::raw_pointer_cast(m_sh_coefficients_rest.data()),
+      sizeof(float3) * m_sh_coefficients_rest.size(),
       cudaMemcpyDeviceToDevice,
       stream));
   return gaussians;
@@ -113,7 +127,8 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
   gaussians->m_opacities.resize(m_opacities.size());
   gaussians->m_rotations.resize(m_rotations.size());
   gaussians->m_scales.resize(m_scales.size());
-  gaussians->m_sh_coefficients.resize(m_sh_coefficients.size());
+  gaussians->m_sh_coefficient_0.resize(m_sh_coefficient_0.size());
+  gaussians->m_sh_coefficients_rest.resize(m_sh_coefficients_rest.size());
 
   CUDA_CHECK_THROW(cudaMemcpy(
       thrust::raw_pointer_cast(gaussians->m_means.data()),
@@ -140,9 +155,15 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
       cudaMemcpyDeviceToDevice));
 
   CUDA_CHECK_THROW(cudaMemcpy(
-      thrust::raw_pointer_cast(gaussians->m_sh_coefficients.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients.data()),
-      sizeof(float3) * m_sh_coefficients.size(),
+      thrust::raw_pointer_cast(gaussians->m_sh_coefficient_0.data()),
+      thrust::raw_pointer_cast(m_sh_coefficient_0.data()),
+      sizeof(float3) * m_sh_coefficient_0.size(),
+      cudaMemcpyDeviceToDevice));
+
+  CUDA_CHECK_THROW(cudaMemcpy(
+      thrust::raw_pointer_cast(gaussians->m_sh_coefficients_rest.data()),
+      thrust::raw_pointer_cast(m_sh_coefficients_rest.data()),
+      sizeof(float3) * m_sh_coefficients_rest.size(),
       cudaMemcpyDeviceToDevice));
   return gaussians;
 }

@@ -91,7 +91,7 @@ int main() {
     loss_ctx.loss = Image<float>(shape, ImageFormat::CHW, loss_buffer.data());
     loss_ctx.pred = params.fwd_output.image;
     loss_ctx.grad = Image<float>(shape, ImageFormat::CHW, out_image_grad.data());
-    loss_ctx.scale = 1.0f / ((float) width * height * 3);
+    loss_ctx.scale = 1.0f / static_cast<float>(width * height * 3);
 
     int frame_count = 0;
     bool should_stop = false;
@@ -108,8 +108,10 @@ int main() {
       loss_ctx.target = data.output.image;
 
       rasterizer.forward(params);
+      loss_ctx.scale = 0.8f / static_cast<float>(width * height * 3);
       l1_loss->evaluate(loss_ctx);
-      // ssim_loss->evaluate(loss_ctx);
+      loss_ctx.scale = 0.2f / static_cast<float>(width * height * 3);
+      ssim_loss->evaluate(loss_ctx);
 
       params.grad_output.image = loss_ctx.grad;
       params.grad_output.alpha = Image<float>(  //
@@ -149,7 +151,7 @@ int main() {
         cv::imshow("Visualization", vis_image);
 
         // Wait for key press
-        char key = cv::waitKey(0);
+        char key = cv::waitKey(1);
         if (key == 'q' || key == 'Q') {
           break;
         }

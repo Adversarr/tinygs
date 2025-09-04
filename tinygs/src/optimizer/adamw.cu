@@ -72,9 +72,12 @@ __global__ void launch_gaussian_adam_step_SoA(
   const vec3* __restrict__ scales_grad,
   vec3* __restrict__ scales_first_second,
   // Spherical Harmonics
-  vec3* __restrict__ sh_coefficients,
-  const vec3* __restrict__ sh_coefficients_grad,
-  vec3* __restrict__ sh_coefficients_first_second,
+  vec3* __restrict__ sh_coefficient_0,
+  const vec3* __restrict__ sh_coefficient_0_grad,
+  vec3* __restrict__ sh_coefficient_0_first_second,
+  vec3* __restrict__ sh_coefficients_rest,
+  const vec3* __restrict__ sh_coefficients_rest_grad,
+  vec3* __restrict__ sh_coefficients_rest_first_second,
   // other
   uint32_t* __restrict__ gaussian_steps,
   AdamWParameters adam_p,
@@ -86,11 +89,15 @@ __global__ void launch_gaussian_adam_step_SoA(
   if (idx >= num_gaussians) return;
 
   // accumulate all the gradients, to cull out zero gradient gaussians
+  float sh_grad_norm = sum(abs(sh_coefficient_0_grad[idx]));
+  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
+    sh_grad_norm += sum(abs(sh_coefficients_rest_grad[idx * (kMaxSphericalHarmonicsCoefficients - 1) + i]));
+  }
   const float grad_norm_1 = (
     sum(abs(means_grad[idx])) + abs(opacities_grad[idx]) +
     sum(abs(rotations_grad[idx])) +
     sum(abs(scales_grad[idx])) +
-    sum(abs(sh_coefficients_grad[idx]))
+    sh_grad_norm
   );
   if (grad_norm_1 == 0 && general_p.skip_zero_grad) return;
 
@@ -222,14 +229,32 @@ __global__ void launch_gaussian_adam_step_SoA(
     );
   }
 
-  { // spherical harmonics
-    int start = idx * kMaxSphericalHarmonicsCoefficients;
-    int end = start + kMaxSphericalHarmonicsCoefficients;
+  { // spherical harmonics - 0th coefficient
+    vec3& val = sh_coefficient_0[idx];
+    const vec3& grad = sh_coefficient_0_grad[idx];
+    vec3& first_moment = sh_coefficient_0_first_second[idx * 2];
+    vec3& second_moment = sh_coefficient_0_first_second[idx * 2 + 1];
+    adam_step_func(
+      val, grad, first_moment, second_moment,
+      general_p.shs_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.shs_l2, general_p.shs_l1,
+      0.0f,
+      general_p.max_grad_1,
+      loss_scale,
+      lower_lr_bound,
+      upper_lr_bound,
+      this_lr_scale
+    );
+  }
+
+  { // spherical harmonics - rest coefficients
+    int start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
+    int end = start + (kMaxSphericalHarmonicsCoefficients - 1);
     for (int i = start; i < end; i++) {
-      vec3& val = sh_coefficients[i];
-      const vec3& grad = sh_coefficients_grad[i];
-      vec3& first_moment = sh_coefficients_first_second[i * 2];
-      vec3& second_moment = sh_coefficients_first_second[i * 2 + 1];
+      vec3& val = sh_coefficients_rest[i];
+      const vec3& grad = sh_coefficients_rest_grad[i];
+      vec3& first_moment = sh_coefficients_rest_first_second[i * 2];
+      vec3& second_moment = sh_coefficients_rest_first_second[i * 2 + 1];
       adam_step_func(
         val, grad, first_moment, second_moment,
         general_p.shs_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
@@ -262,9 +287,12 @@ void AdamW::step(float scale) {
     thrust::raw_pointer_cast(m_gaussians->scales().data()),
     thrust::raw_pointer_cast(m_gaussians_grad->scales().data()),
     thrust::raw_pointer_cast(m_scales_first_second.data()),
-    thrust::raw_pointer_cast(m_gaussians->sh_coefficients().data()),
-    thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients().data()),
-    thrust::raw_pointer_cast(m_sh_coefficients_first_second.data()),
+    thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),
+    thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficient_0().data()),
+    thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
+    thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
+    thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
+    thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
     thrust::raw_pointer_cast(m_gaussian_steps.data()),
     m_adam_params,
     m_params,
@@ -295,7 +323,8 @@ void AdamW::reset() {
   m_opacities_first_second.resize(num_gaussians * 2, 0.f);
   m_rotations_first_second.resize(num_gaussians * 2, vec4(0.f));
   m_scales_first_second.resize(num_gaussians * 2, vec3(0.f));
-  m_sh_coefficients_first_second.resize(num_gaussians * 2 * kMaxSphericalHarmonicsCoefficients, vec3(0.f));
+  m_sh_coefficient_0_first_second.resize(num_gaussians * 2, vec3(0.f));
+  m_sh_coefficients_rest_first_second.resize(num_gaussians * 2 * (kMaxSphericalHarmonicsCoefficients - 1), vec3(0.f));
   m_gaussian_steps.resize(num_gaussians, 0);
 }
 

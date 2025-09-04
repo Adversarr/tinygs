@@ -136,7 +136,8 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   m_gaussians.opacities.resize(num_points);
   m_gaussians.rotations.resize(num_points, vec4(1.0f, 0.0f, 0.0f, 0.0f));
   m_gaussians.scales.resize(num_points);
-  m_gaussians.sh_coefficients.resize(num_points * kMaxSphericalHarmonicsCoefficients);
+  m_gaussians.sh_coefficient_0.resize(num_points);
+  m_gaussians.sh_coefficients_rest.resize(num_points * (kMaxSphericalHarmonicsCoefficients - 1));
 
   auto init_opa = -logf(1.0f / (fminf(fmaxf(m_params.init_opacity, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
   // Initialize gaussians using SoA structure
@@ -156,11 +157,11 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
     // Set spherical harmonics coefficients
     vec3 sh_color = rgb_to_sh(colors[i]);
     // vec3 sh_color = colors[i]; // Use raw color for better initialization
-    m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients] = sh_color;
+    m_gaussians.sh_coefficient_0[i] = sh_color;
 
-    // Initialize SH coefficients array
-    for (int j = 1; j < kMaxSphericalHarmonicsCoefficients; ++j) {
-      m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients + j] = vec3(0.0f);
+    // Initialize SH coefficients rest array
+    for (int j = 0; j < kMaxSphericalHarmonicsCoefficients - 1; ++j) {
+      m_gaussians.sh_coefficients_rest[i * (kMaxSphericalHarmonicsCoefficients - 1) + j] = vec3(0.0f);
     }
   }
 
@@ -168,12 +169,12 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   vec3 color_mean(0.0f);
   vec3 color_std(0.0f);
   for (int i = 0; i < num_points; ++i) {
-    color_mean += m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients];
+    color_mean += m_gaussians.sh_coefficient_0[i];
   }
   color_mean /= static_cast<float>(num_points);
   for (int i = 0; i < num_points; ++i) {
-    color_std += (m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients] - color_mean) *
-                 (m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients] - color_mean);
+    color_std += (m_gaussians.sh_coefficient_0[i] - color_mean) *
+                 (m_gaussians.sh_coefficient_0[i] - color_mean);
   }
   color_std = sqrt(color_std / static_cast<float>(num_points));
   log_info("Color mean={}, std={}", to_string(color_mean), to_string(color_std));

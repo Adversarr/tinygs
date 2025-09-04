@@ -23,33 +23,17 @@ inline __host__ __device__ float4 make_float4(vec4 v) {
 }
 
 struct FastGSRasterizer::Impl {
-  // use SoA to store the 2d gaussians.
-  // 1. 3d gaussian data.
-  GPUMemory<float3> primitive_mean3d;
-  GPUMemory<float3> primitive_scale;
-  GPUMemory<float4> primitive_rotation;
-  GPUMemory<float> primitive_opacity;
-  GPUMemory<float3> primitive_sh_coeffs_0;
-  GPUMemory<float3> primitive_sh_coeffs_rest;
   GPUMemory<float4> w2c;           // [4, 4]
   GPUMemory<float4> w2c_grad;      // [4, 4]
   GPUMemory<float3> cam_position;  // [3, ]
   size_t num_gaussians;
 
-  // 2. gradients
-  GPUMemory<float3> primitive_mean3d_grad;
-  GPUMemory<float3> primitive_scale_grad;
-  GPUMemory<float4> primitive_rotation_grad;
-  GPUMemory<float> primitive_opacity_grad;
-  GPUMemory<float3> primitive_sh_coeffs_0_grad;
-  GPUMemory<float3> primitive_sh_coeffs_rest_grad;
-
   // 3. helper
   int n_visible_primitives, n_instances, n_buckets;
   int primitive_primitive_indices_selector, instance_primitive_indices_selector;
-  // std::shared_ptr<GPUMemoryArena> arena;
-  // std::map<std::string, std::unique_ptr<GPUBuffer<char>>> temp_buffers;
-  std::map<std::string, thrust::device_vector<char>> temp_buffers;
+  std::shared_ptr<GPUMemoryArena> arena;
+  std::map<std::string, std::unique_ptr<GPUBuffer<char>>> temp_buffers;
+  // std::map<std::string, thrust::device_vector<char>> temp_buffers;
 
   Impl() : num_gaussians(0) {
     w2c = GPUMemory<float4>(4, true);
@@ -60,119 +44,18 @@ struct FastGSRasterizer::Impl {
   char* alloc(const std::string &name, size_t size) { 
     TINYGS_TIMER("FastGSRasterizer::Impl::alloc");
     auto& buffer = temp_buffers[name];
-    buffer.resize(size * 4);
-    return thrust::raw_pointer_cast(buffer.data());
-    // if (buffer == nullptr || buffer->size() < size) {
-    //   buffer = std::make_unique<GPUBuffer<char>>(arena, size);
-    // }
-    // return buffer->data();
-  }
-
-  void copy_from_ours(const GPUGaussian3d& ours) {
-    const auto& means = ours.means();
-    const auto& opacities = ours.opacities();
-    const auto& scale = ours.scales();
-    const auto& rotation = ours.rotations();
-    const auto& sh_coeffs = ours.sh_coefficients();
-
-    if (num_gaussians != ours.size()) {
-      throw std::runtime_error(fmt::format("Number of gaussians not match: impl={} vs input={}", num_gaussians, ours.size()));
+    // buffer.resize(size * 4);
+    // return thrust::raw_pointer_cast(buffer.data());
+    if (buffer == nullptr || buffer->size() < size) {
+      buffer = std::make_unique<GPUBuffer<char>>(arena, size);
     }
-
-    thrust::for_each(
-        thrust::device,
-        thrust::make_counting_iterator<int>(0),
-        thrust::make_counting_iterator<int>(ours.size()),
-        [
-          o_primitive_mean3d = thrust::raw_pointer_cast(primitive_mean3d.data()),
-          o_primitive_scale = thrust::raw_pointer_cast(primitive_scale.data()),
-          o_primitive_rotation = thrust::raw_pointer_cast(primitive_rotation.data()),
-          o_primitive_opacity = thrust::raw_pointer_cast(primitive_opacity.data()),
-          o_primitive_sh_coeffs_0 = thrust::raw_pointer_cast(primitive_sh_coeffs_0.data()),
-          o_primitive_sh_coeffs_rest = thrust::raw_pointer_cast(primitive_sh_coeffs_rest.data()),
-          i_means = thrust::raw_pointer_cast(means.data()),
-          i_opacities = thrust::raw_pointer_cast(opacities.data()),
-          i_scale = thrust::raw_pointer_cast(scale.data()),
-          i_rotation = thrust::raw_pointer_cast(rotation.data()),
-          i_sh_coeffs = thrust::raw_pointer_cast(sh_coeffs.data())
-        ] __device__(int idx) {
-      // Precompute indices
-      const int sh_coeffs_offset = idx * kMaxSphericalHarmonicsCoefficients;
-      const int sh_coeffs_rest_offset = idx * (kMaxSphericalHarmonicsCoefficients - 1);
-
-      // Perform assignments
-      o_primitive_mean3d[idx] = make_float3(i_means[idx]);
-      o_primitive_opacity[idx] = i_opacities[idx];
-      o_primitive_scale[idx] = make_float3(i_scale[idx]);
-      o_primitive_rotation[idx] = make_float4(i_rotation[idx]);
-      o_primitive_sh_coeffs_0[idx] = make_float3(i_sh_coeffs[sh_coeffs_offset]);
-
-      // Unroll loop for spherical harmonics coefficients
-      #pragma unroll
-      for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-        o_primitive_sh_coeffs_rest[sh_coeffs_rest_offset + i] =
-            make_float3(i_sh_coeffs[sh_coeffs_offset + 1 + i]);
-      }
-    });
-  }
-
-  void copy_to_ours(GPUGaussian3d& ours) {
-    auto& means = ours.means();
-    auto& opacities = ours.opacities();
-    auto& scale = ours.scales();
-    auto& rotation = ours.rotations();
-    auto& sh_coeffs = ours.sh_coefficients();
-
-    if (num_gaussians != ours.size()) {
-      throw std::runtime_error(fmt::format("Number of gaussians not match: impl={} vs input={}", num_gaussians, ours.size()));
-    }
-
-    CUDA_CHECK_THROW(cudaMemcpy(
-        thrust::raw_pointer_cast(means.data()), primitive_mean3d_grad.data(),
-        sizeof(float3) * ours.size(), cudaMemcpyDeviceToDevice));
-
-    CUDA_CHECK_THROW(cudaMemcpy(thrust::raw_pointer_cast(opacities.data()),
-                                primitive_opacity_grad.data(),
-                                sizeof(float) * ours.size(),
-                                cudaMemcpyDeviceToDevice));
-
-    CUDA_CHECK_THROW(cudaMemcpy(
-        thrust::raw_pointer_cast(scale.data()), primitive_scale_grad.data(),
-        sizeof(float3) * ours.size(), cudaMemcpyDeviceToDevice));
-
-    CUDA_CHECK_THROW(cudaMemcpy(thrust::raw_pointer_cast(rotation.data()),
-                                primitive_rotation_grad.data(),
-                                sizeof(float4) * ours.size(),
-                                cudaMemcpyDeviceToDevice));
-
-    thrust::for_each(
-        thrust::device,
-        thrust::make_counting_iterator<int>(0),
-        thrust::make_counting_iterator<int>(ours.size()),
-        [
-          i_primitive_sh_coeffs_0 = thrust::raw_pointer_cast(primitive_sh_coeffs_0_grad.data()),
-          i_primitive_sh_coeffs_rest = thrust::raw_pointer_cast(primitive_sh_coeffs_rest_grad.data()),
-          o_sh_coeffs = thrust::raw_pointer_cast(sh_coeffs.data())
-        ] __device__(int idx) {
-      // Precompute indices
-      const int sh_coeffs_offset = idx * kMaxSphericalHarmonicsCoefficients;
-      const int sh_coeffs_rest_offset = idx * (kMaxSphericalHarmonicsCoefficients - 1);
-
-      // Perform assignments
-      o_sh_coeffs[sh_coeffs_offset] = to_vec3(i_primitive_sh_coeffs_0[idx]);
-
-      // Unroll loop for spherical harmonics coefficients
-      for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-        o_sh_coeffs[sh_coeffs_offset + 1 + i] =
-            to_vec3(i_primitive_sh_coeffs_rest[sh_coeffs_rest_offset + i]);
-      }
-    });
+    return buffer->data();
   }
 };
 
 FastGSRasterizer::FastGSRasterizer() {
     m_impl = std::make_unique<Impl>();
-    // m_impl->arena = m_memory_arena;
+    m_impl->arena = m_memory_arena;
 }
 
 void FastGSRasterizer::forward(const RasterizeContext& params) {
@@ -181,7 +64,6 @@ void FastGSRasterizer::forward(const RasterizeContext& params) {
         throw std::runtime_error("Gaussians not set");
     }
 
-    m_impl->copy_from_ours(*m_gaussians);
     const mat4x4 &w2c = params.fwd_input.w2c;
     mat4x4 c2w = inverse(w2c);
 
@@ -212,6 +94,13 @@ void FastGSRasterizer::forward(const RasterizeContext& params) {
     const float cx = params.fwd_input.K[2][0];
     const float cy = params.fwd_input.K[2][1];
 
+    const auto& means = m_gaussians->means();
+    const auto& scales = m_gaussians->scales();
+    const auto& rotations = m_gaussians->rotations();
+    const auto& opacities = m_gaussians->opacities();
+    const auto& sh_coeffs_0 = m_gaussians->sh_coefficient_0();
+    const auto& sh_coeffs_rest = m_gaussians->sh_coefficients_rest();
+
     auto [n_visible_primitives, n_instances, n_buckets,
           primitive_primitive_indices_selector,
           instance_primitive_indices_selector] =
@@ -220,12 +109,12 @@ void FastGSRasterizer::forward(const RasterizeContext& params) {
             per_tile_buffers_func,       //
             per_instance_buffers_func,   //
             per_bucket_buffers_func,     //
-            /* means */ m_impl->primitive_mean3d.data(),
-            /* scales */ m_impl->primitive_scale.data(),
-            /* rotations */ m_impl->primitive_rotation.data(),
-            /* opacities */ m_impl->primitive_opacity.data(),
-            /* sh_coeffs */ m_impl->primitive_sh_coeffs_0.data(),
-            /* sh_coeffs_rest */ m_impl->primitive_sh_coeffs_rest.data(),
+            /* means */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(means.data())),
+            /* scales */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(scales.data())),
+            /* rotations */ reinterpret_cast<const float4*>(thrust::raw_pointer_cast(rotations.data())),
+            /* opacities */ thrust::raw_pointer_cast(opacities.data()),
+            /* sh_coeffs */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_0.data())),
+            /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_rest.data())),
             /* w2c */ m_impl->w2c.data(),
             /* cam_position */ m_impl->cam_position.data(),
             /* image */ params.fwd_output.image.data,
@@ -265,12 +154,19 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   float cy = params.fwd_input.K[2][1];
 
   // zero grad buffer.
-  m_impl->primitive_mean3d_grad.memset(0);
-  m_impl->primitive_scale_grad.memset(0);
-  m_impl->primitive_rotation_grad.memset(0);
-  m_impl->primitive_opacity_grad.memset(0);
-  m_impl->primitive_sh_coeffs_0_grad.memset(0);
-  m_impl->primitive_sh_coeffs_rest_grad.memset(0);
+  auto& means_grad = params.gaussians_grad->means();
+  auto& scales_grad = params.gaussians_grad->scales();
+  auto& rotations_grad = params.gaussians_grad->rotations();
+  auto& opacities_grad = params.gaussians_grad->opacities();
+  auto& sh_coeffs_0_grad = params.gaussians_grad->sh_coefficient_0();
+  auto& sh_coeffs_rest_grad = params.gaussians_grad->sh_coefficients_rest();
+  
+  // thrust::fill(means_grad.begin(), means_grad.end(), vec3(0.0f, 0.0f, 0.0f));
+  // thrust::fill(scales_grad.begin(), scales_grad.end(), vec3(0.0f, 0.0f, 0.0f));
+  // thrust::fill(rotations_grad.begin(), rotations_grad.end(), vec4(0.0f, 0.0f, 0.0f, 0.0f));
+  // thrust::fill(opacities_grad.begin(), opacities_grad.end(), 0.0f);
+  // thrust::fill(sh_coeffs_0_grad.begin(), sh_coeffs_0_grad.end(), vec3(0.0f, 0.0f, 0.0f));
+  // thrust::fill(sh_coeffs_rest_grad.begin(), sh_coeffs_rest_grad.end(), vec3(0.0f, 0.0f, 0.0f));
   m_impl->w2c_grad.memset(0);
 
   fast_gs::rasterization::backward(
@@ -278,26 +174,22 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* grad_alpha */ params.grad_output.alpha.data,
     /* image */ params.fwd_output.image.data,
     /* alpha */ params.fwd_output.alpha.data,
-    /* means */ m_impl->primitive_mean3d.data(),
-    /* scales */ m_impl->primitive_scale.data(),
-    /* rotations */ m_impl->primitive_rotation.data(),
-    /* sh_coeffs_rest */ m_impl->primitive_sh_coeffs_rest.data(),
+    /* means */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
+    /* scales */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
+    /* rotations */ reinterpret_cast<const float4*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
+    /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data())),
     /* w2c */ m_impl->w2c.data(),
     /* cam_position */ m_impl->cam_position.data(),
-    // /* per_primitive_buffers_blob */ m_impl->temp_buffers["per_primitive_buffers"]->data(),
-    // /* per_tile_buffers_blob */ m_impl->temp_buffers["per_tile_buffers"]->data(),
-    // /* per_instance_buffers_blob */ m_impl->temp_buffers["per_instance_buffers"]->data(),
-    // /* per_bucket_buffers_blob */ m_impl->temp_buffers["per_bucket_buffers"]->data(),
-    /* per_primitive_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_primitive_buffers"].data()),
-    /* per_tile_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_tile_buffers"].data()),
-    /* per_instance_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_instance_buffers"].data()),
-    /* per_bucket_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_bucket_buffers"].data()),
-    /* grad_means */ m_impl->primitive_mean3d_grad.data(),
-    /* grad_scales */ m_impl->primitive_scale_grad.data(),
-    /* grad_rotations */ m_impl->primitive_rotation_grad.data(),
-    /* grad_opacities */ m_impl->primitive_opacity_grad.data(),
-    /* grad_sh_coeffs */ m_impl->primitive_sh_coeffs_0_grad.data(),
-    /* grad_sh_coeffs_rest */ m_impl->primitive_sh_coeffs_rest_grad.data(),
+    /* per_primitive_buffers_blob */ (m_impl->temp_buffers["per_primitive_buffers"]->data()),
+    /* per_tile_buffers_blob */ (m_impl->temp_buffers["per_tile_buffers"]->data()),
+    /* per_instance_buffers_blob */ (m_impl->temp_buffers["per_instance_buffers"]->data()),
+    /* per_bucket_buffers_blob */ (m_impl->temp_buffers["per_bucket_buffers"]->data()),
+    /* grad_means */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(means_grad.data())),
+    /* grad_scales */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(scales_grad.data())),
+    /* grad_rotations */ reinterpret_cast<float4*>(thrust::raw_pointer_cast(rotations_grad.data())),
+    /* grad_opacities */ thrust::raw_pointer_cast(opacities_grad.data()),
+    /* grad_sh_coeffs */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(sh_coeffs_0_grad.data())),
+    /* grad_sh_coeffs_rest */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(sh_coeffs_rest_grad.data())),
     /* grad_mean2d_helper */  reinterpret_cast<float2*>(grad_mean2d_helper),
     /* grad_conic_helper */ reinterpret_cast<float*>(grad_conic_helper),
     /* grad_w2c */ m_impl->w2c_grad.data(),
@@ -318,9 +210,6 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* cy */ cy
   );
   CUDA_CHECK_THROW(cudaDeviceSynchronize());
-
-  // copy back to ours.
-  m_impl->copy_to_ours(*params.gaussians_grad);
 }
 
 FastGSRasterizer::~FastGSRasterizer() {}
@@ -329,22 +218,6 @@ void FastGSRasterizer::set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians) {
   m_gaussians = gaussians;
   const auto n_gaussians = m_gaussians->size();
   m_impl->num_gaussians = n_gaussians;
-
-  /// prepare all the buffers in impl.
-  // 1. original
-  m_impl->primitive_mean3d.resize(n_gaussians);
-  m_impl->primitive_opacity.resize(n_gaussians);
-  m_impl->primitive_scale.resize(n_gaussians);
-  m_impl->primitive_rotation.resize(n_gaussians);
-  m_impl->primitive_sh_coeffs_0.resize(n_gaussians);
-  m_impl->primitive_sh_coeffs_rest.resize(n_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
-  // 2. grads
-  m_impl->primitive_mean3d_grad.resize(n_gaussians);
-  m_impl->primitive_opacity_grad.resize(n_gaussians);
-  m_impl->primitive_scale_grad.resize(n_gaussians);
-  m_impl->primitive_rotation_grad.resize(n_gaussians);
-  m_impl->primitive_sh_coeffs_0_grad.resize(n_gaussians);
-  m_impl->primitive_sh_coeffs_rest_grad.resize(n_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
 }
 
 } // namespace tinygs

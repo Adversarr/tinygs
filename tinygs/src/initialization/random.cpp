@@ -81,7 +81,8 @@ void RandomInitialization::initialize(const PointCloud&  /*pointcloud*/) {
   m_gaussians.opacities.resize(num_points);
   m_gaussians.rotations.resize(num_points);
   m_gaussians.scales.resize(num_points);
-  m_gaussians.sh_coefficients.resize(num_points * kMaxSphericalHarmonicsCoefficients);
+  m_gaussians.sh_coefficient_0.resize(num_points);
+  m_gaussians.sh_coefficients_rest.resize(num_points * (kMaxSphericalHarmonicsCoefficients - 1));
   
   // Initialize gaussians using SoA structure
 #pragma omp parallel for
@@ -110,11 +111,11 @@ void RandomInitialization::initialize(const PointCloud&  /*pointcloud*/) {
     
     // Set spherical harmonics coefficients
     vec3 sh_color = rgb_to_sh(colors[i]);
-    m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients] = sh_color;
+    m_gaussians.sh_coefficient_0[i] = sh_color;
     
     // Initialize remaining SH coefficients to zero
-    for (int j = 1; j < kMaxSphericalHarmonicsCoefficients; ++j) {
-      m_gaussians.sh_coefficients[i * kMaxSphericalHarmonicsCoefficients + j] = vec3(0.0f);
+    for (int j = 0; j < kMaxSphericalHarmonicsCoefficients - 1; ++j) {
+      m_gaussians.sh_coefficients_rest[i * (kMaxSphericalHarmonicsCoefficients - 1) + j] = vec3(0.0f);
     }
   }
   

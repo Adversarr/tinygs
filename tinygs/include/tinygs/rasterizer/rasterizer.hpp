@@ -41,7 +41,7 @@ public:
 
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
-  // std::shared_ptr<GPUMemoryArena> m_memory_arena;
+  std::shared_ptr<GPUMemoryArena> m_memory_arena;
 };
 
 }

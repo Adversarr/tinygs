@@ -22,14 +22,16 @@ public:
   const thrust::device_vector<float>& opacities() const { return m_opacities; }
   const thrust::device_vector<vec4>& rotations() const { return m_rotations; }
   const thrust::device_vector<vec3>& scales() const { return m_scales; }
-  const thrust::device_vector<vec3>& sh_coefficients() const { return m_sh_coefficients; }
+  const thrust::device_vector<vec3>& sh_coefficient_0() const { return m_sh_coefficient_0; }
+  const thrust::device_vector<vec3>& sh_coefficients_rest() const { return m_sh_coefficients_rest; }
   const thrust::device_vector<vec2>& densification_info() const { return m_densification_info; }
 
   thrust::device_vector<vec3>& means() { return m_means; }
   thrust::device_vector<float>& opacities() { return m_opacities; }
   thrust::device_vector<vec4>& rotations() { return m_rotations; }
   thrust::device_vector<vec3>& scales() { return m_scales; }
-  thrust::device_vector<vec3>& sh_coefficients() { return m_sh_coefficients; }
+  thrust::device_vector<vec3>& sh_coefficient_0() { return m_sh_coefficient_0; }
+  thrust::device_vector<vec3>& sh_coefficients_rest() { return m_sh_coefficients_rest; }
   thrust::device_vector<vec2>& densification_info() { return m_densification_info; }
 
   std::unique_ptr<GPUGaussian3d> clone_async(cudaStream_t stream = 0);
@@ -58,7 +60,9 @@ private:
   // scales are packed in a single vec3
   thrust::device_vector<vec3> m_scales;
   // sh coefficients are packed in a single vec3, 16 coefficients per color.
-  thrust::device_vector<vec3> m_sh_coefficients;
+  // thrust::device_vector<vec3> m_sh_coefficients;
+  thrust::device_vector<vec3> m_sh_coefficient_0;
+  thrust::device_vector<vec3> m_sh_coefficients_rest;
 };
 
 }  // namespace tinygs
