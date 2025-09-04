@@ -94,19 +94,16 @@ int main() {
   loss_ctx.scale = 1.0f / static_cast<float>(width * height * 3);
 
   auto strategy = std::make_unique<DefaultStrategy>(gs3d);
-  strategy->set_pre_remove_callback([&gs3d, &optimizer](char* kept_flag, int num_kept) {
+  strategy->set_pre_remove_callback([&](char* kept_flag, int num_kept) {
     gs3d->remove(kept_flag, num_kept);
+    grads->remove(kept_flag, num_kept);
     optimizer->remove(kept_flag, num_kept);
   });
   strategy->set_post_duplicate_callback([&](int* src, int* dst, int num_duplications) {
     if (num_duplications <= 0) return;
-    out_image.check_guards(); log_info("pre_append");
     gs3d->append(num_duplications); // It is strategy's responsibility to update the gaussians.
-    out_image.check_guards(); log_info("pre_append grad");
     grads->append(num_duplications);
-    out_image.check_guards(); log_info("append");
     optimizer->duplicate(src, dst, num_duplications);
-    out_image.check_guards(); log_info("post_append");
   });
 
   int frame_count = 0;
@@ -127,21 +124,17 @@ int main() {
     io.input.w2c = data.input.w2c;
     rasterize_ctx.fwd_input = io.input;
     loss_ctx.target = data.output.image;
-    out_image.check_guards();
     rasterizer.forward(rasterize_ctx);
-    out_image.check_guards();
     loss_ctx.scale = 1.0f / static_cast<float>(width * height * 3);
     l1_loss->evaluate(loss_ctx);
     // loss_ctx.scale = 0.2f / static_cast<float>(width * height * 3);
     // ssim_loss->evaluate(loss_ctx);
-    out_image.check_guards();
 
     rasterize_ctx.grad_output.image = loss_ctx.grad;
     rasterize_ctx.grad_output.alpha = Image<float>(  //
         shape, ImageFormat::CHW,                     //
         loss_buffer.data() + shape.width * shape.height * 3);
     rasterizer.backward(rasterize_ctx);
-    out_image.check_guards();
 
     if (frame_count % 100 == 0) {
       auto now = std::chrono::steady_clock::now();
@@ -180,12 +173,12 @@ int main() {
         break;
       }
     }
-    out_image.check_guards();
     optimizer->step(1.0f);
-    out_image.check_guards();
-    strategy->step(rasterize_ctx);
-    out_image.check_guards();
-    rasterize_ctx.densification_info = std::make_shared<GPUBuffer<float>>(gs3d->size() * 2);
+
+    if (frame_count % 100 == 0) {
+      strategy->step(rasterize_ctx);
+      rasterize_ctx.densification_info = std::make_shared<GPUBuffer<float>>(gs3d->size() * 2);
+    }
 
     frame_count++;
   }

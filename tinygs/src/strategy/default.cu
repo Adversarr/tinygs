@@ -101,8 +101,6 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   }
 
   this->post_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows);
-  return;
-
   // Now gaussians should have (num_gaussians + nums_duplicated) gaussians
   if (num_gaussians + num_grows != m_gaussians->size()) {
     log_error("Grow gaussians failed, expected {} gaussians, but got {}",
