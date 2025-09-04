@@ -193,6 +193,9 @@ inline size_t cuda_memory_granularity() {
   return cuda_memory_granularity(cuda_device());
 }
 
+/// Checks that the current CUDA device supports the features required by TinyGS
+void check_features_supported();
+
 // Hash helpers taken from https://stackoverflow.com/a/50978188
 template <typename T>
 T xorshift(T n, int i) {

@@ -39,11 +39,9 @@ public:
   /// Called when the gaussians are changed. (especially the number of gaussians)
   virtual void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians);
 
-  std::shared_ptr<GPUMemoryArena> memory_arena() { return m_memory_arena; }
-
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
-  std::shared_ptr<GPUMemoryArena> m_memory_arena;
+  // std::shared_ptr<GPUMemoryArena> m_memory_arena;
 };
 
 }

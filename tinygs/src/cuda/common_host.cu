@@ -226,6 +226,20 @@ bool cuda_supports_virtual_memory(int device) {
 	return supports_vmm != 0;
 }
 
+void check_features_supported() {
+	int cuda_version = cuda_runtime_version();
+	// 1. CUDA version > 11.0
+	// 2. Device supports virtual memory
+	if (cuda_version < 11000) {
+			throw std::runtime_error{"CUDA version must be at least 11.0"};
+	}
+
+	int device = cuda_device();
+	if (!cuda_supports_virtual_memory(device)) {
+			throw std::runtime_error{fmt::format("Device {} does not support virtual memory management", device)};
+	}
+}
+
 std::unordered_map<int, cudaDeviceProp>& cuda_device_properties() {
 	static auto* cuda_device_props = new std::unordered_map<int, cudaDeviceProp>{};
 	return *cuda_device_props;

@@ -5,12 +5,14 @@
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 
+#include "tinygs/cuda/reduce.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/dataset/png_folder.hpp"
 #include "tinygs/initialization/knn.hpp"
+#include "tinygs/loss/fused_ssim.hpp"
 #include "tinygs/loss/l1.hpp"
 #include "tinygs/optim/adamw.hpp"
 #include "tinygs/rasterizer/fastgs.hpp"
@@ -49,8 +51,7 @@ int main() {
     // Prepare Render data.
     auto gs3d = std::make_shared<tinygs::GPUGaussian3d>();
     gs3d->copy_from_host(init_result);
-    std::shared_ptr<tinygs::GPUGaussian3d> grads = gs3d->clone_async();
-    grads->memset();
+    std::shared_ptr<tinygs::GPUGaussian3d> grads = gs3d->clone();
 
     tinygs::GPUBatchInputOutput io;
     io.input.width = width;
@@ -84,8 +85,8 @@ int main() {
     // Loss
     GPUBuffer<float> loss_buffer = GPUBuffer<float>(shape.width * shape.height * 4);
     tinygs::GPUMemory<float> out_image_grad(width * height * 3);
-    out_image_grad.memset(0);
     auto l1_loss = std::make_unique<tinygs::L1Loss>();
+    auto ssim_loss = std::make_unique<tinygs::FusedSSIMLoss>();
     LossContext loss_ctx;
     loss_ctx.loss = Image<float>(shape, ImageFormat::CHW, loss_buffer.data());
     loss_ctx.pred = params.fwd_output.image;
@@ -94,8 +95,10 @@ int main() {
 
     int frame_count = 0;
     bool should_stop = false;
+    auto beg = std::chrono::steady_clock::now();
+    auto last = beg;
     while (!should_stop) {
-      grads->memset();
+      grads->memset(0);
       loss_buffer.memset(0);
       out_image_grad.memset(0);
       auto data = loader.next();
@@ -105,49 +108,56 @@ int main() {
       loss_ctx.target = data.output.image;
 
       rasterizer.forward(params);
-
       l1_loss->evaluate(loss_ctx);
-
-      log_info("loss: {}", sum_loss(loss_ctx));
+      // ssim_loss->evaluate(loss_ctx);
 
       params.grad_output.image = loss_ctx.grad;
       params.grad_output.alpha = Image<float>(  //
           shape, ImageFormat::CHW,              //
           loss_buffer.data() + shape.width * shape.height * 3);
       rasterizer.backward(params);
-      optimizer->step(0.0f);
+      CUDA_CHECK_THROW(cudaDeviceSynchronize());
+      if (frame_count % 100 == 0) {
+        auto now = std::chrono::steady_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - beg);
+        log_info("step {} loss: {} time: {}ms/100step, {}s elapsed", frame_count, //
+          gpu_sum(loss_ctx.loss.data, shape.width * shape.height * 3), duration.count(),
+          std::chrono::duration_cast<std::chrono::seconds>(now - last).count());
+        beg = now;
 
-      // Visualize RGB
-      std::vector<float> h_img(width * height * 3);
-      out_image.copy_to_host(h_img); // CHW format 
+        // Visualize RGB
+        std::vector<float> h_img(width * height * 3);
+        out_image.copy_to_host(h_img); // CHW format
 
-      std::vector<uint8_t> h_img_hwc(width * height * 3);
-      for (int h = 0; h < height; h++) {
-        for (int w = 0; w < width; w++) {
-          for (int c = 0; c < 3; c++) {
-            // CHW format: data is stored as [C0H0W0, C0H0W1, ..., C0H1W0, ..., C1H0W0, ...]
-            int chw_idx = c * height * width + h * width + w;
-            // HWC format: data is stored as [H0W0C0, H0W0C1, H0W0C2, H0W1C0, ...]
-            int hwc_idx = h * width * 3 + w * 3 + c;
-            h_img_hwc[hwc_idx] = static_cast<uint8_t>(h_img[chw_idx] * 255.0f);
+        std::vector<uint8_t> h_img_hwc(width * height * 3);
+        for (int h = 0; h < height; h++) {
+          for (int w = 0; w < width; w++) {
+            for (int c = 0; c < 3; c++) {
+              // CHW format: data is stored as [C0H0W0, C0H0W1, ..., C0H1W0, ..., C1H0W0, ...]
+              int chw_idx = c * height * width + h * width + w;
+              // HWC format: data is stored as [H0W0C0, H0W0C1, H0W0C2, H0W1C0, ...]
+              int hwc_idx = h * width * 3 + w * 3 + c;
+              h_img_hwc[hwc_idx] = static_cast<uint8_t>(h_img[chw_idx] * 255.0f);
+            }
           }
         }
-      }
 
-      cv::Mat vis_image(height, width, CV_8UC3, h_img_hwc.data());
-      
-      // Add frame counter to the image
-      std::string frame_text = "Frame: " + std::to_string(frame_count);
-      cv::putText(vis_image, frame_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
-      
-      cv::imshow("Visualization", vis_image);
-      
-      // Wait for key press
-      char key = cv::waitKey(0);
-      if (key == 'q' || key == 'Q') {
-        break;
+        // Add frame counter to the image
+        cv::Mat vis_image(height, width, CV_8UC3, h_img_hwc.data());
+        std::string frame_text = "Frame: " + std::to_string(frame_count);
+        cv::putText(vis_image, frame_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
+        cv::imshow("Visualization", vis_image);
+
+        // Wait for key press
+        char key = cv::waitKey(0);
+        if (key == 'q' || key == 'Q') {
+          break;
+        }
       }
-      
+      optimizer->step(1.0f);
+
+
+
       frame_count++;
     }
 

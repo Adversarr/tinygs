@@ -47,22 +47,25 @@ struct FastGSRasterizer::Impl {
   // 3. helper
   int n_visible_primitives, n_instances, n_buckets;
   int primitive_primitive_indices_selector, instance_primitive_indices_selector;
-  std::shared_ptr<GPUMemoryArena> arena;
-  std::map<std::string, std::unique_ptr<GPUBuffer<char>>> temp_buffers;
+  // std::shared_ptr<GPUMemoryArena> arena;
+  // std::map<std::string, std::unique_ptr<GPUBuffer<char>>> temp_buffers;
+  std::map<std::string, thrust::device_vector<char>> temp_buffers;
 
   Impl() : num_gaussians(0) {
     w2c = GPUMemory<float4>(4, true);
     w2c_grad = GPUMemory<float4>(4, true);
     cam_position = GPUMemory<float3>(1, true);
   }
+
   char* alloc(const std::string &name, size_t size) { 
     TINYGS_TIMER("FastGSRasterizer::Impl::alloc");
     auto& buffer = temp_buffers[name];
-    if (buffer == nullptr || buffer->size() < size) {
-      buffer = std::make_unique<GPUBuffer<char>>(arena, size);
-    }
-
-    return buffer->data();
+    buffer.resize(size * 4);
+    return thrust::raw_pointer_cast(buffer.data());
+    // if (buffer == nullptr || buffer->size() < size) {
+    //   buffer = std::make_unique<GPUBuffer<char>>(arena, size);
+    // }
+    // return buffer->data();
   }
 
   void copy_from_ours(const GPUGaussian3d& ours) {
@@ -124,21 +127,31 @@ struct FastGSRasterizer::Impl {
       throw std::runtime_error(fmt::format("Number of gaussians not match: impl={} vs input={}", num_gaussians, ours.size()));
     }
 
+    CUDA_CHECK_THROW(cudaMemcpy(
+        thrust::raw_pointer_cast(means.data()), primitive_mean3d_grad.data(),
+        sizeof(float3) * ours.size(), cudaMemcpyDeviceToDevice));
+
+    CUDA_CHECK_THROW(cudaMemcpy(thrust::raw_pointer_cast(opacities.data()),
+                                primitive_opacity_grad.data(),
+                                sizeof(float) * ours.size(),
+                                cudaMemcpyDeviceToDevice));
+
+    CUDA_CHECK_THROW(cudaMemcpy(
+        thrust::raw_pointer_cast(scale.data()), primitive_scale_grad.data(),
+        sizeof(float3) * ours.size(), cudaMemcpyDeviceToDevice));
+
+    CUDA_CHECK_THROW(cudaMemcpy(thrust::raw_pointer_cast(rotation.data()),
+                                primitive_rotation_grad.data(),
+                                sizeof(float4) * ours.size(),
+                                cudaMemcpyDeviceToDevice));
+
     thrust::for_each(
         thrust::device,
         thrust::make_counting_iterator<int>(0),
         thrust::make_counting_iterator<int>(ours.size()),
         [
-          i_primitive_mean3d = thrust::raw_pointer_cast(primitive_mean3d.data()),
-          i_primitive_scale = thrust::raw_pointer_cast(primitive_scale.data()),
-          i_primitive_rotation = thrust::raw_pointer_cast(primitive_rotation.data()),
-          i_primitive_opacity = thrust::raw_pointer_cast(primitive_opacity.data()),
-          i_primitive_sh_coeffs_0 = thrust::raw_pointer_cast(primitive_sh_coeffs_0.data()),
-          i_primitive_sh_coeffs_rest = thrust::raw_pointer_cast(primitive_sh_coeffs_rest.data()),
-          o_means = thrust::raw_pointer_cast(means.data()),
-          o_opacities = thrust::raw_pointer_cast(opacities.data()),
-          o_scale = thrust::raw_pointer_cast(scale.data()),
-          o_rotation = thrust::raw_pointer_cast(rotation.data()),
+          i_primitive_sh_coeffs_0 = thrust::raw_pointer_cast(primitive_sh_coeffs_0_grad.data()),
+          i_primitive_sh_coeffs_rest = thrust::raw_pointer_cast(primitive_sh_coeffs_rest_grad.data()),
           o_sh_coeffs = thrust::raw_pointer_cast(sh_coeffs.data())
         ] __device__(int idx) {
       // Precompute indices
@@ -146,14 +159,9 @@ struct FastGSRasterizer::Impl {
       const int sh_coeffs_rest_offset = idx * (kMaxSphericalHarmonicsCoefficients - 1);
 
       // Perform assignments
-      o_means[idx] = to_vec3(i_primitive_mean3d[idx]);
-      o_opacities[idx] = i_primitive_opacity[idx];
-      o_scale[idx] = to_vec3(i_primitive_scale[idx]);
-      o_rotation[idx] = to_vec4(i_primitive_rotation[idx]);
       o_sh_coeffs[sh_coeffs_offset] = to_vec3(i_primitive_sh_coeffs_0[idx]);
 
       // Unroll loop for spherical harmonics coefficients
-      #pragma unroll
       for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
         o_sh_coeffs[sh_coeffs_offset + 1 + i] =
             to_vec3(i_primitive_sh_coeffs_rest[sh_coeffs_rest_offset + i]);
@@ -162,11 +170,9 @@ struct FastGSRasterizer::Impl {
   }
 };
 
-
-
 FastGSRasterizer::FastGSRasterizer() {
     m_impl = std::make_unique<Impl>();
-    m_impl->arena = m_memory_arena;
+    // m_impl->arena = m_memory_arena;
 }
 
 void FastGSRasterizer::forward(const RasterizeContext& params) {
@@ -205,7 +211,6 @@ void FastGSRasterizer::forward(const RasterizeContext& params) {
     const float fy = params.fwd_input.K[1][1];
     const float cx = params.fwd_input.K[2][0];
     const float cy = params.fwd_input.K[2][1];
-    log_debug("Render with fx={} fy={} cx={} cy={}", fx, fy, cx, cy);
 
     auto [n_visible_primitives, n_instances, n_buckets,
           primitive_primitive_indices_selector,
@@ -251,8 +256,8 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   const auto n_gaussians = m_gaussians->size();
   char* grad_mean2d_helper = m_impl->alloc("grad_mean2d_helper", sizeof(float2) * n_gaussians);
   char* grad_conic_helper = m_impl->alloc("grad_conic_helper", sizeof(float3) * n_gaussians);
-  CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, params.stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, params.stream));
+  CUDA_CHECK_THROW(cudaMemset(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians));
+  CUDA_CHECK_THROW(cudaMemset(grad_conic_helper, 0, sizeof(float3) * n_gaussians));
 
   float fx = params.fwd_input.K[0][0];
   float fy = params.fwd_input.K[1][1];
@@ -279,10 +284,14 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* sh_coeffs_rest */ m_impl->primitive_sh_coeffs_rest.data(),
     /* w2c */ m_impl->w2c.data(),
     /* cam_position */ m_impl->cam_position.data(),
-    /* per_primitive_buffers_blob */ m_impl->temp_buffers["per_primitive_buffers"]->data(),
-    /* per_tile_buffers_blob */ m_impl->temp_buffers["per_tile_buffers"]->data(),
-    /* per_instance_buffers_blob */ m_impl->temp_buffers["per_instance_buffers"]->data(),
-    /* per_bucket_buffers_blob */ m_impl->temp_buffers["per_bucket_buffers"]->data(),
+    // /* per_primitive_buffers_blob */ m_impl->temp_buffers["per_primitive_buffers"]->data(),
+    // /* per_tile_buffers_blob */ m_impl->temp_buffers["per_tile_buffers"]->data(),
+    // /* per_instance_buffers_blob */ m_impl->temp_buffers["per_instance_buffers"]->data(),
+    // /* per_bucket_buffers_blob */ m_impl->temp_buffers["per_bucket_buffers"]->data(),
+    /* per_primitive_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_primitive_buffers"].data()),
+    /* per_tile_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_tile_buffers"].data()),
+    /* per_instance_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_instance_buffers"].data()),
+    /* per_bucket_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_bucket_buffers"].data()),
     /* grad_means */ m_impl->primitive_mean3d_grad.data(),
     /* grad_scales */ m_impl->primitive_scale_grad.data(),
     /* grad_rotations */ m_impl->primitive_rotation_grad.data(),
@@ -308,6 +317,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* cx */ cx,
     /* cy */ cy
   );
+  CUDA_CHECK_THROW(cudaDeviceSynchronize());
 
   // copy back to ours.
   m_impl->copy_to_ours(*params.gaussians_grad);

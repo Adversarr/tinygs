@@ -1077,25 +1077,23 @@ struct FusedSSIMLoss::Impl {
 
 FusedSSIMLoss::~FusedSSIMLoss() {}
 
-inline FusedSSIMLoss::FusedSSIMLoss() {
+FusedSSIMLoss::FusedSSIMLoss() {
   m_impl = std::make_unique<Impl>();
 }
-
 
 void FusedSSIMLoss::evaluate(LossContext ctx) {
     int H = ctx.pred.shape.height;
     int W = ctx.pred.shape.width;
     int CH = ctx.pred.shape.channel;
-
     dim3 grid((W + BLOCK_X - 1) / BLOCK_X, (H + BLOCK_Y - 1) / BLOCK_Y,
               /*batch_size*/ 1);
     dim3 block(BLOCK_X, BLOCK_Y);
     m_impl->ensure(H * W * CH, ctx.stream);
+    constexpr size_t shared_mem_size =
+        sizeof(float) * (BLOCK_X + 2 * HALO) * BLOCK_Y * 3;
 
     if (ctx.grad) {
-        constexpr size_t shared_mem_size =
-            sizeof(float) * (BLOCK_X + 2 * HALO) * BLOCK_Y * 3;
-        fusedssim_fwd_bwd_kernel_fused<<<grid, block, shared_mem_size, ctx.stream>>>(
+        fusedssim_fwd_bwd_kernel_fused<<<grid, block>>>(
             H, W, CH, m_c1, m_c2,
             ctx.pred.data,
             ctx.target.data,
@@ -1106,13 +1104,37 @@ void FusedSSIMLoss::evaluate(LossContext ctx) {
             m_impl->dm_dsigma1_sq.data(),
             m_impl->dm_dsigma12.data()
         );
+        // fusedssimCUDA<<<grid, block>>>(
+        //     H, W, CH, m_c1, m_c2,
+        //     ctx.pred.data,
+        //     ctx.target.data,
+        //     ctx.loss.data,
+        //     // ctx.scale, 
+        //     m_impl->dm_dmu1.data(),
+        //     m_impl->dm_dsigma1_sq.data(),
+        //     m_impl->dm_dsigma12.data()
+        // );
+
+        // fusedssim_backwardCUDA<<<grid,block>>>(
+        //     H, W, CH, m_c1, m_c2,
+        //     ctx.pred.data,
+        //     ctx.target.data,
+        //     ctx.loss.data,
+        //     ctx.grad.data,
+        //     m_impl->dm_dmu1.data(),
+        //     m_impl->dm_dsigma1_sq.data(),
+        //     m_impl->dm_dsigma12.data()
+        // );
     } else {
-        fusedssim_fwd_kernel<<<grid, block, 0, ctx.stream>>>(
+        fusedssimCUDA<<<grid, block>>>(
             H, W, CH, m_c1, m_c2,
             ctx.pred.data,
             ctx.target.data,
             ctx.loss.data,
-            ctx.scale
+            // ctx.scale, 
+            m_impl->dm_dmu1.data(),
+            m_impl->dm_dsigma1_sq.data(),
+            m_impl->dm_dsigma12.data()
         );
     }
 }

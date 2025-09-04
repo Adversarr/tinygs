@@ -9,7 +9,7 @@
 #define DEF inline constexpr
 
 namespace fast_gs::rasterization::config {
-    DEF bool debug = false;
+    DEF bool debug = true;
     // rendering constants
     DEF float dilation = 0.3f;
     DEF float min_alpha_threshold_rcp = 255.0f;

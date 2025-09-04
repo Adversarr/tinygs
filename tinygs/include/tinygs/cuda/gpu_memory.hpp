@@ -420,22 +420,7 @@ public:
 		// to exhaust all available addresses (even if multiple GPUMemoryArenas are
 		// used simultaneously), while also ensuring that we never exhaust the
 		// reserved address range without running out of physical memory beforehand.
-		if (cuda_supports_virtual_memory() && cuMemAddressReserve(&m_base_address, m_max_size, 0, 0, 0) == CUDA_SUCCESS) {
-			return;
-		}
-
-		// Use regular memory as fallback
-		m_fallback_memory = std::make_shared<GPUMemory<uint8_t>>();
-
-		static bool printed_warning = false;
-		if (!printed_warning) {
-			printed_warning = true;
-			log_warning(
-				"GPUMemoryArena: GPU {} does not support virtual memory. "
-				"Falling back to regular allocations, which will be larger and can cause occasional stutter.",
-				m_device
-			);
-		}
+		CU_CHECK_THROW(cuMemAddressReserve(&m_base_address, m_max_size, 0, 0, 0));
 	}
 
 	GPUMemoryArena(GPUMemoryArena&& other) = default;
@@ -476,11 +461,7 @@ public:
 	}
 
 	uint8_t* data() {
-		return m_fallback_memory ? m_fallback_memory->data() : (uint8_t*)m_base_address;
-	}
-
-	std::shared_ptr<GPUMemory<uint8_t>> backing_memory() {
-		return m_fallback_memory;
+		return (uint8_t*)m_base_address;
 	}
 
 	// Finds the smallest interval of free memory in the GPUMemoryArena that's
@@ -540,18 +521,7 @@ public:
 
 		log_debug("GPUMemoryArena: enlarging from {} to {}", bytes_to_string(m_size), bytes_to_string(n_bytes));
 
-		if (m_fallback_memory) {
-			static const double GROWTH_FACTOR = 1.5;
 
-			CUDA_CHECK_THROW(cudaDeviceSynchronize());
-
-			m_size = next_multiple((size_t)(n_bytes * GROWTH_FACTOR), cuda_memory_granularity());
-			m_fallback_memory = std::make_shared<GPUMemory<uint8_t>>(m_fallback_memory->copy(m_size));
-
-			CUDA_CHECK_THROW(cudaDeviceSynchronize());
-
-			return;
-		}
 
 		size_t n_bytes_to_allocate = n_bytes - m_size;
 		n_bytes_to_allocate = next_multiple(n_bytes_to_allocate, cuda_memory_granularity());
@@ -595,7 +565,7 @@ public:
 	public:
 		Allocation() = default;
 		Allocation(cudaStream_t stream, size_t offset, const std::shared_ptr<GPUMemoryArena>& workspace)
-		: m_stream{stream}, m_data{workspace->data() + offset}, m_offset{offset}, m_workspace{workspace}, m_backing_memory{workspace->backing_memory()}
+		: m_stream{stream}, m_data{workspace->data() + offset}, m_offset{offset}, m_workspace{workspace}
 		{}
 
 		~Allocation() {
@@ -611,7 +581,6 @@ public:
 			std::swap(m_data, other.m_data);
 			std::swap(m_offset, other.m_offset);
 			std::swap(m_workspace, other.m_workspace);
-			std::swap(m_backing_memory, other.m_backing_memory);
 			return *this;
 		}
 
@@ -636,11 +605,6 @@ public:
 		uint8_t* m_data = nullptr;
 		size_t m_offset = 0;
 		std::shared_ptr<GPUMemoryArena> m_workspace = nullptr;
-
-		// Backing GPUMemory (if backed by a GPUMemory). Ensures that
-		// the backing memory is only freed once all allocations that
-		// use it were destroyed.
-		std::shared_ptr<GPUMemory<uint8_t>> m_backing_memory = nullptr;
 	};
 
 private:
@@ -669,9 +633,7 @@ private:
 
 	std::vector<CUmemGenericAllocationHandle> m_handles;
 
-	// Used then virtual memory isn't supported.
-	// Requires more storage + memcpy, but is more portable.
-	std::shared_ptr<GPUMemory<uint8_t>> m_fallback_memory = nullptr;
+
 
 	size_t m_alignment;
 	size_t m_max_size;

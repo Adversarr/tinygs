@@ -9,7 +9,6 @@ __forceinline__ __device__ void adam_step_func(
   Elem gradient,
   Elem& first_moment,
   Elem& second_moment,
-  uint32_t current_step,
   float learning_rate,
   const float& beta1,
   const float& beta2,
@@ -18,12 +17,12 @@ __forceinline__ __device__ void adam_step_func(
   float absolute_weight_decay, // l1
   const float& weight_clipping_magnitude,
   const float& gradient_clipping_magnitude,
-  float inv_loss_scale,
+  float loss_scale,
   const float& lower_lr_bound,
   const float& upper_lr_bound,
   const float& this_lr_scale
 ) {
-  gradient *= inv_loss_scale;
+  gradient *= loss_scale;
   if (gradient_clipping_magnitude != 0.0f) {
     gradient = copysign(min(abs(gradient), gradient_clipping_magnitude), gradient);
   }
@@ -81,7 +80,7 @@ __global__ void launch_gaussian_adam_step_SoA(
   AdamWParameters adam_p,
   GaussianOptimizationParams general_p,
   uint32_t num_gaussians,
-  float inv_loss_scale
+  float loss_scale
 ) {
   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_gaussians) return;
@@ -117,12 +116,11 @@ __global__ void launch_gaussian_adam_step_SoA(
     vec3& second_moment = means_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      this_step,
       general_p.means_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.means_l2, general_p.means_l1,
       0.0f,
       general_p.max_grad_1,
-      inv_loss_scale,
+      loss_scale,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -136,35 +134,74 @@ __global__ void launch_gaussian_adam_step_SoA(
     float& second_moment = opacities_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      this_step,
       general_p.opacities_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.opacities_l2, general_p.opacities_l1,
       0.0f,
       general_p.max_grad_1,
-      inv_loss_scale,
+      loss_scale,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
     );
   }
 
-  { // rotations
-    vec4& val = rotations[idx];
+  // { // rotations
+  //   vec4& val = rotations[idx];
+  //   const vec4& grad = rotations_grad[idx];
+  //   vec4& first_moment = rotations_first_second[idx * 2];
+  //   vec4& second_moment = rotations_first_second[idx * 2 + 1];
+  //   adam_step_func(
+  //     val, grad, first_moment, second_moment,
+  //     general_p.rotations_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+  //     general_p.rotations_l2, general_p.rotations_l1,
+  //     0.0f,
+  //     general_p.max_grad_1,
+  //     loss_scale,
+  //     lower_lr_bound,
+  //     upper_lr_bound,
+  //     this_lr_scale
+  //   );
+  // }
+
+  {
+    vec4 val = rotations[idx];
     const vec4& grad = rotations_grad[idx];
-    vec4& first_moment = rotations_first_second[idx * 2];
-    vec4& second_moment = rotations_first_second[idx * 2 + 1];
+    vec4 first_moment = rotations_first_second[idx * 2];
+    vec4 second_moment = rotations_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      this_step,
       general_p.rotations_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.rotations_l2, general_p.rotations_l1,
       0.0f,
       general_p.max_grad_1,
-      inv_loss_scale,
+      loss_scale,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
     );
+    rotations[idx] = val;
+    rotations_first_second[idx * 2] = first_moment;
+    rotations_first_second[idx * 2 + 1] = second_moment;
+    // for (int j = 0; j < 4; ++j) {
+    //   float val = rotations[idx][j];
+    //   const float grad = rotations_grad[idx][j];
+    //   float first_moment = rotations_first_second[idx * 2][j];
+    //   float second_moment = rotations_first_second[idx * 2 + 1][j];
+    //   adam_step_func(
+    //     val, grad, first_moment, second_moment,
+    //     general_p.rotations_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+    //     general_p.rotations_l2, general_p.rotations_l1,
+    //     0.0f,
+    //     general_p.max_grad_1,
+    //     loss_scale,
+    //     lower_lr_bound,
+    //     upper_lr_bound,
+    //     this_lr_scale
+    //   );
+    //   // rotations[idx][j] = val;
+    //   // rotations_first_second[idx * 2][j] = first_moment;
+    //   // rotations_first_second[idx * 2 + 1][j] = second_moment;
+    // }
   }
 
   { // scales
@@ -174,12 +211,11 @@ __global__ void launch_gaussian_adam_step_SoA(
     vec3& second_moment = scales_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      this_step,
       general_p.scales_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.scales_l2, general_p.scales_l1,
       0.0f,
       general_p.max_grad_1,
-      inv_loss_scale,
+      loss_scale,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -196,12 +232,11 @@ __global__ void launch_gaussian_adam_step_SoA(
       vec3& second_moment = sh_coefficients_first_second[i * 2 + 1];
       adam_step_func(
         val, grad, first_moment, second_moment,
-        this_step,
         general_p.shs_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
         general_p.shs_l2, general_p.shs_l1,
         0.0f,
         general_p.max_grad_1,
-        inv_loss_scale,
+        loss_scale,
         lower_lr_bound,
         upper_lr_bound,
         this_lr_scale
@@ -211,7 +246,7 @@ __global__ void launch_gaussian_adam_step_SoA(
 }
 
 void AdamW::step(float scale) {
-  const float inv_loss_scale = 1.0f / scale;
+  const float loss_scale = scale;
   const int grid = (m_gaussians->size() + 255) / 256;
 
   launch_gaussian_adam_step_SoA<<<grid, 256>>>(
@@ -234,7 +269,7 @@ void AdamW::step(float scale) {
     m_adam_params,
     m_params,
     m_gaussians->size(),
-    inv_loss_scale
+    loss_scale
   );
 }
 

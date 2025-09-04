@@ -12,8 +12,6 @@ struct LossContext {
   cudaStream_t stream = nullptr;
 };
 
-float sum_loss(const LossContext& ctx);
-
 /**
  * @brief Base class for loss function. (only per-pixel is supported)
  * 
