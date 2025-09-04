@@ -296,6 +296,7 @@ void AdamW::remove(char* kept_flag, int num_kept) {
   filter(m_rotations_first_second, kept_flag, num_kept, 0);
   filter(m_scales_first_second, kept_flag, num_kept, 0);
   filter(m_sh_coefficient_0_first_second, kept_flag, num_kept, 0);
+  // TODO: this is not correct.
   filter(m_sh_coefficients_rest_first_second, kept_flag, num_kept, 0);
   filter(m_gaussian_steps, kept_flag, num_kept, 0);
 }

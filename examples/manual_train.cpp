@@ -102,6 +102,8 @@ int main() {
     if (num_duplications <= 0) return;
     out_image.check_guards(); log_info("pre_append");
     gs3d->append(num_duplications); // It is strategy's responsibility to update the gaussians.
+    out_image.check_guards(); log_info("pre_append grad");
+    grads->append(num_duplications);
     out_image.check_guards(); log_info("append");
     optimizer->duplicate(src, dst, num_duplications);
     out_image.check_guards(); log_info("post_append");

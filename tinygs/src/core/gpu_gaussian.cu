@@ -97,6 +97,8 @@ void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
   filter(m_rotations, kept_flag, num_kept, 0);
   filter(m_scales, kept_flag, num_kept, 0);
   filter(m_sh_coefficient_0, kept_flag, num_kept, 0);
+
+  // TODO: this is not correct.
   filter(m_sh_coefficients_rest, kept_flag, num_kept, 0);
 }
 
@@ -108,7 +110,7 @@ void GPUGaussian3d::append(int num_dup) {
   m_rotations.resize(target_size);
   m_scales.resize(target_size);
   m_sh_coefficient_0.resize(target_size);
-  m_sh_coefficients_rest.resize(target_size);
+  m_sh_coefficients_rest.resize(target_size * (kMaxSphericalHarmonicsCoefficients - 1));
 }
 
 std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {
