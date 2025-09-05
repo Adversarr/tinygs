@@ -21,23 +21,8 @@ if(NOT UNIX)
 endif()
 
 if(NOT DEFINED TINYGS_CUDA_ARCHITECTURES)
-    # Auto-detect GPU architecture
-    execute_process(
-        COMMAND nvidia-smi --query-gpu=compute_cap --format=csv,noheader,nounits
-        OUTPUT_VARIABLE GPU_COMPUTE_CAP
-        ERROR_QUIET
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-    )
-
-    if(GPU_COMPUTE_CAP)
-        string(REPLACE "." "" GPU_ARCH ${GPU_COMPUTE_CAP})
-        set(CMAKE_CUDA_ARCHITECTURES ${GPU_ARCH})
-        message(STATUS "Auto-detected CUDA architecture: ${CMAKE_CUDA_ARCHITECTURES}")
-    else()
-        # Fallback to common modern architectures (remove older ones for performance)
-        set(CMAKE_CUDA_ARCHITECTURES "86")
-        message(STATUS "GPU auto-detection failed. Using default CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
-    endif()
+    set(CMAKE_CUDA_ARCHITECTURES "86")
+    message(STATUS "Using default CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 else()
     set(CMAKE_CUDA_ARCHITECTURES ${TINYGS_CUDA_ARCHITECTURES})
     message(STATUS "Using user-defined CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")

@@ -14,8 +14,7 @@
 #include "tinygs/utils/stbi/stb_image.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
-#include <fmt/core.h>
-
+#include "tinygs/cuda/common_host.hpp"
 #include <cmath>
 #include <stdexcept>
 #include <vector>

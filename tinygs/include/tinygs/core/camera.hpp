@@ -1,12 +1,11 @@
 #pragma once
-#include <tinygs/common.hpp>
+#include <tinygs/cuda/common_host.hpp>
 #include <tinygs/cuda/vec.hpp>
 #include <string>
 #include <sstream>
 #include <vector>
 #include <cmath>
 #include <stdexcept>
-#include <fmt/format.h>
 
 namespace tinygs {
 
