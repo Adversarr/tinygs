@@ -19,16 +19,17 @@
 #include "tinygs/strategy/default.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
+#include "tinygs/utils/stbi/stbi_wrapper.h"
 
 using namespace tinygs;
 
 int main() {
   spdlog::set_level(spdlog::level::debug);
-  std::string DATA_PATH = "/data/accgs/1751090600427/";
-  std::string camera_intrinsics_path = DATA_PATH + "inputs/slam/cameras.txt";
-  std::string camera_extrinsics_path = DATA_PATH + "inputs/traj_full.txt.bak";
+  std::string data_path = "/data/accgs/1751090600427/";
+  std::string camera_intrinsics_path = data_path + "inputs/slam/cameras.txt";
+  std::string camera_extrinsics_path = data_path + "inputs/traj_full.txt.bak";
 
-  auto pc = tinygs::load_from_colmap_file(DATA_PATH + "inputs/slam/points3D.txt");
+  auto pc = tinygs::load_from_colmap_file(data_path + "inputs/slam/points3D.txt");
   log_info("#points: {}", pc.points.size());
 
   tinygs::KnnInitialization knn;
@@ -41,7 +42,7 @@ int main() {
   shape.height = height;
   shape.channel = 3;
   std::shared_ptr<tinygs::PngFolderDataset> dataset = std::make_shared<tinygs::PngFolderDataset>(  //
-      DATA_PATH + "inputs/images_480x640_1",                                                       //
+      data_path + "inputs/images_480x640_1",                                                       //
       camera_extrinsics_path,                                                                      //
       camera_intrinsics_path,                                                                      //
       shape);
@@ -91,13 +92,13 @@ int main() {
   loss_ctx.loss = Image<float>(shape, ImageFormat::CHW, loss_buffer.data());
   loss_ctx.pred = rasterize_ctx.fwd_output.image;
   loss_ctx.grad = Image<float>(shape, ImageFormat::CHW, out_image_grad.data());
-  loss_ctx.scale = 1.0f / static_cast<float>(width * height * 3);
 
   auto strategy = std::make_unique<DefaultStrategy>(gs3d);
   strategy->set_pre_remove_callback([&](char* kept_flag, int num_kept) {
-    gs3d->remove(kept_flag, num_kept);
-    grads->remove(kept_flag, num_kept);
-    optimizer->remove(kept_flag, num_kept);
+    if (num_kept == gs3d->size()) return;
+    optimizer->remove(kept_flag, num_kept);   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
+    gs3d->remove(kept_flag, num_kept);  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
+    grads->remove(kept_flag, num_kept);   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
   });
   strategy->set_post_duplicate_callback([&](int* src, int* dst, int num_duplications) {
     if (num_duplications <= 0) return;
@@ -125,10 +126,10 @@ int main() {
     rasterize_ctx.fwd_input = io.input;
     loss_ctx.target = data.output.image;
     rasterizer.forward(rasterize_ctx);
-    loss_ctx.scale = 1.0f / static_cast<float>(width * height * 3);
+    loss_ctx.scale = 1.0f;
     l1_loss->evaluate(loss_ctx);
-    // loss_ctx.scale = 0.2f / static_cast<float>(width * height * 3);
-    // ssim_loss->evaluate(loss_ctx);
+    loss_ctx.scale = 0.1f;
+    ssim_loss->evaluate(loss_ctx);
 
     rasterize_ctx.grad_output.image = loss_ctx.grad;
     rasterize_ctx.grad_output.alpha = Image<float>(  //
@@ -161,26 +162,19 @@ int main() {
         }
       }
 
-      // Add frame counter to the image
-      cv::Mat vis_image(height, width, CV_8UC3, h_img_hwc.data());
-      std::string frame_text = "Frame: " + std::to_string(frame_count);
-      cv::putText(vis_image, frame_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 255, 0), 2);
-      cv::imshow("Visualization", vis_image);
-
-      // Wait for key press
-      char key = cv::waitKey(1);
-      if (key == 'q' || key == 'Q') {
-        break;
-      }
+      save_stbi(h_img_hwc.data(), width, height, 3, fmt::format("output_{}.png", frame_count).data());
     }
     optimizer->step(1.0f);
 
-    if (frame_count % 100 == 0) {
+    if (frame_count % 100 == 0 && frame_count > 500) {
       strategy->step(rasterize_ctx);
       rasterize_ctx.densification_info = std::make_shared<GPUBuffer<float>>(gs3d->size() * 2);
     }
 
     frame_count++;
+    if (frame_count > 10000) {
+      should_stop = true;
+    }
   }
 
   cv::destroyAllWindows();

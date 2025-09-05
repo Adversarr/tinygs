@@ -156,7 +156,6 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
 
     // Set spherical harmonics coefficients
     vec3 sh_color = rgb_to_sh(colors[i]);
-    // vec3 sh_color = colors[i]; // Use raw color for better initialization
     m_gaussians.sh_coefficient_0[i] = sh_color;
 
     // Initialize SH coefficients rest array

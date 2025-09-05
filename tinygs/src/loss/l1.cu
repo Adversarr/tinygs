@@ -2,6 +2,15 @@
 #include "tinygs/loss/l1.hpp"
 #include <cuda_fp16.h>
 
+/**
+ * Computes L1 loss. Equivalent to L1Loss in PyTorch.
+ *
+ * L1 = |pred - target|_1 . mean()
+ *
+ * The gradient is computed as:
+ *    grad = sign(pred - target) / N
+ */
+
 // Optimized float specialization
 __global__ void l1_kernel(int N, const float *__restrict__ pred,
                                  const float *__restrict__ target,
@@ -30,8 +39,9 @@ namespace tinygs {
 
 void L1Loss::evaluate(LossContext ctx) {
   int n = ctx.pred.size();
+  const float actual_scale = ctx.scale / n;
   linear_kernel(l1_kernel, 0, ctx.stream, n, ctx.pred.data, //
-                ctx.target.data, ctx.loss.data, ctx.grad.data, ctx.scale);
+                ctx.target.data, ctx.loss.data, ctx.grad.data, actual_scale);
 }
 
 } // namespace tinygs

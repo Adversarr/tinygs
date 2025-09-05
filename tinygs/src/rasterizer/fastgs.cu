@@ -120,7 +120,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* image */ ctx.fwd_output.image.data,
             /* alpha */ ctx.fwd_output.alpha.data,
             /* n_primitives */ m_gaussians->size(),
-            /* active_sh_bases */ 1, // TODO: fix
+            /* active_sh_bases */ kMaxSphericalHarmonicsCoefficients, // TODO: fix
             /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
             /* width */ ctx.fwd_input.width,
             /* height */ ctx.fwd_input.height,
@@ -160,13 +160,6 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   auto& opacities_grad = params.gaussians_grad->opacities();
   auto& sh_coeffs_0_grad = params.gaussians_grad->sh_coefficient_0();
   auto& sh_coeffs_rest_grad = params.gaussians_grad->sh_coefficients_rest();
-  
-  // thrust::fill(means_grad.begin(), means_grad.end(), vec3(0.0f, 0.0f, 0.0f));
-  // thrust::fill(scales_grad.begin(), scales_grad.end(), vec3(0.0f, 0.0f, 0.0f));
-  // thrust::fill(rotations_grad.begin(), rotations_grad.end(), vec4(0.0f, 0.0f, 0.0f, 0.0f));
-  // thrust::fill(opacities_grad.begin(), opacities_grad.end(), 0.0f);
-  // thrust::fill(sh_coeffs_0_grad.begin(), sh_coeffs_0_grad.end(), vec3(0.0f, 0.0f, 0.0f));
-  // thrust::fill(sh_coeffs_rest_grad.begin(), sh_coeffs_rest_grad.end(), vec3(0.0f, 0.0f, 0.0f));
   m_impl->w2c_grad.memset(0);
 
   float* densification_info = nullptr;
@@ -211,7 +204,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* n_buckets */ m_impl->n_buckets,
     /* primitive_primitive_indices_selector */ m_impl->primitive_primitive_indices_selector,
     /* instance_primitive_indices_selector */ m_impl->instance_primitive_indices_selector,
-    /* active_sh_bases */ 1,
+    /* active_sh_bases */ kMaxSphericalHarmonicsCoefficients,
     /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
     /* width */ params.fwd_input.width,
     /* height */ params.fwd_input.height,

@@ -1,5 +1,7 @@
 #include <thrust/copy.h>
+#include <thrust/execution_policy.h>
 #include <thrust/host_vector.h>
+
 #include <cub/cub.cuh>
 
 #include "cuda/common_host.hpp"
@@ -70,36 +72,89 @@ void GPUGaussian3d::memset(char value) {
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh_coefficients_rest.data()), value, sizeof(float3) * m_sh_coefficients_rest.size()));
 }
 
-template <typename T> static void filter(
-  thrust::device_vector<T>& in_out,
-  char* kept_flag,
-  int num_kept,
-  cudaStream_t stream
+
+
+__global__ void copy_gaussian_items(
+  const vec3 * __restrict__ src_means,
+  vec3 * __restrict__ dst_means,
+  const float * __restrict__ src_opacities,
+  float * __restrict__ dst_opacities,
+  const vec4 * __restrict__ src_rotations,
+  vec4 * __restrict__ dst_rotations,
+  const vec3 * __restrict__ src_scales,
+  vec3 * __restrict__ dst_scales,
+  const vec3 * __restrict__ src_sh_coefficient_0,
+  vec3 * __restrict__ dst_sh_coefficient_0,
+  const vec3 * __restrict__ src_sh_coefficients_rest,
+  vec3 * __restrict__ dst_sh_coefficients_rest,
+  const int * __restrict__ mapping,
+  int num_kept
 ) {
-  T* d_in = thrust::raw_pointer_cast(in_out.data());
-  size_t num_items = in_out.size();
-  GPUBuffer<int> d_num_selected_out(stream, 1);
-  size_t temp_storage_bytes = 0;
-  CUDA_CHECK_THROW(cub::DeviceSelect::Flagged( //
-      nullptr, temp_storage_bytes,             //
-      d_in, kept_flag, d_num_selected_out.data(), num_items, stream));
-  GPUBuffer<int> d_temp_storage(stream, temp_storage_bytes);
-  CUDA_CHECK_THROW(cub::DeviceSelect::Flagged(           //
-      (void *)d_temp_storage.data(), temp_storage_bytes, //
-      d_in, kept_flag, d_num_selected_out.data(), num_items, stream));
-  in_out.resize(num_kept);
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_kept) return;
+
+  int src_idx = mapping[idx];
+  
+  // Copy all fields
+  dst_means[idx] = src_means[src_idx];
+  dst_opacities[idx] = src_opacities[src_idx];
+  dst_rotations[idx] = src_rotations[src_idx];
+  dst_scales[idx] = src_scales[src_idx];
+  dst_sh_coefficient_0[idx] = src_sh_coefficient_0[src_idx];
+  
+  // Copy rest SH coefficients
+  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1);
+  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
+  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
+    dst_sh_coefficients_rest[dst_rest_start + i] = src_sh_coefficients_rest[src_rest_start + i];
+  }
 }
 
 void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
-  // Filter all gaussian data based on kept_flag
-  filter(m_means, kept_flag, num_kept, 0);
-  filter(m_opacities, kept_flag, num_kept, 0);
-  filter(m_rotations, kept_flag, num_kept, 0);
-  filter(m_scales, kept_flag, num_kept, 0);
-  filter(m_sh_coefficient_0, kept_flag, num_kept, 0);
+  size_t original_size = size();
+  thrust::device_vector<int> mapping(original_size); // kept[idx] = original_idx
 
-  // TODO: this is not correct.
-  filter(m_sh_coefficients_rest, kept_flag, num_kept, 0);
+  thrust::copy_if(
+    thrust::device,
+    thrust::make_counting_iterator<int>(0), thrust::make_counting_iterator<int>(original_size),
+    mapping.begin(), [kept_flag] __device__ (int orig) { return static_cast<bool>(kept_flag[orig]); });
+
+  // Create new vectors for all gaussian data
+  thrust::device_vector<vec3> means(num_kept);
+  thrust::device_vector<float> opacities(num_kept);
+  thrust::device_vector<vec4> rotations(num_kept);
+  thrust::device_vector<vec3> scales(num_kept);
+  thrust::device_vector<vec3> sh_coefficient_0(num_kept);
+  thrust::device_vector<vec3> sh_coefficients_rest(num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
+
+  // Copy all items using the mapping
+  const int grid = (num_kept + 255) / 256;
+  copy_gaussian_items<<<grid, 256>>>(
+      thrust::raw_pointer_cast(m_means.data()),
+      thrust::raw_pointer_cast(means.data()),
+      thrust::raw_pointer_cast(m_opacities.data()),
+      thrust::raw_pointer_cast(opacities.data()),
+      thrust::raw_pointer_cast(m_rotations.data()),
+      thrust::raw_pointer_cast(rotations.data()),
+      thrust::raw_pointer_cast(m_scales.data()),
+      thrust::raw_pointer_cast(scales.data()),
+      thrust::raw_pointer_cast(m_sh_coefficient_0.data()),
+      thrust::raw_pointer_cast(sh_coefficient_0.data()),
+      thrust::raw_pointer_cast(m_sh_coefficients_rest.data()),
+      thrust::raw_pointer_cast(sh_coefficients_rest.data()),
+      thrust::raw_pointer_cast(mapping.data()),
+      num_kept
+  );
+
+  // Move the new vectors to replace the old ones
+  m_means = std::move(means);
+  m_opacities = std::move(opacities);
+  m_rotations = std::move(rotations);
+  m_scales = std::move(scales);
+  m_sh_coefficient_0 = std::move(sh_coefficient_0);
+  m_sh_coefficients_rest = std::move(sh_coefficients_rest);
+  
+  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 }
 
 void GPUGaussian3d::append(int num_dup) {

@@ -6,12 +6,14 @@
 #include "rasterizer/fastgs_ours/utils.h"
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/strategy/default.hpp"
+#include "utils/scope_timer.hpp"
 namespace tinygs {
 
 DefaultStrategy::~DefaultStrategy() = default;
 
 void DefaultStrategy::step(const RasterizeContext& ctx) {
   // TODO: implement step
+  TINYGS_TIMER("DefaultStrategy::step");
 
   // prune(ctx);
   duplicate(ctx);
@@ -130,8 +132,8 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
      ] __device__(int i) {
       int src_idx = d_grow_indices_src[i];
       int target_idx = d_grow_indices_target[i];
-    assert(0 <= src_idx && src_idx < num_gaussians);
-    assert(0 <= target_idx && target_idx < num_gaussians + num_grows);
+      assert(0 <= src_idx && src_idx < num_gaussians);
+      assert(0 <= target_idx && target_idx < num_gaussians + num_grows);
       if (d_grow_flags[src_idx] == 0) return;
 
       rotations[target_idx] = rotations[src_idx];
@@ -170,7 +172,8 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
 void DefaultStrategy::prune(const RasterizeContext& /* ctx */) {
   // Remove dead gaussians
   const auto num_gaussians = m_gaussians->size();
-  GPUBuffer<char> is_alive(num_gaussians);
+  // GPUBuffer<char> is_alive(num_gaussians);
+  thrust::device_vector<char> is_alive(num_gaussians);
   const auto* d_opacity = thrust::raw_pointer_cast(m_gaussians->opacities().data());
   const auto* d_rotations = thrust::raw_pointer_cast(m_gaussians->rotations().data());
 
@@ -179,20 +182,24 @@ void DefaultStrategy::prune(const RasterizeContext& /* ctx */) {
       thrust::make_counting_iterator<int>(num_gaussians),                    //
       [d_is_alive = is_alive.data(), d_opacity, d_rotations,                 //
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) { //
-        if (d_opacity[i] > min_opacity && length2(d_rotations[i]) > 1.0e-8f) {
+        if (logistic(d_opacity[i]) > min_opacity && length2(d_rotations[i]) > 1.0e-8f) {
           d_is_alive[i] = 1;
         } else {
           d_is_alive[i] = 0;
         }
-        // TODO: the original stategy still check the scale of the gaussians.
       });
-  int nums_kept = thrust::reduce( //
-      thrust::device_ptr<char>(is_alive.data()),
-      thrust::device_ptr<char>(is_alive.data() + num_gaussians), 0,
-      thrust::plus<char>());
 
-  this->remove(is_alive.data(), nums_kept);
-  log_info("Remove {} dead gaussians", num_gaussians - nums_kept);
+  int nums_kept = thrust::transform_reduce(
+    thrust::device,
+    thrust::make_counting_iterator<int>(0),
+    thrust::make_counting_iterator<int>(num_gaussians),
+    [ia = is_alive.data()] __device__(int i) -> int { return ia[i] != 0 ? 1 : 0; },
+    0,
+    thrust::plus<int>()
+  );
+
+  this->remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
+  log_info("Remove {} dead gaussians (kept {})", num_gaussians - nums_kept, nums_kept);
 }
 
 DefaultStrategy::DefaultStrategy(std::shared_ptr<GPUGaussian3d> gaussians)

@@ -85,12 +85,6 @@ option(TINYGS_BUILD_BENCHMARKS "Build tinygs benchmarks" ON)
 
 ### Dependencies
 include(${PROJECT_SOURCE_DIR}/cmake/dependencies.cmake)
-if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/ext/cutlass/CMakeLists.txt")
-    message(FATAL_ERROR "Cutlass submodule not found. Please run 'git submodule update --init --recursive'")
-endif()
-set(TINYGS_INCLUDE_DIRS
-    ${CMAKE_CURRENT_SOURCE_DIR}/ext/cutlass/include
-)
 
 ### library
 

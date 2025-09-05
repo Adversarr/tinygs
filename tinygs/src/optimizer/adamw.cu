@@ -1,5 +1,6 @@
-#include "tinygs/optim/adamw.hpp"
+#include <thrust/execution_policy.h>
 #include "tinygs/cuda/common_device.cuh"
+#include "tinygs/optim/adamw.hpp"
 
 namespace tinygs {
 
@@ -105,7 +106,7 @@ __global__ void launch_gaussian_adam_step_SoA(
   const float beta2 = adam_p.beta2;
 
   // actually perform the optimization for this gaussian
-  const auto this_step = gaussian_steps[idx] += 1;
+  const auto this_step = (++gaussian_steps[idx]);
   const float this_lr_scale = sqrtf(1 - powf(beta2, (float)this_step)) / (1 - powf(beta1, (float)this_step));
 
   // AdaBound paper: https://openreview.net/pdf?id=Bkg3g2R9FX
@@ -266,39 +267,84 @@ AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussi
   // Resize and reset all internal buffers
   AdamW::reset();
 }
-
-template <typename T> static void filter(
-  thrust::device_vector<T>& in_out,
-  char* kept_flag,
-  int num_kept,
-  cudaStream_t stream
+__global__ void copy_items(
+  const vec3 * __restrict__ src_means,
+  vec3 * __restrict__ dst_means,
+  const float * __restrict__ src_opacities,
+  float * __restrict__ dst_opacities,
+  const vec4 * __restrict__ src_rotations,
+  vec4 * __restrict__ dst_rotations,
+  const vec3 * __restrict__ src_scales,
+  vec3 * __restrict__ dst_scales,
+  const vec3 * __restrict__ src_sh_coefficient_0,
+  vec3 * __restrict__ dst_sh_coefficient_0,
+  const vec3 * __restrict__ src_sh_coefficients_rest,
+  vec3 * __restrict__ dst_sh_coefficients_rest,
+  const int * __restrict__ mapping,
+  int num_kept
 ) {
-  T* d_in = thrust::raw_pointer_cast(in_out.data());
-  size_t num_items = in_out.size();
-  GPUBuffer<int> d_num_selected_out(stream, 1);
-  size_t temp_storage_bytes = 0;
-  CUDA_CHECK_THROW(cub::DeviceSelect::Flagged( //
-      nullptr, temp_storage_bytes,             //
-      d_in, kept_flag, d_num_selected_out.data(), num_items, stream));
-  GPUBuffer<int> d_temp_storage(stream, temp_storage_bytes);
-  CUDA_CHECK_THROW(cub::DeviceSelect::Flagged(           //
-      (void *)d_temp_storage.data(), temp_storage_bytes, //
-      d_in, kept_flag, d_num_selected_out.data(), num_items, stream));
-  in_out.resize(num_kept);
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_kept) return;
+
+  int src_idx = mapping[idx];
+  
+  // Copy all fields
+  dst_means[idx] = src_means[src_idx];
+  dst_opacities[idx] = src_opacities[src_idx];
+  dst_rotations[idx] = src_rotations[src_idx];
+  dst_scales[idx] = src_scales[src_idx];
+  dst_sh_coefficient_0[idx] = src_sh_coefficient_0[src_idx];
+  
+  // Copy rest SH coefficients
+  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1);
+  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
+  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
+    dst_sh_coefficients_rest[dst_rest_start + i] = src_sh_coefficients_rest[src_rest_start + i];
+  }
 }
 
 void AdamW::remove(char* kept_flag, int num_kept) {
   // filters the gaussians' first second.
-  int num_items = m_gaussians->size();
+  size_t original_size = m_gaussians->size();
+  thrust::device_vector<int> mapping(original_size); // mapping[idx] = original_idx
 
-  filter(m_means_first_second, kept_flag, num_kept, 0);
-  filter(m_opacities_first_second, kept_flag, num_kept, 0);
-  filter(m_rotations_first_second, kept_flag, num_kept, 0);
-  filter(m_scales_first_second, kept_flag, num_kept, 0);
-  filter(m_sh_coefficient_0_first_second, kept_flag, num_kept, 0);
-  // TODO: this is not correct.
-  filter(m_sh_coefficients_rest_first_second, kept_flag, num_kept, 0);
-  filter(m_gaussian_steps, kept_flag, num_kept, 0);
+  thrust::copy_if(
+    thrust::device,
+    thrust::make_counting_iterator<int>(0), thrust::make_counting_iterator<int>(original_size),
+    mapping.begin(), [kept_flag] __device__ (int orig) { return static_cast<bool>(kept_flag[orig]); });
+
+  thrust::device_vector<vec3> means(2 * num_kept);
+  thrust::device_vector<float> opacities(2 * num_kept);
+  thrust::device_vector<vec4> rotations(2 * num_kept);
+  thrust::device_vector<vec3> scales(2 * num_kept);
+  thrust::device_vector<vec3> sh_coefficients_0(2 * num_kept);
+  thrust::device_vector<vec3> sh_coefficients_rest(2 * num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
+
+  const int grid = (num_kept + 255) / 256;
+  copy_items<<<grid, 256>>>(
+      thrust::raw_pointer_cast(m_means_first_second.data()),
+      thrust::raw_pointer_cast(means.data()),
+      thrust::raw_pointer_cast(m_opacities_first_second.data()),
+      thrust::raw_pointer_cast(opacities.data()),
+      thrust::raw_pointer_cast(m_rotations_first_second.data()),
+      thrust::raw_pointer_cast(rotations.data()),
+      thrust::raw_pointer_cast(m_scales_first_second.data()),
+      thrust::raw_pointer_cast(scales.data()),
+      thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
+      thrust::raw_pointer_cast(sh_coefficients_0.data()),
+      thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
+      thrust::raw_pointer_cast(sh_coefficients_rest.data()),
+      thrust::raw_pointer_cast(mapping.data()),
+      num_kept
+  );
+
+  m_means_first_second = std::move(means);
+  m_opacities_first_second = std::move(opacities);
+  m_rotations_first_second = std::move(rotations);
+  m_scales_first_second = std::move(scales);
+  m_sh_coefficient_0_first_second = std::move(sh_coefficients_0);
+  m_sh_coefficients_rest_first_second = std::move(sh_coefficients_rest);
+  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 }
 
 __global__ static void duplicate_optimizer_state_kernel(
@@ -359,12 +405,9 @@ __global__ static void duplicate_optimizer_state_kernel(
   gaussian_steps[dst_idx] = gaussian_steps[src_idx];
 }
 
-void AdamW::duplicate(int* /*indices*/, int* /*new_indices*/, int num_duplicate) {
+void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
   if (num_duplicate == 0) return;
-  reset(); return;
-
   const uint32_t num_sh_rest_per_gaussian = kMaxSphericalHarmonicsCoefficients - 1;
-
   // Resize vectors to accommodate duplicated gaussians
   m_means_first_second.resize(m_gaussians->size() * 2, vec3(0.f));
   m_opacities_first_second.resize(m_gaussians->size() * 2, 0.f);
@@ -374,21 +417,20 @@ void AdamW::duplicate(int* /*indices*/, int* /*new_indices*/, int num_duplicate)
   m_sh_coefficients_rest_first_second.resize(m_gaussians->size() * 2 * num_sh_rest_per_gaussian, vec3(0.f));
   m_gaussian_steps.resize(m_gaussians->size(), 0);
 
-  // const int grid = (num_duplicate + 255) / 256;
-  // duplicate_optimizer_state_kernel<<<grid, 256>>>(
-  //   thrust::raw_pointer_cast(m_means_first_second.data()),
-  //   thrust::raw_pointer_cast(m_opacities_first_second.data()),
-  //   thrust::raw_pointer_cast(m_rotations_first_second.data()),
-  //   thrust::raw_pointer_cast(m_scales_first_second.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
-  //   thrust::raw_pointer_cast(m_gaussian_steps.data()),
-  //   indices,
-  //   new_indices,
-  //   num_duplicate,
-  //   num_sh_rest_per_gaussian
-  // );
-  CUDA_CHECK_THROW(cudaDeviceSynchronize());
+  const int grid = (num_duplicate + 255) / 256;
+  duplicate_optimizer_state_kernel<<<grid, 256>>>(
+    thrust::raw_pointer_cast(m_means_first_second.data()),
+    thrust::raw_pointer_cast(m_opacities_first_second.data()),
+    thrust::raw_pointer_cast(m_rotations_first_second.data()),
+    thrust::raw_pointer_cast(m_scales_first_second.data()),
+    thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
+    thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
+    thrust::raw_pointer_cast(m_gaussian_steps.data()),
+    indices,
+    new_indices,
+    num_duplicate,
+    num_sh_rest_per_gaussian
+  );
 }
 
 void AdamW::reset() {

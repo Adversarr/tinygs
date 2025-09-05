@@ -256,7 +256,7 @@ __global__ void fusedssimCUDA(
                 float val = (C_ * D_) / (A * B);
 
                 int global_idx = bIdx * CH * num_pix + c * num_pix + pix_id;
-                ssim_map[global_idx] += val * scale;
+                ssim_map[global_idx] += (1 - val) * scale; // NOTE: 1 - ssim is loss
 
                 if (dm_dmu1) {
                     // partial derivatives
@@ -335,13 +335,18 @@ __global__ void fusedssim_backwardCUDA(
                     int gx = start_x + col - HALO;
 
                     // float chain = get_pix_value(dL_dmap,      bIdx, c, gy, gx, CH, H, W);
+                    float dL_dmap = (
+                        gx >= HALO && gx < W - HALO && gy >= HALO && gy < H - HALO ? 
+                        scale : 0.0f
+                    );
+
                     float vmu   = get_pix_value(dm_dmu1,      bIdx, c, gy, gx, CH, H, W);
                     float vs1   = get_pix_value(dm_dsigma1_sq,bIdx, c, gy, gx, CH, H, W);
                     float vs12  = get_pix_value(dm_dsigma12,  bIdx, c, gy, gx, CH, H, W);
 
-                    sData[0][row][col] = vmu ;
-                    sData[1][row][col] = vs1 ;
-                    sData[2][row][col] = vs12;
+                    sData[0][row][col] = vmu  * dL_dmap;
+                    sData[1][row][col] = vs1  * dL_dmap;
+                    sData[2][row][col] = vs12 * dL_dmap;
                 }
             }
         }
@@ -421,7 +426,7 @@ __global__ void fusedssim_backwardCUDA(
             float dL_dpix = sum0 + (2.f * p1) * sum1 + (p2) * sum2;
 
             int out_idx = bIdx * CH * num_pix + c * num_pix + pix_id;
-            dL_dimg1[out_idx] += dL_dpix * scale;
+            dL_dimg1[out_idx] += -dL_dpix; // NOTE: (1 - ssim)
         }
         block.sync();
     }
@@ -444,10 +449,13 @@ struct FusedSSIMLoss::Impl {
       if (!dm_dsigma12 || dm_dsigma12.size() < total) {
         dm_dsigma12 = GPUBuffer<float>(stream, total);
       }
+    //   dm_dmu1.memset(0);
+    //   dm_dsigma1_sq.memset(0);
+    //   dm_dsigma12.memset(0);
     }
 };
 
-FusedSSIMLoss::~FusedSSIMLoss() {}
+FusedSSIMLoss::~FusedSSIMLoss() = default;
 
 FusedSSIMLoss::FusedSSIMLoss() {
   m_impl = std::make_unique<Impl>();
@@ -461,11 +469,12 @@ void FusedSSIMLoss::evaluate(LossContext ctx) {
               /*batch_size*/ 1);
     dim3 block(BLOCK_X, BLOCK_Y);
     m_impl->ensure(H * W * CH, ctx.stream);
+    const float actual_scale = ctx.scale / (H * W * CH);
 
     if (ctx.grad) {
         fusedssimCUDA<<<grid, block, 0, ctx.stream>>>(
             H, W, CH, m_c1, m_c2,
-            ctx.scale,
+            actual_scale,
             ctx.pred.data,
             ctx.target.data,
             ctx.loss.data,
@@ -476,7 +485,7 @@ void FusedSSIMLoss::evaluate(LossContext ctx) {
 
         fusedssim_backwardCUDA<<<grid, block, 0, ctx.stream>>>(
             H, W, CH, m_c1, m_c2,
-            ctx.scale,
+            actual_scale,
             ctx.pred.data,
             ctx.target.data,
             ctx.grad.data,
@@ -487,7 +496,7 @@ void FusedSSIMLoss::evaluate(LossContext ctx) {
     } else {
         fusedssimCUDA<<<grid, block, 0, ctx.stream>>>(
             H, W, CH, m_c1, m_c2,
-            ctx.scale,
+            actual_scale,
             ctx.pred.data,
             ctx.target.data,
             ctx.loss.data,

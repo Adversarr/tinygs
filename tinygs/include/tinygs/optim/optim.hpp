@@ -19,8 +19,8 @@ struct GaussianOptimizationParams {
   // L1 regularization
   float means_l1 = 0.f;
   float shs_l1 = 0.f;
-  float opacities_l1 = 0.01f;
-  float scales_l1 = 0.01f;
+  float opacities_l1 = 0.0; //0.01f;
+  float scales_l1 = 0.0;    //0.01f;
   float rotations_l1 = 0.f;
 
   // L2 regularization
@@ -29,7 +29,6 @@ struct GaussianOptimizationParams {
   float opacities_l2 = 0.0f;
   float scales_l2 = 0.0f;
   float rotations_l2 = 0.f;
-
 };
 
 class OptimizerBase {
