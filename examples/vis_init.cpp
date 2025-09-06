@@ -5,6 +5,7 @@
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 
+#include "glm/gtx/string_cast.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/cuda/common_host.hpp"
@@ -15,7 +16,7 @@
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 
-std::string DATA_PATH = "/data/accgs/1751090600427/";
+std::string DATA_PATH = "/data/accgs/1747834320424/";
 
 int main() {
   spdlog::set_level(spdlog::level::debug);
@@ -34,7 +35,7 @@ int main() {
     auto init_result = knn.gaussians();
     auto intrinsics = tinygs::CameraIntrinsics::parse(camera_intrinsics_lines.at(0));
     std::cout << "Camera Intrinsics K matrix:" << std::endl;
-    std::cout << tinygs::to_string(intrinsics.get_K()) << std::endl;
+    std::cout << glm::to_string(intrinsics.get_K()) << std::endl;
 
     int width = 480, height = 640;
     tinygs::ImageShape shape;
@@ -82,8 +83,8 @@ int main() {
     while (true) {
       auto data = loader.next();
       
-      log_info("Frame {}: K={}", frame_count, tinygs::to_string(data.input.K));
-      log_info("Frame {}: w2c={}", frame_count, tinygs::to_string(data.input.w2c));
+      log_info("Frame {}: K={}", frame_count, to_string(data.input.K));
+      log_info("Frame {}: w2c={}", frame_count, to_string(data.input.w2c));
       
       // Update camera parameters for this frame
       io.input.K = data.input.K;
@@ -98,7 +99,7 @@ int main() {
       params.grad_output.image = params.fwd_output.image;
       params.grad_output.alpha = params.fwd_output.alpha;
 
-      rasterizer.backward(params);
+      // rasterizer.backward(params);
       
       // Visualize RGB
       std::vector<float> h_img(width * height * 3);

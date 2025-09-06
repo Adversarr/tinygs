@@ -26,6 +26,7 @@ void init_binom() {
         binom *= static_cast<float>(n - i) / static_cast<float>(i + 1);
       }
       h_binom[n * max_binom_size + k] = binom;
+      h_binom[k * max_binom_size + n] = binom;
     }
   }
   CUDA_CHECK_THROW(cudaMemcpyToSymbol(binom, h_binom, sizeof(h_binom)));
@@ -72,10 +73,10 @@ __global__ static void relocation_kernel(
         }
     }
     float coeff = (opacities[idx] / denom_sum);
-    new_scales[idx] = coeff * scales[idx];
-    printf("Coeff: %f, Scale: %f %f %f, Original: %f %f %f", coeff,
-        new_scales[idx].x, new_scales[idx].y, new_scales[idx].z,
-        scales[idx].x, scales[idx].y, scales[idx].z);
+    new_scales[idx] = coeff * scales[idx]; // TODO: This could be much larger than original. we should clamp
+    // printf("Coeff: %f, Scale: %f %f %f, Original: %f %f %f", coeff,
+    //     new_scales[idx].x, new_scales[idx].y, new_scales[idx].z,
+    //     scales[idx].x, scales[idx].y, scales[idx].z);
 }
 
 __global__ void add_noise_kernel(
@@ -91,24 +92,24 @@ __global__ void add_noise_kernel(
         return;
 
     int idx_3d = 3 * idx;
-
-    const vec3 raw_scale = vec3(raw_scales + idx_3d);
-    mat3 S2 = mat3(__expf(2.f * raw_scale[0]), 0.f, 0.f, 0.f, __expf(2.f * raw_scale[1]), 0.f, 0.f, 0.f, __expf(2.f * raw_scale[2]));
-
-    quat raw_quat = normalize(quat(raw_quats + 4 * idx));
-    mat3 R = to_mat3(raw_quat);
-
-    mat3 covariance = R * S2 * transpose(R);
-
-    vec3 transformed_noise = covariance * vec3(noise + idx_3d);
-
-    float opacity = __frcp_rn(1.f + __expf(-raw_opacities[idx]));
-    float op_sigmoid = __frcp_rn(1.f + __expf(100.f * opacity - 0.5f));
-    float noise_factor = current_lr * op_sigmoid;
-
-    means[idx_3d] += noise_factor * transformed_noise.x;
-    means[idx_3d + 1] += noise_factor * transformed_noise.y;
-    means[idx_3d + 2] += noise_factor * transformed_noise.z;
+    //
+    // const vec3 raw_scale = vec3(raw_scales + idx_3d);
+    // mat3 S2 = mat3(__expf(2.f * raw_scale[0]), 0.f, 0.f, 0.f, __expf(2.f * raw_scale[1]), 0.f, 0.f, 0.f, __expf(2.f * raw_scale[2]));
+    //
+    // quat raw_quat = normalize(quat(raw_quats + 4 * idx));
+    // mat3 R = to_mat3(raw_quat);
+    //
+    // mat3 covariance = R * S2 * transpose(R);
+    //
+    // vec3 transformed_noise = covariance * vec3(noise + idx_3d);
+    //
+    // float opacity = __frcp_rn(1.f + __expf(-raw_opacities[idx]));
+    // float op_sigmoid = __frcp_rn(1.f + __expf(100.f * opacity - 0.5f));
+    // float noise_factor = current_lr * op_sigmoid;
+    //
+    // means[idx_3d] += noise_factor * transformed_noise.x;
+    // means[idx_3d + 1] += noise_factor * transformed_noise.y;
+    // means[idx_3d + 2] += noise_factor * transformed_noise.z;
 }
 
 MCMCStrategy::MCMCStrategy(std::shared_ptr<GPUGaussian3d> gaussians) : StrategyBase(gaussians) {

@@ -100,11 +100,11 @@ inline std::string to_string(const CameraIntrinsics& intrinsics) {
 
 // Camera extrinsic parameters (pose)
 struct CameraExtrinsics {
-  tquat<float> m_q;  // quaternion (qw, qx, qy, qz)
+  quat m_q;  // quaternion (qw, qx, qy, qz)
   vec3 m_t;  // translation (tx, ty, tz)
   
   // Constructor from quaternion and translation
-  TINYGS_HOST_DEVICE CameraExtrinsics(const tquat<float>& quaternion, const vec3& translation) 
+  TINYGS_HOST_DEVICE CameraExtrinsics(const quat& quaternion, const vec3& translation) 
     : m_q(quaternion), m_t(translation) {}
   
   // Default constructor
@@ -112,7 +112,7 @@ struct CameraExtrinsics {
 
   // Get world-to-camera transformation matrix
   TINYGS_HOST_DEVICE mat4x4 get_w2c() const {
-    mat4x4 w2c{to_mat3(m_q)};
+    mat4x4 w2c{quat_to_mat3(m_q)};
     w2c[3][0] = m_t[0];
     w2c[3][1] = m_t[1];
     w2c[3][2] = m_t[2];
@@ -154,7 +154,7 @@ struct CameraExtrinsics {
     float norm = std::sqrt(qw*qw + qx*qx + qy*qy + qz*qz);
     qw /= norm; qx /= norm; qy /= norm; qz /= norm;
 
-    return CameraExtrinsics(tquat<float>{qw, qx, qy, qz}, vec3{tx, ty, tz});
+    return CameraExtrinsics(quat{qw, qx, qy, qz}, vec3{tx, ty, tz});
   }
 };
 

@@ -300,94 +300,6 @@ template <typename T> struct PitchedPtr {
   size_t stride_in_bytes;
 };
 
-template <typename T, typename STRIDE_T = uint32_t> struct MatrixView {
-  TINYGS_HOST_DEVICE MatrixView() : data{nullptr}, stride_i{0}, stride_j{0} {}
-  TINYGS_HOST_DEVICE MatrixView(T *data, STRIDE_T stride_i, STRIDE_T stride_j)
-      : data{data}, stride_i{stride_i}, stride_j{stride_j} {}
-  TINYGS_HOST_DEVICE MatrixView(const MatrixView<std::remove_const_t<T>> &other)
-      : data{other.data}, stride_i{other.stride_i}, stride_j{other.stride_j} {}
-
-  using signed_index_t = std::make_signed_t<STRIDE_T>;
-  using unsigned_index_t = std::make_unsigned_t<STRIDE_T>;
-
-  // Signed indexing
-  TINYGS_HOST_DEVICE T &operator()(signed_index_t i,
-                                   signed_index_t j = 0) const {
-    return data[i * (std::ptrdiff_t)stride_i + j * (std::ptrdiff_t)stride_j];
-  }
-
-  TINYGS_HOST_DEVICE void advance(signed_index_t m, signed_index_t n) {
-    data += m * (std::ptrdiff_t)stride_i + n * (std::ptrdiff_t)stride_j;
-  }
-
-  TINYGS_HOST_DEVICE void advance_rows(signed_index_t m) { advance(m, 0); }
-
-  TINYGS_HOST_DEVICE void advance_cols(signed_index_t n) { advance(0, n); }
-
-  // Unsigned indexing
-  TINYGS_HOST_DEVICE T &operator()(unsigned_index_t i,
-                                   unsigned_index_t j = 0) const {
-    return data[i * (size_t)stride_i + j * (size_t)stride_j];
-  }
-
-  TINYGS_HOST_DEVICE void advance(unsigned_index_t m, unsigned_index_t n) {
-    data += m * (size_t)stride_i + n * (size_t)stride_j;
-  }
-
-  TINYGS_HOST_DEVICE void advance_rows(unsigned_index_t m) {
-    advance(m, (unsigned_index_t)0);
-  }
-
-  TINYGS_HOST_DEVICE void advance_cols(unsigned_index_t n) {
-    advance((unsigned_index_t)0, n);
-  }
-
-  template <uint32_t N>
-  TINYGS_HOST_DEVICE tvec<std::remove_const_t<T>, N>
-  row(unsigned_index_t m) const {
-    tvec<std::remove_const_t<T>, N> result;
-    TINYGS_PRAGMA_UNROLL
-    for (unsigned_index_t i = 0; i < N; ++i) {
-      result[i] = (*this)(m, i);
-    }
-    return result;
-  }
-
-  template <uint32_t N>
-  TINYGS_HOST_DEVICE tvec<std::remove_const_t<T>, N>
-  col(unsigned_index_t n) const {
-    tvec<std::remove_const_t<T>, N> result;
-    TINYGS_PRAGMA_UNROLL
-    for (unsigned_index_t i = 0; i < N; ++i) {
-      result[i] = (*this)(i, n);
-    }
-    return result;
-  }
-
-  template <typename U, uint32_t N, size_t A>
-  TINYGS_HOST_DEVICE void set_row(unsigned_index_t m,
-                                  const tvec<U, N, A> &val) {
-    TINYGS_PRAGMA_UNROLL
-    for (unsigned_index_t i = 0; i < N; ++i) {
-      (*this)(m, i) = val[i];
-    }
-  }
-
-  template <typename U, uint32_t N, size_t A>
-  TINYGS_HOST_DEVICE void set_col(unsigned_index_t n,
-                                  const tvec<U, N, A> &val) {
-    TINYGS_PRAGMA_UNROLL
-    for (unsigned_index_t i = 0; i < N; ++i) {
-      (*this)(i, n) = val[i];
-    }
-  }
-
-  TINYGS_HOST_DEVICE explicit operator bool() const { return data; }
-
-  T *data;
-  STRIDE_T stride_i, stride_j;
-};
-
 template <typename T> struct Interval {
   // Inclusive start, exclusive end
   T start, end;
@@ -412,27 +324,6 @@ template <typename T> struct Interval {
   TINYGS_HOST_DEVICE bool empty() const { return end <= start; }
 
   TINYGS_HOST_DEVICE T size() const { return end - start; }
-};
-
-struct Ray {
-  vec3 o;
-  vec3 d;
-
-  TINYGS_HOST_DEVICE vec3 operator()(float t) const { return o + t * d; }
-
-  TINYGS_HOST_DEVICE void advance(float t) { o += d * t; }
-
-  TINYGS_HOST_DEVICE float distance_to(const vec3 &p) const {
-    vec3 nearest = p - o;
-    nearest -= d * dot(nearest, d) / length2(d);
-    return length(nearest);
-  }
-
-  TINYGS_HOST_DEVICE bool is_valid() const { return d != vec3(0.0f); }
-
-  static TINYGS_HOST_DEVICE Ray invalid() {
-    return {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 0.0f}};
-  }
 };
 
 // Helpful data structure to represent ray-object intersections

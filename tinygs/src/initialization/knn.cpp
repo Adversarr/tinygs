@@ -199,15 +199,6 @@ void KnnInitialization::set_parameters(const json& params) {
   if (params.contains("sh_degree")) {
     m_params.sh_degree = params["sh_degree"].get<int>();
   }
-  if (params.contains("use_random_init")) {
-    m_params.use_random_init = params["use_random_init"].get<bool>();
-  }
-  if (params.contains("random_num_points")) {
-    m_params.random_num_points = params["random_num_points"].get<int>();
-  }
-  if (params.contains("random_extent")) {
-    m_params.random_extent = params["random_extent"].get<float>();
-  }
 }
 
 json KnnInitialization::get_parameters() const {
@@ -218,9 +209,6 @@ json KnnInitialization::get_parameters() const {
   params["init_scaling"] = m_params.init_scaling;
   params["init_opacity"] = m_params.init_opacity;
   params["sh_degree"] = m_params.sh_degree;
-  params["use_random_init"] = m_params.use_random_init;
-  params["random_num_points"] = m_params.random_num_points;
-  params["random_extent"] = m_params.random_extent;
   return params;
 }
 

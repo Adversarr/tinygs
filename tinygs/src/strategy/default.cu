@@ -166,7 +166,7 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
         scales3d[target_idx] = scales3d[src_idx];
         opacities[target_idx] = opacities[src_idx];
       } else {
-        const mat3x3 rot = to_mat3(normalize(quat{    //
+        const mat3x3 rot = quat_to_mat3(normalize(quat{    //
           rotations[src_idx].x, rotations[src_idx].y, //
           rotations[src_idx].z, rotations[src_idx].w  //
         }));

@@ -260,39 +260,6 @@ using ci_hashmap = std::unordered_map<std::string, T, CaseInsensitiveHash, CaseI
 template <typename T>
 std::string type_to_string();
 
-template <typename T, uint32_t N, size_t A>
-std::string to_string(const tvec<T, N, A>& v) {
-  if constexpr (N == 1) {
-    return fmt::format("tvec<{}, {}, {}>({})", type_to_string<T>(), N, A, v[0]);
-  } else if constexpr (N == 2) {
-    return fmt::format("tvec<{}, {}, {}>({}, {})", type_to_string<T>(), N, A, v[0], v[1]);
-  } else if constexpr (N == 3) {
-    return fmt::format("tvec<{}, {}, {}>({}, {}, {})", type_to_string<T>(), N, A, v[0], v[1], v[2]);
-  } else if constexpr (N == 4) {
-    return fmt::format("tvec<{}, {}, {}>({}, {}, {}, {})", type_to_string<T>(), N, A, v[0], v[1], v[2], v[3]);
-  } else {
-    return fmt::format("tvec<{}, {}, {}>({})", type_to_string<T>(), N, A, join(v.elems, ", "));
-  }
-}
-
-template <typename T, uint32_t N, uint32_t M>
-std::string to_string(const tmat<T, N, M>& m) {
-	// col-major matrix
-	// tmat<float, 3, 3>([0, 3, 6], [1, 4, 7], [2, 5, 8])
-	std::string content;
-	for (uint32_t i = 0; i < M; ++i) {
-		content += "[";
-		for (uint32_t j = 0; j < N; ++j) {
-			content += fmt::format("{}", m[j][i]);
-			if (j < N - 1) {
-				content += ", ";
-			}
-		}
-		content += "]";
-	}
-	return fmt::format("tmat<{}, {}, {}>({})", type_to_string<T>(), N, M, content);
-}
-
 inline std::string bytes_to_string(size_t bytes) {
   std::array<std::string, 7> suffixes = {{"B", "KB", "MB", "GB", "TB", "PB", "EB"}};
 

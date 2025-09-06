@@ -26,7 +26,7 @@ using namespace tinygs;
 
 int main() {
   spdlog::set_level(spdlog::level::debug);
-  std::string data_path = "/data/accgs/1751090600427/";
+  std::string data_path = "/data/accgs/1747834320424/";
   std::string camera_intrinsics_path = data_path + "inputs/slam/cameras.txt";
   std::string camera_extrinsics_path = data_path + "inputs/traj_full.txt.bak";
 
@@ -95,12 +95,12 @@ int main() {
   loss_ctx.pred = rasterize_ctx.fwd_output.image;
   loss_ctx.grad = Image<float>(shape, ImageFormat::CHW, out_image_grad.data());
 
-  auto strategy = std::make_unique<DefaultStrategy>(gs3d);
+  auto strategy = std::make_unique<MCMCStrategy>(gs3d);
   strategy->set_remove_callback([&](char* kept_flag, int num_kept) {
     if (num_kept == gs3d->size()) return;
-    optimizer->remove(kept_flag, num_kept);   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
-    gs3d->remove(kept_flag, num_kept);  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
-    grads->remove(kept_flag, num_kept);   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
+    optimizer->remove(kept_flag, num_kept);
+    gs3d->remove(kept_flag, num_kept);
+    grads->remove(kept_flag, num_kept);
   });
 
   strategy->set_duplicate_callback([&](int* src, int* dst, int num_duplications) {

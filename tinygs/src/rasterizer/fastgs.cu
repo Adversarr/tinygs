@@ -32,8 +32,8 @@ struct FastGSRasterizer::Impl {
   int n_visible_primitives, n_instances, n_buckets;
   int primitive_primitive_indices_selector, instance_primitive_indices_selector;
   std::shared_ptr<GPUMemoryArena> arena;
-  std::map<std::string, std::unique_ptr<GPUBuffer<char>>> temp_buffers;
-  // std::map<std::string, thrust::device_vector<char>> temp_buffers;
+  // std::map<std::string, std::unique_ptr<GPUBuffer<char>>> temp_buffers;
+  std::map<std::string, thrust::device_vector<char>> temp_buffers;
 
   Impl() : num_gaussians(0) {
     w2c = GPUMemory<float4>(4, true);
@@ -44,12 +44,12 @@ struct FastGSRasterizer::Impl {
   char* alloc(const std::string &name, size_t size) { 
     TINYGS_TIMER("FastGSRasterizer::Impl::alloc");
     auto& buffer = temp_buffers[name];
-    // buffer.resize(size * 4);
-    // return thrust::raw_pointer_cast(buffer.data());
-    if (buffer == nullptr || buffer->size() < size) {
-      buffer = std::make_unique<GPUBuffer<char>>(arena, size);
-    }
-    return buffer->data();
+    buffer.resize(size * 4);
+    return thrust::raw_pointer_cast(buffer.data());
+    // if (buffer == nullptr || buffer->size() < size) {
+    //   buffer = std::make_unique<GPUBuffer<char>>(arena, size);
+    // }
+    // return buffer->data();
   }
 };
 
@@ -145,13 +145,16 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   const auto n_gaussians = m_gaussians->size();
   char* grad_mean2d_helper = m_impl->alloc("grad_mean2d_helper", sizeof(float2) * n_gaussians);
   char* grad_conic_helper = m_impl->alloc("grad_conic_helper", sizeof(float3) * n_gaussians);
-  CUDA_CHECK_THROW(cudaMemset(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians));
-  CUDA_CHECK_THROW(cudaMemset(grad_conic_helper, 0, sizeof(float3) * n_gaussians));
+  CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, cudaStreamDefault));
+  CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, cudaStreamDefault));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
 
   float fx = params.fwd_input.K[0][0];
   float fy = params.fwd_input.K[1][1];
   float cx = params.fwd_input.K[2][0];
   float cy = params.fwd_input.K[2][1];
+  // float cx = params.fwd_input.K[0][2];
+  // float cy = params.fwd_input.K[1][2];
 
   // zero grad buffer.
   auto& means_grad = params.gaussians_grad->means();
@@ -184,10 +187,10 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data())),
     /* w2c */ m_impl->w2c.data(),
     /* cam_position */ m_impl->cam_position.data(),
-    /* per_primitive_buffers_blob */ (m_impl->temp_buffers["per_primitive_buffers"]->data()),
-    /* per_tile_buffers_blob */ (m_impl->temp_buffers["per_tile_buffers"]->data()),
-    /* per_instance_buffers_blob */ (m_impl->temp_buffers["per_instance_buffers"]->data()),
-    /* per_bucket_buffers_blob */ (m_impl->temp_buffers["per_bucket_buffers"]->data()),
+    /* per_primitive_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_primitive_buffers"].data()),
+    /* per_tile_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_tile_buffers"].data()),
+    /* per_instance_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_instance_buffers"].data()),
+    /* per_bucket_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_bucket_buffers"].data()),
     /* grad_means */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(means_grad.data())),
     /* grad_scales */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(scales_grad.data())),
     /* grad_rotations */ reinterpret_cast<float4*>(thrust::raw_pointer_cast(rotations_grad.data())),
