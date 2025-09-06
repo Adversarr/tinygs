@@ -6,8 +6,8 @@ namespace tinygs {
 
 struct GaussianOptimizationParams {
   // Shared parameters
-  float max_grad_1 = 1.0f;
-  bool skip_zero_grad = true;
+  float max_grad_1 = 0.0f;
+  bool skip_zero_grad = false;
 
   // Learning rates for different parameters
   float means_lr = 1.6e-4f;
@@ -17,18 +17,8 @@ struct GaussianOptimizationParams {
   float rotations_lr = 1.0e-3f;
 
   // L1 regularization
-  float means_l1 = 0.f;
-  float shs_l1 = 0.f;
-  float opacities_l1 = 0.0; //0.01f;
-  float scales_l1 = 0.0;    //0.01f;
-  float rotations_l1 = 0.f;
-
-  // L2 regularization
-  float means_l2 = 0.f;
-  float shs_l2 = 0.f;
-  float opacities_l2 = 0.0f;
-  float scales_l2 = 0.0f;
-  float rotations_l2 = 0.f;
+  float opacities_l1 = 0.01f; //0.01f;
+  float scales_l1 = 0.01f;    //0.01f;
 };
 
 class OptimizerBase {
@@ -57,6 +47,14 @@ public:
    * @param num_duplicate The number of duplicated gaussians.
    */
   virtual void duplicate(int* indices, int* new_indices, int num_duplicate){}
+
+  /**
+   * @brief Reset the momentum buffers for gaussians.
+   *
+   * @param indices The indices of gaussians to reset.
+   * @param num_reset The number of gaussians to reset.
+   */
+  virtual void reset(int* indices, int num_reset) = 0;
 
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;

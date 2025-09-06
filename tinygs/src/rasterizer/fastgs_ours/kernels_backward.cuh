@@ -120,7 +120,7 @@ namespace fast_gs::rasterization::kernels::backward {
         const float aa = a * a, bb = b * b, cc = c * c;
         const float ac = a * c, ab = a * b, bc = b * c;
         const float determinant = ac - bb;
-        const float determinant_rcp = 1.0f / determinant;
+        const float determinant_rcp = 1.0f / (determinant + 1e-8f);  // Add epsilon for numerical stability
         const float determinant_rcp_sq = determinant_rcp * determinant_rcp;
         const float3 dL_dconic = make_float3(
             grad_conic[primitive_idx],
@@ -158,13 +158,18 @@ namespace fast_gs::rasterization::kernels::backward {
         const float dL_dj23 = w2c_r3.x * dL_djw_r2.x + w2c_r3.y * dL_djw_r2.y + w2c_r3.z * dL_djw_r2.z;
 
         // mean3d camera space gradient from J and mean2d
-        // TODO: original 3dgs accounts for clamping of tx/ty here, but it seems that this is not necessary
-        float djwr1_dz_helper = dL_dj11 - 2.0f * tx * dL_dj13;
-        float djwr2_dz_helper = dL_dj22 - 2.0f * ty * dL_dj23;
+        // Account for clamping of tx/ty in the forward pass. The gradient should only pass if x/y were not clamped.
+        const float dtx_dx = (x > clip_left && x < clip_right) ? 1.0f : 0.0f;
+        const float dty_dy = (y > clip_top && y < clip_bottom) ? 1.0f : 0.0f;
+        const float dL_dj13_clamped = dL_dj13 * dtx_dx;
+        const float dL_dj23_clamped = dL_dj23 * dty_dy;
+
+        float djwr1_dz_helper = dL_dj11 - 2.0f * tx * dL_dj13_clamped;
+        float djwr2_dz_helper = dL_dj22 - 2.0f * ty * dL_dj23_clamped;
         const float2 dL_dmean2d = grad_mean2d[primitive_idx];
         const float3 dL_dmean3d_cam = make_float3(
-            j11 * (dL_dmean2d.x - dL_dj13 / depth),
-            j22 * (dL_dmean2d.y - dL_dj23 / depth),
+            j11 * (dL_dmean2d.x - dL_dj13_clamped / depth),
+            j22 * (dL_dmean2d.y - dL_dj23_clamped / depth),
             -j11 * (x * dL_dmean2d.x + djwr1_dz_helper / depth) - j22 * (y * dL_dmean2d.y + djwr2_dz_helper / depth));
 
         if (grad_w2c != nullptr) {
@@ -199,6 +204,8 @@ namespace fast_gs::rasterization::kernels::backward {
                                      2.0f * (rotation.m12 * rotation.m22 * dL_dcov3d.m12 + rotation.m12 * rotation.m32 * dL_dcov3d.m13 + rotation.m22 * rotation.m32 * dL_dcov3d.m23);
         const float dL_dvariance_z = rotation.m13 * rotation.m13 * dL_dcov3d.m11 + rotation.m23 * rotation.m23 * dL_dcov3d.m22 + rotation.m33 * rotation.m33 * dL_dcov3d.m33 +
                                      2.0f * (rotation.m13 * rotation.m23 * dL_dcov3d.m12 + rotation.m13 * rotation.m33 * dL_dcov3d.m13 + rotation.m23 * rotation.m33 * dL_dcov3d.m23);
+        // The gradient for raw_scale is 2*variance*dL_dvariance. When variance is close to zero, this can lead to vanishing gradients.
+        // This is inherent to the exp parameterization of scale, but worth noting for training stability.
         const float3 dL_draw_scale = make_float3(
             2.0f * variance.x * dL_dvariance_x,
             2.0f * variance.y * dL_dvariance_y,
@@ -225,6 +232,8 @@ namespace fast_gs::rasterization::kernels::backward {
         const float dL_dqrx = dL_drotation.m32 - dL_drotation.m23;
         const float dL_dqry = dL_drotation.m13 - dL_drotation.m31;
         const float dL_dqrz = dL_drotation.m21 - dL_drotation.m12;
+        // The following formula for quaternion gradient appears to be a custom implementation.
+        // It's recommended to verify its correctness against the original 3DGS paper or standard quaternion calculus references.
         const float dL_dq_norm_helper = qxx * dL_dqxx + qyy * dL_dqyy + qzz * dL_dqzz + qxy * dL_dqxy + qxz * dL_dqxz + qyz * dL_dqyz + qrx * dL_dqrx + qry * dL_dqry + qrz * dL_dqrz;
         const float4 dL_draw_rotation = 2.0f * make_float4(qx * dL_dqrx + qy * dL_dqry + qz * dL_dqrz - qr * dL_dq_norm_helper, 2.0f * qx * dL_dqxx + qy * dL_dqxy + qz * dL_dqxz + qr * dL_dqrx - qx * dL_dq_norm_helper, 2.0f * qy * dL_dqyy + qx * dL_dqxy + qz * dL_dqyz + qr * dL_dqry - qy * dL_dq_norm_helper, 2.0f * qz * dL_dqzz + qx * dL_dqxz + qy * dL_dqyz + qr * dL_dqrz - qz * dL_dq_norm_helper) / q_norm_sq;
         grad_raw_rotations[primitive_idx] = dL_draw_rotation;

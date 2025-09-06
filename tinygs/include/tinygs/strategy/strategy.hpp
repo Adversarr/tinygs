@@ -10,7 +10,8 @@ struct StrategyParams {
   float duplicate_grad_threshold = 0.0002f;
   float duplicate_scale_threshold = 0.01f;
   int refine_every = 100;
-  int start_refine = 15'000;
+  int start_refine = 1000;
+  int end_refine = 15'000;
   int max_num_gaussians = 10'000'000;
 };
 
@@ -20,35 +21,36 @@ public:
   virtual ~StrategyBase() = default;
 
   // might use the densification info to densify the gaussians
-  virtual void step(const RasterizeContext& ctx) = 0;
+  void step(const RasterizeContext& ctx);
 
   virtual void reset() = 0;
 
-
   using RemoveCallback = std::function<void(char* /*kept_flag*/, int /*num_kept*/)>;
   using DuplicateCallback = std::function<void(int* /*indices*/, int* /*new_indices*/, int /* num_duplications */)>;
+  using ResetCallback = std::function<void(int* indices, int num_reset)>;
 
-  void set_pre_remove_callback(RemoveCallback callback) { m_remove_callback = callback; }
-  void set_post_duplicate_callback(DuplicateCallback callback) { m_duplicate_callback = callback; }
+  virtual void step_impl(const RasterizeContext& ctx) = 0;
+  void set_remove_callback(RemoveCallback callback) { m_remove_callback = callback; }
+  void set_duplicate_callback(DuplicateCallback callback) { m_duplicate_callback = callback; }
+  void set_reset_callback(ResetCallback callback) { m_reset_callback = callback; }
 
 protected:
-  void remove(char* kept_flag, int num_kept) {
-    if (m_remove_callback) {
-      m_remove_callback(kept_flag, num_kept);
-    }
-  }
+  void on_remove(char* kept_flag, int num_kept);
+  void on_duplicate(int* indices, int* new_indices, int num_duplications);
+  void on_reset(int* indices, int num_reset);
 
-  void post_duplicate(int* indices, int* new_indices, int num_duplications) {
-    if (m_duplicate_callback) {
-      m_duplicate_callback(indices, new_indices, num_duplications);
-    }
-  }
+  int this_step() const noexcept { return m_step_count; }
+
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   StrategyParams m_params;
-
 private:
+  int m_step_count = 0;
+
   RemoveCallback m_remove_callback;        /// use this function to remove some gaussians
   DuplicateCallback m_duplicate_callback;  /// use this function to duplicate some gaussians
+  ResetCallback m_reset_callback;          /// use this function to reset some gaussians
+
 };
+
 
 }  // namespace tinygs

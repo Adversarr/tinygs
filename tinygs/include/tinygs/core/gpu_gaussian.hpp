@@ -42,6 +42,10 @@ public:
 
   void append(int num_dup);
 
+  float scene_scale() const { return m_scene_scale; }
+
+  void set_scene_scale(float scale) { m_scene_scale = scale; }
+
 private:
   /// NOTE: Change to gaussians is not frequent, thrust generally have a good performance
   /// NOTE: SoA of Gaussian3d in GPU memory
@@ -49,7 +53,7 @@ private:
   /// TODO: many metrics indicates that, AoS structure may be more efficient than SoA in this case.
 
   int m_current_sh_degree = 0;
-  float m_scene_scale = 0.0f;
+  float m_scene_scale = 1.0f;
 
   // means
   thrust::device_vector<vec3> m_means;
@@ -60,7 +64,7 @@ private:
   // scales are packed in a single vec3
   thrust::device_vector<vec3> m_scales;
   // sh coefficients are packed in a single vec3, 16 coefficients per color.
-  // thrust::device_vector<vec3> m_sh_coefficients;
+  // the sh0 is special.
   thrust::device_vector<vec3> m_sh_coefficient_0;
   thrust::device_vector<vec3> m_sh_coefficients_rest;
 };

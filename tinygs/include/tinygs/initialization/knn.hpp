@@ -11,7 +11,7 @@ struct KnnParameters {
   int num_neighbors = 3;           // Number of neighbors to consider for distance calculation
   float min_distance = 1e-7f;      // Minimum distance threshold
   float default_distance = 0.01f;  // Default distance for edge cases
-  float init_scaling = 0.6f;       // Initial scaling factor
+  float init_scaling = 0.1f;       // Initial scaling factor
   float init_opacity = 0.5f;       // Initial opacity value
   int sh_degree = 3;               // Spherical harmonics degree
   bool use_random_init = false;    // Whether to use random initialization
@@ -38,8 +38,13 @@ public:
   void set_knn_parameters(const KnnParameters& params) { m_params = params; }
   const KnnParameters& get_knn_parameters() const { return m_params; }
 
+  float get_scene_scale() const { return m_scene_scale; }
+
   // JSON interface overrides
   void set_parameters(const json& params) override;
   json get_parameters() const override;
+
+protected:
+  float m_scene_scale = 1.0f;
 };
 }  // namespace tinygs

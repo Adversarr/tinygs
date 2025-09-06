@@ -12,6 +12,7 @@
 
 #include "cuda/common_host.hpp"
 #include "nanoflann.hpp"
+#include "random/pcg32.hpp"
 #include "utils/scope_timer.hpp"
 
 namespace tinygs {
@@ -108,6 +109,15 @@ vec3 KnnInitialization::rgb_to_sh(const vec3& rgb) const {
   return (rgb - vec3(0.5f)) / kInvSH;
 }
 
+inline vec4 randn4() {
+  static pcg32 rng;
+  float u1 = rng.next_float();
+  float u2 = rng.next_float();
+  float u3 = rng.next_float();
+  float u4 = rng.next_float();
+  return vec4(u1, u2, u3, u4);
+}
+
 void KnnInitialization::initialize(const PointCloud& pointcloud) {
   TINYGS_TIMER("KnnInitialization::initialize");
   const auto& positions = pointcloud.points;
@@ -139,7 +149,7 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   m_gaussians.sh_coefficient_0.resize(num_points);
   m_gaussians.sh_coefficients_rest.resize(num_points * (kMaxSphericalHarmonicsCoefficients - 1));
 
-  auto init_opa = -logf(1.0f / (fminf(fmaxf(m_params.init_opacity, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
+  auto init_opa = -log(1.0f / (fmin(fmax(m_params.init_opacity, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
   // Initialize gaussians using SoA structure
   for (size_t i = 0; i < num_points; ++i) {
     // Set position and opacity
@@ -147,7 +157,8 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
     m_gaussians.opacities[i] = init_opa;
 
     // Set rotation (identity quaternion: w=1, x=0, y=0, z=0)
-    m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
+    // m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
+    m_gaussians.rotations[i] = randn4();
 
     // Set scale based on neighbor distances
     float scale_value = std::max(neighbor_distances[i] * m_params.init_scaling, m_params.min_distance);
@@ -163,20 +174,6 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
       m_gaussians.sh_coefficients_rest[i * (kMaxSphericalHarmonicsCoefficients - 1) + j] = vec3(0.0f);
     }
   }
-
-  // calculate the std and mean of colors, only sh0.
-  vec3 color_mean(0.0f);
-  vec3 color_std(0.0f);
-  for (int i = 0; i < num_points; ++i) {
-    color_mean += m_gaussians.sh_coefficient_0[i];
-  }
-  color_mean /= static_cast<float>(num_points);
-  for (int i = 0; i < num_points; ++i) {
-    color_std += (m_gaussians.sh_coefficient_0[i] - color_mean) *
-                 (m_gaussians.sh_coefficient_0[i] - color_mean);
-  }
-  color_std = sqrt(color_std / static_cast<float>(num_points));
-  log_info("Color mean={}, std={}", to_string(color_mean), to_string(color_std));
 
   log_info("Initialized {} gaussians with KNN method", m_gaussians.means.size());
   log_info("Scene scale: {}", scene_scale);

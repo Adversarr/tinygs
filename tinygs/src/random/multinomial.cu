@@ -3,6 +3,9 @@
 #include <curand_kernel.h>
 #include <cub/cub.cuh>
 #include <cstdio>
+#include <numeric>
+#include <algorithm>
+#include "tinygs/random/pcg32.hpp"
 
 namespace tinygs{
 
@@ -44,43 +47,116 @@ __global__ void multinomial_sample_kernel(
 }
 
 GPUBuffer<int> multinomial_cuda_with_replacement(
-    const float* d_weights, 
-    int K, 
-    int num_samples, 
-    int seed,
-    cudaStream_t stream)
+  const float* d_weights, 
+  int K, 
+  int num_samples, 
+  int seed,
+  cudaStream_t stream)
 {
-    if (K <= 0 || num_samples <= 0) {
-        throw std::runtime_error(fmt::format("Invalid K={} or num_samples={}", K, num_samples));
-    }
+  if (K <= 0 || num_samples <= 0) {
+      throw std::runtime_error(fmt::format("Invalid K={} or num_samples={}", K, num_samples));
+  }
 
-    auto b_cdf = GPUBuffer<float>(stream, K);
-    float* d_cdf = b_cdf.data();
-    CUDA_CHECK_THROW(cudaMemcpyAsync(d_cdf, d_weights, sizeof(float) * K, cudaMemcpyDeviceToDevice, stream));
+  auto b_cdf = GPUBuffer<float>(stream, K);
+  float* d_cdf = b_cdf.data();
+  CUDA_CHECK_THROW(cudaMemcpyAsync(d_cdf, d_weights, sizeof(float) * K, cudaMemcpyDeviceToDevice, stream));
 
-    void* d_temp = nullptr;
-    size_t temp_bytes = 0;
-    cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K);
-    auto b_temp = GPUBuffer<uint8_t>(stream, temp_bytes);
-    d_temp = b_temp.data();
-    CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K));
+  void* d_temp = nullptr;
+  size_t temp_bytes = 0;
+  cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K);
+  auto b_temp = GPUBuffer<uint8_t>(stream, temp_bytes);
+  d_temp = b_temp.data();
+  CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K));
 
-    float h_total = 0.0f;
-    CUDA_CHECK_THROW(cudaMemcpyAsync(&h_total, d_cdf + (K - 1), sizeof(float), cudaMemcpyDeviceToHost, stream));
-    CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  float h_total = 0.0f;
+  CUDA_CHECK_THROW(cudaMemcpyAsync(&h_total, d_cdf + (K - 1), sizeof(float), cudaMemcpyDeviceToHost, stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
 
-    if (!(h_total > 0.0f) || !isfinite(h_total)) {
-        throw std::runtime_error(fmt::format("Invalid weights: h_total={:.4e}", h_total));
-    }
+  if (!(h_total > 0.0f) || !isfinite(h_total)) {
+      throw std::runtime_error(fmt::format("Invalid weights: h_total={:.4e}", h_total));
+  }
 
-    auto b_out = GPUBuffer<int>(stream, num_samples);
-    int* d_out = b_out.data();
+  auto b_out = GPUBuffer<int>(stream, num_samples);
+  int* d_out = b_out.data();
 
-    int threads = 256;
-    int blocks = (num_samples + threads - 1) / threads;
-    multinomial_sample_kernel<<<blocks, threads, 0, stream>>>(d_cdf, K, h_total, num_samples, seed, d_out);
-    CUDA_CHECK_THROW(cudaPeekAtLastError());
-
-    return b_out;
+  int threads = 256;
+  int blocks = (num_samples + threads - 1) / threads;
+  multinomial_sample_kernel<<<blocks, threads, 0, stream>>>(d_cdf, K, h_total, num_samples, seed, d_out);
+  CUDA_CHECK_THROW(cudaPeekAtLastError());
+  return b_out;
 }
+
+// CPU implementation of lower_bound_cdf
+int lower_bound_cdf_cpu(const float *cdf, int K, float u) {
+  int lo = 0, hi = K - 1;
+  while (lo < hi) {
+    int mid = lo + ((hi - lo) >> 1);
+    if (u <= cdf[mid]) {
+      hi = mid;
+    } else {
+      lo = mid + 1;
+    }
+  }
+  return lo;
+}
+
+std::vector<int> multinomial_cpu_with_replacement(
+  const float* weights,
+  int K,
+  int num_samples,
+  int seed)
+{
+  if (K <= 0 || num_samples <= 0) {
+    throw std::runtime_error(
+        fmt::format("Invalid K={} or num_samples={}", K, num_samples));
+  }
+
+  // Compute CDF on CPU
+  std::vector<float> cdf(K);
+  std::partial_sum(weights, weights + K, cdf.begin());
+
+  float total_sum = cdf[K - 1];
+
+  if (!(total_sum > 0.0f) || !std::isfinite(total_sum)) {
+    throw std::runtime_error(
+        fmt::format("Invalid weights: total_sum={:.4e}", total_sum));
+  }
+
+  // Initialize random number generator
+  pcg32 rng(seed, 0);
+
+  // Sample indices
+  std::vector<int> out_indices(num_samples);
+  for (int i = 0; i < num_samples; ++i) {
+    float r = rng.next_float();
+    float u = r * total_sum;
+    if (u >= total_sum) {
+      u = std::nextafter(total_sum, 0.0f);
+    }
+
+    int idx = lower_bound_cdf_cpu(cdf.data(), K, u);
+    out_indices[i] = idx;
+  }
+
+  return out_indices;
+}
+
+GPUBuffer<int> multinomial_cuda_cpu(
+  const float* d_weights,
+  int K,
+  int num_samples,
+  int seed,
+  cudaStream_t stream)
+{
+  std::vector<float> h_weights(K);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(h_weights.data(), d_weights, sizeof(float) * K, cudaMemcpyDeviceToHost, stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+
+  auto h_out = multinomial_cpu_with_replacement(h_weights.data(), K, num_samples, seed);
+  auto b_out = GPUBuffer<int>(stream, num_samples);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  return b_out;
+}
+
 }

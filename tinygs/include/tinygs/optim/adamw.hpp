@@ -30,6 +30,7 @@ public:
   void step(float scale) override;
   void remove(char* kept_flag, int num_kept) override;
   void duplicate(int* indices, int* new_indices, int num_duplicate) override;
+  void reset(int* indices, int num_reset) override;
 
 private:
   AdamWParameters m_adam_params;

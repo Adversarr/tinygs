@@ -185,6 +185,8 @@ namespace fast_gs::rasterization::kernels::forward {
 
         // store results
         primitive_n_touched_tiles[primitive_idx] = n_touched_tiles;
+        // WARNING: screen_bounds are cast to ushort. This may overflow if grid dimensions exceed 65535.
+        // For very high resolutions, consider changing primitive_screen_bounds to use uint.
         primitive_screen_bounds[primitive_idx] = make_ushort4(
             static_cast<ushort>(screen_bounds.x),
             static_cast<ushort>(screen_bounds.y),

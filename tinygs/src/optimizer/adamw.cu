@@ -14,16 +14,12 @@ __forceinline__ __device__ void adam_step_func(
   const float& beta1,
   const float& beta2,
   const float& epsilon,
-  float relative_weight_decay, // l2
-  float absolute_weight_decay, // l1
-  const float& weight_clipping_magnitude,
   const float& gradient_clipping_magnitude,
-  float loss_scale,
+  float global_step_size,
   const float& lower_lr_bound,
   const float& upper_lr_bound,
   const float& this_lr_scale
 ) {
-  gradient *= loss_scale;
   if (gradient_clipping_magnitude != 0.0f) {
     gradient = copysign(min(abs(gradient), gradient_clipping_magnitude), gradient);
   }
@@ -35,21 +31,12 @@ __forceinline__ __device__ void adam_step_func(
   // Debiasing. Since some parameters might see fewer steps than others, they each need their own step counter.
   learning_rate *= this_lr_scale;
 
-  // Follow AdaBound paradigm
-  const Elem effective_learning_rate
-      = min(max(learning_rate / (sqrt(second_moment) + epsilon), lower_lr_bound), upper_lr_bound);
+  // // Follow AdaBound paradigm
+  // const Elem effective_learning_rate
+  //     = min(max(learning_rate / (sqrt(second_moment) + epsilon), lower_lr_bound), upper_lr_bound);
+  const Elem effective_learning_rate = learning_rate / (sqrt(second_moment) + epsilon);
 
-  relative_weight_decay *= learning_rate;
-  absolute_weight_decay *= learning_rate;
-
-  const Elem decayed_weight = (1 - relative_weight_decay) * weight - copysign(absolute_weight_decay, weight);
-  Elem new_weight = decayed_weight - effective_learning_rate * first_moment;
-
-  // if (weight_clipping_magnitude != 0.0f) {
-  //   new_weight = clamp(new_weight, -weight_clipping_magnitude, weight_clipping_magnitude);
-  // }
-
-  weight = new_weight;
+  weight -= effective_learning_rate * first_moment * global_step_size;
 }
 
 
@@ -84,21 +71,18 @@ __global__ void launch_gaussian_adam_step_SoA(
   AdamWParameters adam_p,
   GaussianOptimizationParams general_p,
   uint32_t num_gaussians,
-  float loss_scale
+  const float global_step_size
 ) {
   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_gaussians) return;
+  const float inv_n = 1.0f / num_gaussians;
 
   // accumulate all the gradients, to cull out zero gradient gaussians
-  float sh_grad_norm = sum(abs(sh_coefficient_0_grad[idx]));
-  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-    sh_grad_norm += sum(abs(sh_coefficients_rest_grad[idx * (kMaxSphericalHarmonicsCoefficients - 1) + i]));
-  }
   const float grad_norm_1 = (
-    sum(abs(means_grad[idx])) + abs(opacities_grad[idx]) +
+    sum(abs(means_grad[idx])) +
+    abs(opacities_grad[idx]) +
     sum(abs(rotations_grad[idx])) +
-    sum(abs(scales_grad[idx])) +
-    sh_grad_norm
+    sum(abs(scales_grad[idx]))
   );
   if (grad_norm_1 == 0 && general_p.skip_zero_grad) return;
 
@@ -125,10 +109,8 @@ __global__ void launch_gaussian_adam_step_SoA(
     adam_step_func(
       val, grad, first_moment, second_moment,
       general_p.means_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
-      general_p.means_l2, general_p.means_l1,
-      0.0f,
       general_p.max_grad_1,
-      loss_scale,
+      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -137,16 +119,15 @@ __global__ void launch_gaussian_adam_step_SoA(
 
   { // opacities
     float& val = opacities[idx];
-    const float& grad = opacities_grad[idx];
+    float actual = logistic(val); // 0 < actual < 1 => L1(actual) = actual => dL1/dval = actual * (1 - actual)
+    float grad = opacities_grad[idx] ;// + (general_p.opacities_l1 * actual * (1 - actual));
     float& first_moment = opacities_first_second[idx * 2];
     float& second_moment = opacities_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
       general_p.opacities_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
-      general_p.opacities_l2, general_p.opacities_l1,
-      0.0f,
       general_p.max_grad_1,
-      loss_scale,
+      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -161,10 +142,8 @@ __global__ void launch_gaussian_adam_step_SoA(
     adam_step_func(
       val, grad, first_moment, second_moment,
       general_p.rotations_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
-      general_p.rotations_l2, general_p.rotations_l1,
-      0.0f,
       general_p.max_grad_1,
-      loss_scale,
+      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -173,16 +152,15 @@ __global__ void launch_gaussian_adam_step_SoA(
 
   { // scales
     vec3& val = scales[idx];
-    const vec3& grad = scales_grad[idx];
+    // actual > 0 => L1(actual) = actual => dL1/dval = actual
+    vec3 grad = scales_grad[idx];//  + (general_p.scales_l1 * exp(val));
     vec3& first_moment = scales_first_second[idx * 2];
     vec3& second_moment = scales_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
       general_p.scales_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
-      general_p.scales_l2, general_p.scales_l1,
-      0.0f,
       general_p.max_grad_1,
-      loss_scale,
+      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -197,10 +175,8 @@ __global__ void launch_gaussian_adam_step_SoA(
     adam_step_func(
       val, grad, first_moment, second_moment,
       general_p.shs_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
-      general_p.shs_l2, general_p.shs_l1,
-      0.0f,
       general_p.max_grad_1,
-      loss_scale,
+      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -208,6 +184,7 @@ __global__ void launch_gaussian_adam_step_SoA(
   }
 
   { // spherical harmonics - rest coefficients
+    // NOTE: They use 1/20 LR w.r.t. sh0
     int start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
     int end = start + (kMaxSphericalHarmonicsCoefficients - 1);
     for (int i = start; i < end; i++) {
@@ -217,11 +194,9 @@ __global__ void launch_gaussian_adam_step_SoA(
       vec3& second_moment = sh_coefficients_rest_first_second[i * 2 + 1];
       adam_step_func(
         val, grad, first_moment, second_moment,
-        general_p.shs_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
-        general_p.shs_l2, general_p.shs_l1,
-        0.0f,
+        general_p.shs_lr * 0.05, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
         general_p.max_grad_1,
-        loss_scale,
+        global_step_size,
         lower_lr_bound,
         upper_lr_bound,
         this_lr_scale
@@ -231,7 +206,7 @@ __global__ void launch_gaussian_adam_step_SoA(
 }
 
 void AdamW::step(float scale) {
-  const float loss_scale = scale;
+  const float global_step_size = scale;
   const int grid = (m_gaussians->size() + 255) / 256;
 
   launch_gaussian_adam_step_SoA<<<grid, 256>>>(
@@ -257,7 +232,7 @@ void AdamW::step(float scale) {
     m_adam_params,
     m_params,
     m_gaussians->size(),
-    loss_scale
+    global_step_size
   );
 }
 
@@ -267,6 +242,7 @@ AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussi
   // Resize and reset all internal buffers
   AdamW::reset();
 }
+
 __global__ void copy_items(
   const vec3 * __restrict__ src_means,
   vec3 * __restrict__ dst_means,
@@ -280,6 +256,8 @@ __global__ void copy_items(
   vec3 * __restrict__ dst_sh_coefficient_0,
   const vec3 * __restrict__ src_sh_coefficients_rest,
   vec3 * __restrict__ dst_sh_coefficients_rest,
+  const uint32_t* __restrict__ src_gaussian_steps,
+  uint32_t* __restrict__ dst_gaussian_steps,
   const int * __restrict__ mapping,
   int num_kept
 ) {
@@ -288,18 +266,35 @@ __global__ void copy_items(
 
   int src_idx = mapping[idx];
   
-  // Copy all fields
-  dst_means[idx] = src_means[src_idx];
-  dst_opacities[idx] = src_opacities[src_idx];
-  dst_rotations[idx] = src_rotations[src_idx];
-  dst_scales[idx] = src_scales[src_idx];
-  dst_sh_coefficient_0[idx] = src_sh_coefficient_0[src_idx];
-  
-  // Copy rest SH coefficients
-  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1);
-  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
+  // Copy first/second moments for means
+  dst_means[idx * 2] = src_means[src_idx * 2];
+  dst_means[idx * 2 + 1] = src_means[src_idx * 2 + 1];
+
+  // Copy first/second moments for opacities  
+  dst_opacities[idx * 2] = src_opacities[src_idx * 2];
+  dst_opacities[idx * 2 + 1] = src_opacities[src_idx * 2 + 1];
+
+  // Copy first/second moments for rotations
+  dst_rotations[idx * 2] = src_rotations[src_idx * 2];
+  dst_rotations[idx * 2 + 1] = src_rotations[src_idx * 2 + 1];
+
+  // Copy first/second moments for scales
+  dst_scales[idx * 2] = src_scales[src_idx * 2];
+  dst_scales[idx * 2 + 1] = src_scales[src_idx * 2 + 1];
+
+  // Copy first/second moments for SH coefficient 0
+  dst_sh_coefficient_0[idx * 2] = src_sh_coefficient_0[src_idx * 2];
+  dst_sh_coefficient_0[idx * 2 + 1] = src_sh_coefficient_0[src_idx * 2 + 1];
+
+  // Copy gaussian steps
+  dst_gaussian_steps[idx] = src_gaussian_steps[src_idx];
+
+  // Copy first/second moments for rest SH coefficients
+  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1) * 2;
+  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1) * 2;
   for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-    dst_sh_coefficients_rest[dst_rest_start + i] = src_sh_coefficients_rest[src_rest_start + i];
+    dst_sh_coefficients_rest[dst_rest_start + i * 2] = src_sh_coefficients_rest[src_rest_start + i * 2];
+    dst_sh_coefficients_rest[dst_rest_start + i * 2 + 1] = src_sh_coefficients_rest[src_rest_start + i * 2 + 1];
   }
 }
 
@@ -319,6 +314,7 @@ void AdamW::remove(char* kept_flag, int num_kept) {
   thrust::device_vector<vec3> scales(2 * num_kept);
   thrust::device_vector<vec3> sh_coefficients_0(2 * num_kept);
   thrust::device_vector<vec3> sh_coefficients_rest(2 * num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
+  thrust::device_vector<uint32_t> gaussian_steps(num_kept);
 
   const int grid = (num_kept + 255) / 256;
   copy_items<<<grid, 256>>>(
@@ -334,6 +330,8 @@ void AdamW::remove(char* kept_flag, int num_kept) {
       thrust::raw_pointer_cast(sh_coefficients_0.data()),
       thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
       thrust::raw_pointer_cast(sh_coefficients_rest.data()),
+      thrust::raw_pointer_cast(m_gaussian_steps.data()),
+      thrust::raw_pointer_cast(gaussian_steps.data()),
       thrust::raw_pointer_cast(mapping.data()),
       num_kept
   );
@@ -343,6 +341,7 @@ void AdamW::remove(char* kept_flag, int num_kept) {
   m_rotations_first_second = std::move(rotations);
   m_scales_first_second = std::move(scales);
   m_sh_coefficient_0_first_second = std::move(sh_coefficients_0);
+  m_gaussian_steps = std::move(gaussian_steps);
   m_sh_coefficients_rest_first_second = std::move(sh_coefficients_rest);
   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 }
@@ -401,8 +400,8 @@ __global__ static void duplicate_optimizer_state_kernel(
     sh_coefficients_rest_first_second[dst_sh_idx * 2 + 1] = sh_coefficients_rest_first_second[src_sh_idx * 2 + 1];
   }
 
-  // Copy step count
-  gaussian_steps[dst_idx] = gaussian_steps[src_idx];
+  // Copy step count: but with half the value to ensure it could be optimized efficiently.
+  gaussian_steps[dst_idx] = (gaussian_steps[src_idx] /= 2);
 }
 
 void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
@@ -417,20 +416,21 @@ void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
   m_sh_coefficients_rest_first_second.resize(m_gaussians->size() * 2 * num_sh_rest_per_gaussian, vec3(0.f));
   m_gaussian_steps.resize(m_gaussians->size(), 0);
 
-  const int grid = (num_duplicate + 255) / 256;
-  duplicate_optimizer_state_kernel<<<grid, 256>>>(
-    thrust::raw_pointer_cast(m_means_first_second.data()),
-    thrust::raw_pointer_cast(m_opacities_first_second.data()),
-    thrust::raw_pointer_cast(m_rotations_first_second.data()),
-    thrust::raw_pointer_cast(m_scales_first_second.data()),
-    thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
-    thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
-    thrust::raw_pointer_cast(m_gaussian_steps.data()),
-    indices,
-    new_indices,
-    num_duplicate,
-    num_sh_rest_per_gaussian
-  );
+  // TODO: This design does not provide better result. Why?
+  // const int grid = (num_duplicate + 255) / 256;
+  // duplicate_optimizer_state_kernel<<<grid, 256>>>(
+  //   thrust::raw_pointer_cast(m_means_first_second.data()),
+  //   thrust::raw_pointer_cast(m_opacities_first_second.data()),
+  //   thrust::raw_pointer_cast(m_rotations_first_second.data()),
+  //   thrust::raw_pointer_cast(m_scales_first_second.data()),
+  //   thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
+  //   thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
+  //   thrust::raw_pointer_cast(m_gaussian_steps.data()),
+  //   indices,
+  //   new_indices,
+  //   num_duplicate,
+  //   num_sh_rest_per_gaussian
+  // );
 }
 
 void AdamW::reset() {
@@ -443,6 +443,39 @@ void AdamW::reset() {
   m_sh_coefficient_0_first_second.resize(num_gaussians * 2, vec3(0.f));
   m_sh_coefficients_rest_first_second.resize(num_gaussians * 2 * (kMaxSphericalHarmonicsCoefficients - 1), vec3(0.f));
   m_gaussian_steps.resize(num_gaussians, 0);
+}
+
+void AdamW::reset(int* indices, int num_reset) {
+  size_t num_gaussians = m_gaussians->size();
+  thrust::for_each(
+    thrust::device_ptr<int>(indices),
+    thrust::device_ptr<int>(indices) + num_reset,
+    [
+      means_first_second = m_means_first_second.data(),
+      opacities_first_second = m_opacities_first_second.data(),
+      rotations_first_second = m_rotations_first_second.data(),
+      scales_first_second = m_scales_first_second.data(),
+      sh_coefficient_0_first_second = m_sh_coefficient_0_first_second.data(),
+      sh_coefficients_rest_first_second = m_sh_coefficients_rest_first_second.data(),
+      gaussian_steps = m_gaussian_steps.data()
+    ] __device__(int idx) {
+      means_first_second[idx * 2] = vec3(0.f);
+      means_first_second[idx * 2 + 1] = vec3(0.f);
+      opacities_first_second[idx * 2] = 0.f;
+      opacities_first_second[idx * 2 + 1] = 0.f;
+      rotations_first_second[idx * 2] = vec4(0.f);
+      rotations_first_second[idx * 2 + 1] = vec4(0.f);
+      scales_first_second[idx * 2] = vec3(0.f);
+      scales_first_second[idx * 2 + 1] = vec3(0.f);
+      sh_coefficient_0_first_second[idx * 2] = vec3(0.f);
+      sh_coefficient_0_first_second[idx * 2 + 1] = vec3(0.f);
+      for (uint32_t i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
+        sh_coefficients_rest_first_second[idx * 2 * (kMaxSphericalHarmonicsCoefficients - 1) + i] = vec3(0.f);
+        sh_coefficients_rest_first_second[idx * 2 * (kMaxSphericalHarmonicsCoefficients - 1) + i + 1] = vec3(0.f);
+      }
+      gaussian_steps[idx] = 0;
+    }
+  );
 }
 
 }

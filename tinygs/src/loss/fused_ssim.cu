@@ -468,8 +468,9 @@ void FusedSSIMLoss::evaluate(LossContext ctx) {
     dim3 grid((W + BLOCK_X - 1) / BLOCK_X, (H + BLOCK_Y - 1) / BLOCK_Y,
               /*batch_size*/ 1);
     dim3 block(BLOCK_X, BLOCK_Y);
-    m_impl->ensure(H * W * CH, ctx.stream);
-    const float actual_scale = ctx.scale / (H * W * CH);
+    int total = H * W * CH;
+    m_impl->ensure(total, ctx.stream);
+    const float actual_scale = ctx.scale / (total);
 
     if (ctx.grad) {
         fusedssimCUDA<<<grid, block, 0, ctx.stream>>>(

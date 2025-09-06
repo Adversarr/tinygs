@@ -32,14 +32,14 @@ CPMAddPackage(
 )
 
 # Mathematics library
-# CPMAddPackage(
-#     NAME glm
-#     GIT_TAG 1.0.1
-#     GITHUB_REPOSITORY g-truc/glm
-#     OPTIONS
-#       "GLM_BUILD_TESTS OFF"
-#       "BUILD_TESTING OFF"
-# )
+CPMAddPackage(
+ NAME glm
+ GIT_TAG 1.0.1
+ GITHUB_REPOSITORY g-truc/glm
+ OPTIONS
+   "GLM_BUILD_TESTS OFF"
+   "BUILD_TESTING OFF"
+)
 
 if(TINYGS_BUILD_BENCHMARKS)
     find_package(benchmark QUIET)

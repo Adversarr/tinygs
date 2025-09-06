@@ -11,10 +11,12 @@ CompileFlags:
     # strip CUDA fatbin args
     - "-Xcompiler=*"
     - "-Xfatbin*"
+    - "-Xcudafe*"
     # strip CUDA arch flags
-    # - "-gencode*"
-    # - "--generate-code*"
+    - "-gencode*"
+    - "--generate-code*"
     # strip CUDA flags unknown to clang
+    - "--use_fast_math"
     - "--extended-lambda"
     - "-ccbin*"
     - "--compiler-options*"

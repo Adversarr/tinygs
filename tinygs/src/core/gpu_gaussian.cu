@@ -160,12 +160,12 @@ void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
 void GPUGaussian3d::append(int num_dup) {
   assert(num_dup > 0);
   const size_t target_size = this->size() + static_cast<size_t>(num_dup);
-  m_means.resize(target_size);
-  m_opacities.resize(target_size);
-  m_rotations.resize(target_size);
-  m_scales.resize(target_size);
-  m_sh_coefficient_0.resize(target_size);
-  m_sh_coefficients_rest.resize(target_size * (kMaxSphericalHarmonicsCoefficients - 1));
+  m_means.resize(target_size, vec3(0.f));
+  m_opacities.resize(target_size, 0.f);
+  m_rotations.resize(target_size, vec4(0.f, 0.f, 0.f, 0.f));
+  m_scales.resize(target_size, vec3(0.f, 0.f, 0.f));
+  m_sh_coefficient_0.resize(target_size, vec3(0.f, 0.f, 0.f));
+  m_sh_coefficients_rest.resize(target_size * (kMaxSphericalHarmonicsCoefficients - 1), vec3(0.f, 0.f, 0.f));
 }
 
 std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {

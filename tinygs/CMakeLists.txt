@@ -56,7 +56,9 @@ target_link_libraries(tinygs
         # Third-party libraries
         spdlog::spdlog
         nlohmann_json::nlohmann_json
+        cxxopts::cxxopts
         OpenMP::OpenMP_CXX
+        glm::glm
 )
 
 target_compile_definitions(

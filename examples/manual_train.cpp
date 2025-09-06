@@ -17,6 +17,7 @@
 #include "tinygs/optim/adamw.hpp"
 #include "tinygs/rasterizer/fastgs.hpp"
 #include "tinygs/strategy/default.hpp"
+#include "tinygs/strategy/mcmc.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 #include "tinygs/utils/stbi/stbi_wrapper.h"
@@ -53,6 +54,7 @@ int main() {
   auto gs3d = std::make_shared<tinygs::GPUGaussian3d>();
   gs3d->copy_from_host(init_result);
   std::shared_ptr<tinygs::GPUGaussian3d> grads = gs3d->clone();
+  gs3d->set_scene_scale(knn.get_scene_scale());
 
   tinygs::GPUBatchInputOutput io;
   io.input.width = width;
@@ -94,17 +96,23 @@ int main() {
   loss_ctx.grad = Image<float>(shape, ImageFormat::CHW, out_image_grad.data());
 
   auto strategy = std::make_unique<DefaultStrategy>(gs3d);
-  strategy->set_pre_remove_callback([&](char* kept_flag, int num_kept) {
+  strategy->set_remove_callback([&](char* kept_flag, int num_kept) {
     if (num_kept == gs3d->size()) return;
     optimizer->remove(kept_flag, num_kept);   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
     gs3d->remove(kept_flag, num_kept);  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
     grads->remove(kept_flag, num_kept);   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
   });
-  strategy->set_post_duplicate_callback([&](int* src, int* dst, int num_duplications) {
+
+  strategy->set_duplicate_callback([&](int* src, int* dst, int num_duplications) {
     if (num_duplications <= 0) return;
     gs3d->append(num_duplications); // It is strategy's responsibility to update the gaussians.
     grads->append(num_duplications);
     optimizer->duplicate(src, dst, num_duplications);
+  });
+
+  strategy->set_reset_callback([&](int* indices, int num_reset) {
+    if (num_reset <= 0) return;
+    optimizer->reset(indices, num_reset);
   });
 
   int frame_count = 0;
@@ -119,16 +127,15 @@ int main() {
     grads->memset(0);
     loss_buffer.memset(0);
     out_image_grad.memset(0);
-    rasterize_ctx.densification_info->memset(0);
     auto data = loader.next();
     io.input.K = data.input.K;
     io.input.w2c = data.input.w2c;
     rasterize_ctx.fwd_input = io.input;
     loss_ctx.target = data.output.image;
     rasterizer.forward(rasterize_ctx);
-    loss_ctx.scale = 1.0f;
+    loss_ctx.scale = 0.8f;
     l1_loss->evaluate(loss_ctx);
-    loss_ctx.scale = 0.1f;
+    loss_ctx.scale = 0.2f;
     ssim_loss->evaluate(loss_ctx);
 
     rasterize_ctx.grad_output.image = loss_ctx.grad;
@@ -158,25 +165,32 @@ int main() {
             // HWC format: data is stored as [H0W0C0, H0W0C1, H0W0C2, H0W1C0, ...]
             int hwc_idx = h * width * 3 + w * 3 + c;
             h_img_hwc[hwc_idx] = static_cast<uint8_t>(h_img[chw_idx] * 255.0f);
+            // h_img_hwc[hwc_idx] = static_cast<uint8_t>(std::clamp(h_img[chw_idx], 0.f, 1.f) * 255.0f);
           }
         }
       }
 
-      save_stbi(h_img_hwc.data(), width, height, 3, fmt::format("output_{}.png", frame_count).data());
-    }
-    optimizer->step(1.0f);
+      cv::Mat img(height, width, CV_8UC3, h_img_hwc.data());
+      cv::imshow("render", img);
 
-    if (frame_count % 100 == 0 && frame_count > 500) {
-      strategy->step(rasterize_ctx);
-      rasterize_ctx.densification_info = std::make_shared<GPUBuffer<float>>(gs3d->size() * 2);
+      if (char key = cv::waitKey(1); key == 27) {
+        should_stop = true;
+      }
     }
+
+    // float current_step_size = 1.0f;
+    float current_step_size = std::powf(0.01f, frame_count / 10000.0f);
+    optimizer->step(current_step_size);
+    strategy->step(rasterize_ctx);
+
 
     frame_count++;
-    if (frame_count > 10000) {
+    if (frame_count > 30000) {
       should_stop = true;
     }
   }
 
+  cv::waitKey(0);
   cv::destroyAllWindows();
   tinygs::GlobalTimerRegistry::get_instance().print_all_stats();
   return EXIT_SUCCESS;

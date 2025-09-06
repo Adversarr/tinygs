@@ -1,13 +1,21 @@
 # TODOs
 
+## General
+
+**CMake**: many flags are not set properly in nvcc.
+
 ## Trainer
 
 1. Implement the training loop class.
 
 ## LR scheduler
 
-1. Global scheduler: exponentially decay the learning rate.
+1. Global scheduler: exponentially decay the learning rate?
 2. Locally, use a scheduler for each gaussian?
+
+## Fatals in Default Strategy
+
+I don't know why it is incorrect.
 
 ## AoS
 
