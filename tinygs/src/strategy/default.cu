@@ -3,10 +3,10 @@
 #include <thrust/random.h>
 #include <thrust/transform_reduce.h>
 
-#include "rasterizer/fastgs_ours/utils.h"
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/strategy/default.hpp"
-#include "utils/scope_timer.hpp"
+#include "tinygs/utils/scope_timer.hpp"
+
 namespace tinygs {
 
 DefaultStrategy::~DefaultStrategy() = default;
@@ -21,11 +21,12 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
     const auto dup_flag = duplicate(ctx);
     // res contains marks the duplication gaussians, disable the pruning for them.
     prune(ctx, dup_flag);
-
     // after pruning, we need to reset the densification info since the indices have changed.
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<float>>(num_gaussians * 2);
     ctx.densification_info->memset(0);
+    ctx.radii.resize(m_gaussians->size());
+    thrust::fill(ctx.radii.begin(), ctx.radii.end(), 0);
   }
 }
 
@@ -55,11 +56,11 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
       thrust::make_counting_iterator<int>(0),             //
       thrust::make_counting_iterator<int>(num_gaussians), //
       [d_densification_info, d_scale, num_gaussians, d_grow_flags,
-       grow_scale = m_params.duplicate_scale_threshold * ctx.scene_scale,
+       grow_scale = m_params.duplicate_scale_threshold * m_gaussians->scene_scale(),
        grow_grad = m_params.duplicate_grad_threshold] __device__(int i) {
         const float grad = d_densification_info[i + num_gaussians] /
                            fmaxf(d_densification_info[i], 1.0f);
-        if (grad > grow_grad) {
+        if (grad > grow_grad && d_densification_info[i] > 0) {
           const float max_scale = expf(max(d_scale[i]));
           if (max_scale > grow_scale) { // is_large => split
             d_grow_flags[i] = kSplit;
@@ -130,7 +131,7 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
 
 
   // TODO: replace the seed with global defined.
-  thrust::default_random_engine rng(time(nullptr));
+  thrust::default_random_engine rng(42);
   thrust::normal_distribution<float> dist(0.f, 1.f);
   thrust::host_vector<float> host_scales(num_grows * 6);
   thrust::generate(host_scales.begin(), host_scales.end(), [&] { return dist(rng); });
@@ -172,16 +173,18 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
         }));
         const vec3 actual_scale = exp(scales3d[src_idx]);
         const float new_opacity = 1.0f - sqrtf(1.0f - logistic(opacities[src_idx]));
-        const vec3 randn = vec3(device_scales[i * 3 + 0], device_scales[i * 3 + 1], device_scales[i * 3 + 2]);
-        const vec3 offset = rot * (actual_scale * randn);
+        const vec3 rand1 = vec3(device_scales[i * 6 + 0], device_scales[i * 6 + 1], device_scales[i * 6 + 2]);
+        const vec3 rand2 = vec3(device_scales[i * 6 + 3], device_scales[i * 6 + 4], device_scales[i * 6 + 5]);
+        const vec3 off1 = rot * (actual_scale * rand1);
+        const vec3 off2 = rot * (actual_scale * rand2);
 
         /// 1. target gs
-        means3d[target_idx] = means3d[src_idx] + offset;
+        means3d[target_idx] = means3d[src_idx] + off1;
         scales3d[target_idx] = log(actual_scale / 1.6f);
         opacities[target_idx] = logit(new_opacity);
 
         /// 2. src gs
-        means3d[src_idx] = means3d[src_idx] - offset;
+        means3d[src_idx] = means3d[src_idx] + off2;
         scales3d[src_idx] = log(actual_scale / 1.6f);
         opacities[src_idx] = logit(new_opacity);
       }
@@ -205,7 +208,7 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
   return last_duplications;
 }
 
-void DefaultStrategy::prune(const RasterizeContext& /* ctx */, const thrust::device_vector<bool> & disable_prune) {
+void DefaultStrategy::prune(const RasterizeContext& ctx, const thrust::device_vector<bool> & disable_prune) {
   // Remove dead gaussians
   const auto num_gaussians = m_gaussians->size();
   thrust::device_vector<char> is_alive(num_gaussians);
@@ -214,12 +217,23 @@ void DefaultStrategy::prune(const RasterizeContext& /* ctx */, const thrust::dev
       thrust::make_counting_iterator<int>(0),                                //
       thrust::make_counting_iterator<int>(num_gaussians),                    //
       [d_is_alive = is_alive.data(), d_opacity,                              //
-       d_disable = disable_prune.data(),                                    //
+       d_disable = disable_prune.data(),                                     //
+       scale = thrust::raw_pointer_cast(m_gaussians->scales().data()),       //
+       scene_scale = m_gaussians->scene_scale(),                             //
+       pruning_scale_threshold = m_params.pruning_scale_threshold,           //
+       prune_large = this_step() > m_params.reset_every,                     //
+       radii = thrust::raw_pointer_cast(ctx.radii.data()),                   //
+       max_radii = ctx.radii.size(),                                         //
+       max_radii_threshold = m_params.max_screen_size,                       //
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) { //
-        if (logistic(d_opacity[i]) > min_opacity) {
+        bool not_large_ws = max(exp(scale[i])) < pruning_scale_threshold * scene_scale;
+        bool not_large_vs = i < max_radii || radii[i] < max_radii_threshold;
+        bool not_transparent = logistic(d_opacity[i]) > min_opacity;
+
+        if (not_transparent && (not_large_ws && not_large_vs || !prune_large)) {
           d_is_alive[i] = 1;
-        } else { // candidate for pruning
-          d_is_alive[i] = d_disable[i] ? 1 : 0; // disable pruning if marked
+        } else {
+          d_is_alive[i] = 0;
         }
       });
 

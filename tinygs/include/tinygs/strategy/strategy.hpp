@@ -5,14 +5,23 @@
 namespace tinygs {
 
 struct StrategyParams {
+  // prune transparent gaussians
   float pruning_opacity_threshold = 0.005f;
+  // prune large gaussians in world space
   float pruning_scale_threshold = 0.1f;
+  // prune large gaussians in view space (2D)
+  int max_screen_size = 20;
+
+  // grow if gradient is large (Default Strategy)
   float duplicate_grad_threshold = 0.0002f;
+  // split if large gaussian is found (Default Strategy)
   float duplicate_scale_threshold = 0.01f;
+
   int refine_every = 100;
   int start_refine = 1000;
   int end_refine = 15'000;
   int max_num_gaussians = 10'000'000;
+  int reset_every = 3'000;
 };
 
 class StrategyBase {

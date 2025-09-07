@@ -31,8 +31,6 @@ namespace FORWARD
 		const float* dc,
 		const float* shs,
 		bool* clamped,
-		const float* cov3D_precomp,
-		const float* colors_precomp,
 		const float* viewmatrix,
 		const float* projmatrix,
 		const glm::vec3* cam_pos,

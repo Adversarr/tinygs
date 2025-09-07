@@ -68,14 +68,14 @@ std::vector<float> KnnInitialization::compute_mean_neighbor_distances(const std:
 
     // Skip the first result (self) and collect neighbors
     for (size_t j = 1; j < num_results && valid_neighbors < m_params.num_neighbors; ++j) {
-      if (out_dists_sqr[j] > m_params.min_distance * m_params.min_distance) {
+      if (out_dists_sqr[j] > 1e-8f) {
         // sum_dist += std::sqrt(out_dists_sqr[j]);
         sum_dist += out_dists_sqr[j];
         valid_neighbors++;
       }
     }
 
-    result[i] = (valid_neighbors > 0) ? std::sqrt(sum_dist / valid_neighbors) : m_params.default_distance;
+    result[i] = (valid_neighbors > 0) ? sqrtf(sum_dist / valid_neighbors) : m_params.default_distance;
   }
 
   return result;
@@ -86,22 +86,12 @@ float KnnInitialization::calculate_scene_scale(const std::vector<vec3>& points, 
     return 1.0f;
   }
 
-  std::vector<float> distances;
-  distances.reserve(points.size());
-
+  // Return the variance
+  float max_dist = 0.0f;
   for (const auto& point : points) {
-    distances.push_back(length(point - center));
+    max_dist = std::max(max_dist, glm::length(point - center));
   }
-
-  std::sort(distances.begin(), distances.end());
-
-  // Return median distance
-  size_t mid = distances.size() / 2;
-  if (distances.size() % 2 == 0) {
-    return (distances[mid - 1] + distances[mid]) / 2.0f;
-  } else {
-    return distances[mid];
-  }
+  return max_dist;
 }
 
 vec3 KnnInitialization::rgb_to_sh(const vec3& rgb) const {
@@ -110,7 +100,7 @@ vec3 KnnInitialization::rgb_to_sh(const vec3& rgb) const {
 }
 
 inline vec4 randn4() {
-  static pcg32 rng;
+  static pcg32 rng(0);
   float u1 = rng.next_float();
   float u2 = rng.next_float();
   float u3 = rng.next_float();
@@ -142,8 +132,8 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
 
   // Clear existing gaussians and resize to fit new data
   const size_t num_points = positions.size();
-  m_gaussians.means.resize(num_points);
   m_gaussians.opacities.resize(num_points);
+  m_gaussians.means.resize(num_points);
   m_gaussians.rotations.resize(num_points, vec4(1.0f, 0.0f, 0.0f, 0.0f));
   m_gaussians.scales.resize(num_points);
   m_gaussians.sh_coefficient_0.resize(num_points);
@@ -157,8 +147,8 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
     m_gaussians.opacities[i] = init_opa;
 
     // Set rotation (identity quaternion: w=1, x=0, y=0, z=0)
-    // m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
-    m_gaussians.rotations[i] = randn4();
+    m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
+    // m_gaussians.rotations[i] = randn4();
 
     // Set scale based on neighbor distances
     float scale_value = std::max(neighbor_distances[i] * m_params.init_scaling, m_params.min_distance);

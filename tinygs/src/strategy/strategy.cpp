@@ -6,6 +6,7 @@ void StrategyBase::step(const RasterizeContext& ctx) {
   step_impl(ctx);
   ++m_step_count;
 }
+
 void StrategyBase::on_remove(char* kept_flag, int num_kept) {
   if (m_remove_callback) {
     m_remove_callback(kept_flag, num_kept);

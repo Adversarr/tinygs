@@ -184,6 +184,10 @@ namespace fast_gs::rasterization::kernels::forward {
             return;
 
         // store results
+#ifndef NDEBUG
+        // Boundary check for primitive arrays
+        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
         primitive_n_touched_tiles[primitive_idx] = n_touched_tiles;
         // WARNING: screen_bounds are cast to ushort. This may overflow if grid dimensions exceed 65535.
         // For very high resolutions, consider changing primitive_screen_bounds to use uint.
@@ -352,6 +356,10 @@ namespace fast_gs::rasterization::kernels::forward {
             return;
         const uint2 instance_range = tile_instance_ranges[tile_idx];
         const uint n_buckets = div_round_up(instance_range.y - instance_range.x, 32u);
+#ifndef NDEBUG
+        // Boundary check for tile arrays
+        assert(tile_idx >= 0 && tile_idx < n_tiles);
+#endif
         tile_n_buckets[tile_idx] = n_buckets;
     }
 
@@ -370,7 +378,8 @@ namespace fast_gs::rasterization::kernels::forward {
         float4* bucket_color_transmittance,
         const uint width,
         const uint height,
-        const uint grid_width) {
+        const uint grid_width,
+        const uint n_tiles) {
         auto block = cg::this_thread_block();
         const dim3 group_index = block.group_index();
         const dim3 thread_index = block.thread_index();
@@ -380,6 +389,12 @@ namespace fast_gs::rasterization::kernels::forward {
         const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y)) + 0.5f;
 
         const uint tile_idx = group_index.y * grid_width + group_index.x;
+        
+        // Early return if tile is out of bounds
+        if (tile_idx >= n_tiles) {
+            return;
+        }
+        
         const uint2 tile_range = tile_instance_ranges[tile_idx];
         const int n_points_total = tile_range.y - tile_range.x;
 
@@ -444,7 +459,12 @@ namespace fast_gs::rasterization::kernels::forward {
         if (inside) {
             const int pixel_idx = width * pixel_coords.y + pixel_coords.x;
             const int n_pixels = width * height;
-          assert (pixel_idx + n_pixels * 2 < n_pixels * 3 && pixel_idx >= 0);
+#ifndef NDEBUG
+            // Boundary checks for debug mode
+            assert(pixel_idx >= 0 && pixel_idx < n_pixels);
+            assert(pixel_idx + n_pixels >= 0 && pixel_idx + n_pixels < n_pixels * 2);
+            assert(pixel_idx + n_pixels * 2 >= 0 && pixel_idx + n_pixels * 2 < n_pixels * 3);
+#endif
             // store results
             image[pixel_idx] = color_pixel.x;
             image[pixel_idx + n_pixels] = color_pixel.y;
@@ -457,8 +477,13 @@ namespace fast_gs::rasterization::kernels::forward {
         typedef cub::BlockReduce<uint, config::tile_width, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_height> BlockReduce;
         __shared__ typename BlockReduce::TempStorage temp_storage;
         n_contributions = BlockReduce(temp_storage).Reduce(n_contributions, cub::Max());
-        if (thread_rank == 0)
+        if (thread_rank == 0) {
+#ifndef NDEBUG
+            // Boundary check for tile arrays
+            assert(tile_idx >= 0 && tile_idx < n_tiles);
+#endif
             tile_max_n_contributions[tile_idx] = n_contributions;
+        }
     }
 
 } // namespace fast_gs::rasterization::kernels::forward

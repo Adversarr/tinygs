@@ -192,7 +192,7 @@ __global__ void duplicateWithKeys(
 // Check keys to see if it is at the start/end of one tile's range in 
 // the full sorted list. If yes, write start/end of this tile. 
 // Run once per instanced (duplicated) Gaussian ID.
-__global__ void identifyTileRanges(int L, uint64_t* point_list_keys, uint2* ranges)
+__global__ void identifyTileRanges(int L, uint64_t* point_list_keys, uint2* ranges, int num_tiles)
 {
 	auto idx = cg::this_grid().thread_rank();
 	if (idx >= L)
@@ -203,20 +203,29 @@ __global__ void identifyTileRanges(int L, uint64_t* point_list_keys, uint2* rang
 	uint32_t currtile = key >> 32;
 	bool valid_tile = currtile != (uint32_t) -1;
 
-	if (idx == 0)
-		ranges[currtile].x = 0;
+	if (idx == 0) {
+	  if (valid_tile) {
+	    assert(currtile < num_tiles);
+	    ranges[currtile].x = 0;
+	  }
+	}
 	else
 	{
 		uint32_t prevtile = point_list_keys[idx - 1] >> 32;
 		if (currtile != prevtile)
 		{
+			assert(prevtile < num_tiles);
 			ranges[prevtile].y = idx;
-			if (valid_tile) 
-			ranges[currtile].x = idx;
+			if (valid_tile) {
+				assert(currtile < num_tiles);
+				ranges[currtile].x = idx;
+			}
 		}
 	}
-	if (idx == L - 1 && valid_tile)
+	if (idx == L - 1 && valid_tile) {
+		assert(currtile < num_tiles);
 		ranges[currtile].y = L;
+	}
 }
 
 // for each tile, see how many buckets/warps are needed to store the state
@@ -239,7 +248,7 @@ void CudaRasterizer::Rasterizer::markVisible(
 	float* projmatrix,
 	bool* present)
 {
-	checkFrustum << <(P + 255) / 256, 256 >> > (
+	checkFrustum <<<(P + 255) / 256, 256 >>> (
 		P,
 		means3D,
 		viewmatrix, projmatrix,
@@ -342,12 +351,10 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 	const float* means3D,
 	const float* dc,
 	const float* shs,
-	const float* colors_precomp,
 	const float* opacities,
 	const float* scales,
 	const float scale_modifier,
 	const float* rotations,
-	const float* cov3D_precomp,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const float* cam_pos,
@@ -379,11 +386,6 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 	char* img_chunkptr = imageBuffer(img_chunk_size);
 	ImageState imgState = ImageState::fromChunk(img_chunkptr, width * height);
 
-	if (NUM_CHANNELS_3DGS != 3 && colors_precomp == nullptr)
-	{
-		throw std::runtime_error("For non-RGB, provide precomputed Gaussian colors!");
-	}
-
 	// Run preprocessing per-Gaussian (transformation, bounding, conversion of SHs to RGB)
 	CHECK_CUDA(FORWARD::preprocess(
 		P, D, M,
@@ -395,8 +397,6 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 		dc,
 		shs,
 		geomState.clamped,
-		cov3D_precomp,
-		colors_precomp,
 		viewmatrix, projmatrix,
 		(glm::vec3*)cam_pos,
 		width, height,
@@ -428,7 +428,7 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 
 	// For each instance to be rendered, produce adequate [ tile | depth ] key 
 	// and corresponding dublicated Gaussian indices to be sorted
-	duplicateWithKeys << <(P + 255) / 256, 256 >> > (
+	duplicateWithKeys <<<(P + 255) / 256, 256 >>> (
 		P,
 		geomState.means2D,
 		geomState.conic_opacity,
@@ -455,10 +455,11 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 
 	// Identify start and end of per-tile workloads in sorted list
 	if (num_rendered > 0)
-		identifyTileRanges << <(num_rendered + 255) / 256, 256 >> > (
+		identifyTileRanges <<<(num_rendered + 255) / 256, 256 >>> (
 			num_rendered,
 			binningState.point_list_keys,
-			imgState.ranges);
+			imgState.ranges,
+			tile_grid.x * tile_grid.y);
 	CHECK_CUDA(, debug)
 
  	// bucket count
@@ -473,7 +474,8 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 	SampleState sampleState = SampleState::fromChunk(sample_chunkptr, bucket_sum);
 
 	// Let each tile blend its range of Gaussians independently in parallel
-	const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
+	// const float* feature_ptr = colors_precomp != nullptr ? colors_precomp : geomState.rgb;
+	const float* feature_ptr = geomState.rgb;
 	CHECK_CUDA(FORWARD::render(
 		tile_grid, block,
 		imgState.ranges,
@@ -506,12 +508,10 @@ void CudaRasterizer::Rasterizer::backward(
 	const float* means3D,
 	const float* dc,
 	const float* shs,
-	const float* colors_precomp,
 	const float* opacities,
 	const float* scales,
 	const float scale_modifier,
 	const float* rotations,
-	const float* cov3D_precomp,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const float* campos,
@@ -556,7 +556,7 @@ void CudaRasterizer::Rasterizer::backward(
 	// Compute loss gradients w.r.t. 2D mean position, conic matrix,
 	// opacity and RGB of Gaussians from per-pixel loss gradients.
 	// If we were given precomputed colors and not SHs, use them.
-	const float* color_ptr = (colors_precomp != nullptr) ? colors_precomp : geomState.rgb;
+	const float* color_ptr = geomState.rgb;
 	CHECK_CUDA(BACKWARD::render(
 		tile_grid,
 		block,
@@ -589,7 +589,7 @@ void CudaRasterizer::Rasterizer::backward(
 	// Take care of the rest of preprocessing. Was the precomputed covariance
 	// given to us or a scales/rot pair? If precomputed, pass that. If not,
 	// use the one we computed ourselves.
-	const float* cov3D_ptr = (cov3D_precomp != nullptr) ? cov3D_precomp : geomState.cov3D;
+	const float* cov3D_ptr = geomState.cov3D;
 	CHECK_CUDA(BACKWARD::preprocess(P, D, M,
 		(float3*)means3D,
 		radii,

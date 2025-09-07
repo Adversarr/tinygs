@@ -46,6 +46,10 @@ public:
 
   void set_scene_scale(float scale) { m_scene_scale = scale; }
 
+  void set_sh_degree(int degree) { m_current_sh_degree = std::min(kMaxSphericalHarmonicsDegree, degree); }
+
+  int get_sh_degree() const { return m_current_sh_degree; }
+
 private:
   /// NOTE: Change to gaussians is not frequent, thrust generally have a good performance
   /// NOTE: SoA of Gaussian3d in GPU memory

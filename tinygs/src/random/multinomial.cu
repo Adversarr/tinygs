@@ -82,7 +82,7 @@ GPUBuffer<int> multinomial_cuda_with_replacement(
   int threads = 256;
   int blocks = (num_samples + threads - 1) / threads;
   multinomial_sample_kernel<<<blocks, threads, 0, stream>>>(d_cdf, K, h_total, num_samples, seed, d_out);
-  CUDA_CHECK_THROW(cudaPeekAtLastError());
+  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
   return b_out;
 }
 

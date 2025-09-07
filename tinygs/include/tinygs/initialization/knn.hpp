@@ -8,10 +8,10 @@
 namespace tinygs {
 
 struct KnnParameters {
-  int num_neighbors = 3;           // Number of neighbors to consider for distance calculation
+  int num_neighbors = 4;           // Number of neighbors to consider for distance calculation
   float min_distance = 1e-7f;      // Minimum distance threshold
-  float default_distance = 0.03f;  // Default distance for edge cases
-  float init_scaling = 0.3f;       // Initial scaling factor
+  float default_distance = 0.001f; // Default distance for edge cases
+  float init_scaling = 1.0f;       // Initial scaling factor
   float init_opacity = 0.5f;       // Initial opacity value
   int sh_degree = 3;               // Spherical harmonics degree
 };

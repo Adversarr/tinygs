@@ -195,6 +195,10 @@ namespace fast_gs::rasterization::kernels::backward {
 
         // write total 3d mean gradient
         const float3 dL_dmean3d = dL_dmean3d_from_splatting + dL_dmean3d_from_color;
+#ifndef NDEBUG
+        // Boundary check for primitive arrays
+        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
         grad_means[primitive_idx] = dL_dmean3d;
 
         // raw scale gradient
@@ -210,6 +214,9 @@ namespace fast_gs::rasterization::kernels::backward {
             2.0f * variance.x * dL_dvariance_x,
             2.0f * variance.y * dL_dvariance_y,
             2.0f * variance.z * dL_dvariance_z);
+#ifndef NDEBUG
+        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
         grad_raw_scales[primitive_idx] = dL_draw_scale;
 
         // raw rotation gradient
@@ -236,10 +243,18 @@ namespace fast_gs::rasterization::kernels::backward {
         // It's recommended to verify its correctness against the original 3DGS paper or standard quaternion calculus references.
         const float dL_dq_norm_helper = qxx * dL_dqxx + qyy * dL_dqyy + qzz * dL_dqzz + qxy * dL_dqxy + qxz * dL_dqxz + qyz * dL_dqyz + qrx * dL_dqrx + qry * dL_dqry + qrz * dL_dqrz;
         const float4 dL_draw_rotation = 2.0f * make_float4(qx * dL_dqrx + qy * dL_dqry + qz * dL_dqrz - qr * dL_dq_norm_helper, 2.0f * qx * dL_dqxx + qy * dL_dqxy + qz * dL_dqxz + qr * dL_dqrx - qx * dL_dq_norm_helper, 2.0f * qy * dL_dqyy + qx * dL_dqxy + qz * dL_dqyz + qr * dL_dqry - qy * dL_dq_norm_helper, 2.0f * qz * dL_dqzz + qx * dL_dqxz + qy * dL_dqyz + qr * dL_dqrz - qz * dL_dq_norm_helper) / q_norm_sq;
+#ifndef NDEBUG
+        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
         grad_raw_rotations[primitive_idx] = dL_draw_rotation;
 
         // TODO: only needed for adaptive density control from the original 3dgs
         if (densification_info != nullptr) {
+#ifndef NDEBUG
+            // Boundary check for densification_info array (size: 2 * n_primitives)
+            assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+            assert(n_primitives + primitive_idx >= 0 && n_primitives + primitive_idx < 2 * n_primitives);
+#endif
             densification_info[primitive_idx] += 1.0f;
             densification_info[n_primitives + primitive_idx] += length(dL_dmean2d * make_float2(0.5f * w, 0.5f * h));
         }
@@ -444,6 +459,10 @@ namespace fast_gs::rasterization::kernels::backward {
 
         // finally add the gradients using atomics
         if (valid_primitive) {
+#ifndef NDEBUG
+            // Boundary check for gradient arrays
+            assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
             atomicAdd(&grad_mean2d[primitive_idx].x, dL_dmean2d_accum.x);
             atomicAdd(&grad_mean2d[primitive_idx].y, dL_dmean2d_accum.y);
             atomicAdd(&grad_conic[primitive_idx], dL_dconic_accum.x);

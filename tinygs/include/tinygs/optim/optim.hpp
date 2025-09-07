@@ -6,8 +6,8 @@ namespace tinygs {
 
 struct GaussianOptimizationParams {
   // Shared parameters
-  float max_grad_1 = 0.0f;
-  bool skip_zero_grad = false;
+  float max_grad_1 = 1.0f;
+  bool skip_zero_grad = true;
 
   // Learning rates for different parameters
   float means_lr = 1.6e-4f;
@@ -17,8 +17,8 @@ struct GaussianOptimizationParams {
   float rotations_lr = 1.0e-3f;
 
   // L1 regularization
-  float opacities_l1 = 0.01f; //0.01f;
-  float scales_l1 = 0.01f;    //0.01f;
+  float opacities_l1 = 0.00f; //0.01f;
+  float scales_l1 = 0.00f;    //0.01f;
 };
 
 class OptimizerBase {

@@ -15,7 +15,6 @@ __forceinline__ __device__ void adam_step_func(
   const float& beta2,
   const float& epsilon,
   const float& gradient_clipping_magnitude,
-  float global_step_size,
   const float& lower_lr_bound,
   const float& upper_lr_bound,
   const float& this_lr_scale
@@ -32,11 +31,10 @@ __forceinline__ __device__ void adam_step_func(
   learning_rate *= this_lr_scale;
 
   // // Follow AdaBound paradigm
-  // const Elem effective_learning_rate
-  //     = min(max(learning_rate / (sqrt(second_moment) + epsilon), lower_lr_bound), upper_lr_bound);
-  const Elem effective_learning_rate = learning_rate / (sqrt(second_moment) + epsilon);
+  const Elem effective_learning_rate
+      = min(max(learning_rate / (sqrt(second_moment) + epsilon), lower_lr_bound), upper_lr_bound);
 
-  weight -= effective_learning_rate * first_moment * global_step_size;
+  weight -= effective_learning_rate * first_moment;
 }
 
 
@@ -108,9 +106,8 @@ __global__ void launch_gaussian_adam_step_SoA(
     vec3& second_moment = means_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.means_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.means_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
-      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -120,14 +117,13 @@ __global__ void launch_gaussian_adam_step_SoA(
   { // opacities
     float& val = opacities[idx];
     float actual = logistic(val); // 0 < actual < 1 => L1(actual) = actual => dL1/dval = actual * (1 - actual)
-    float grad = opacities_grad[idx] ;// + (general_p.opacities_l1 * actual * (1 - actual));
+    float grad = opacities_grad[idx] + (general_p.opacities_l1 * actual * (1 - actual))  / (float) num_gaussians;
     float& first_moment = opacities_first_second[idx * 2];
     float& second_moment = opacities_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.opacities_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.opacities_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
-      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -141,9 +137,8 @@ __global__ void launch_gaussian_adam_step_SoA(
     vec4& second_moment = rotations_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.rotations_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.rotations_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
-      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -153,14 +148,13 @@ __global__ void launch_gaussian_adam_step_SoA(
   { // scales
     vec3& val = scales[idx];
     // actual > 0 => L1(actual) = actual => dL1/dval = actual
-    vec3 grad = scales_grad[idx];//  + (general_p.scales_l1 * exp(val));
+    vec3 grad = scales_grad[idx] + (general_p.scales_l1 * exp(val)) / (float) num_gaussians;
     vec3& first_moment = scales_first_second[idx * 2];
     vec3& second_moment = scales_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.scales_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.scales_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
-      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -174,9 +168,8 @@ __global__ void launch_gaussian_adam_step_SoA(
     vec3& second_moment = sh_coefficient_0_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.shs_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.shs_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
-      global_step_size,
       lower_lr_bound,
       upper_lr_bound,
       this_lr_scale
@@ -194,9 +187,8 @@ __global__ void launch_gaussian_adam_step_SoA(
       vec3& second_moment = sh_coefficients_rest_first_second[i * 2 + 1];
       adam_step_func(
         val, grad, first_moment, second_moment,
-        general_p.shs_lr * 0.05, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+        general_p.shs_lr * 0.05 * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
         general_p.max_grad_1,
-        global_step_size,
         lower_lr_bound,
         upper_lr_bound,
         this_lr_scale

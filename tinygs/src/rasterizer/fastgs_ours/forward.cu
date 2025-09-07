@@ -44,6 +44,7 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
     const dim3 block(config::tile_width, config::tile_height, 1);
     const int n_tiles = grid.x * grid.y;
+    const int grid_width = grid.x;
 
     char* per_tile_buffers_blob = per_tile_buffers_func(required<PerTileBuffers>(n_tiles));
     PerTileBuffers per_tile_buffers = PerTileBuffers::from_blob(per_tile_buffers_blob, n_tiles);
@@ -195,7 +196,8 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
         per_bucket_buffers.color_transmittance,
         width,
         height,
-        grid.x);
+        grid_width,
+        n_tiles);
     CHECK_CUDA(config::debug, "blend")
 
     return {n_visible_primitives, n_instances, n_buckets, per_primitive_buffers.primitive_indices.selector, per_instance_buffers.primitive_indices.selector};

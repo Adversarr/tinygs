@@ -163,8 +163,6 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	const float* dc,
 	const float* shs,
 	bool* clamped,
-	const float* cov3D_precomp,
-	const float* colors_precomp,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const glm::vec3* cam_pos,
@@ -205,15 +203,8 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	// If 3D covariance matrix is precomputed, use it, otherwise compute
 	// from scaling and rotation parameters. 
 	const float* cov3D;
-	if (cov3D_precomp != nullptr)
-	{
-		cov3D = cov3D_precomp + idx * 6;
-	}
-	else
-	{
-		computeCov3D(scales[idx], scale_modifier, rotations[idx], cov3Ds + idx * 6);
-		cov3D = cov3Ds + idx * 6;
-	}
+	computeCov3D(scales[idx], scale_modifier, rotations[idx], cov3Ds + idx * 6);
+	cov3D = cov3Ds + idx * 6;
 
 	// Compute 2D screen-space covariance matrix
 	float3 cov = computeCov2D(p_orig, focal_x, focal_y, tan_fovx, tan_fovy, cov3D, viewmatrix);
@@ -245,20 +236,17 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	float lambda2 = mid - sqrt(max(0.1f, mid * mid - det));
 	float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
 	float2 point_image = { ndc2Pix(p_proj.x, W), ndc2Pix(p_proj.y, H) };
-	uint2 rect_min, rect_max;
+	uint2 rect_min, rect_max; 
+	radii[idx] = 0; // before quit, set radii to zero.
 	getRect(point_image, my_radius, rect_min, rect_max, grid);
 	if ((rect_max.x - rect_min.x) * (rect_max.y - rect_min.y) == 0)
 		return;
 
-	// If colors have been precomputed, use them, otherwise convert
-	// spherical harmonics coefficients to RGB color.
-	if (colors_precomp == nullptr)
-	{
-		glm::vec3 result = computeColorFromSH(idx, D, M, (glm::vec3*)orig_points, *cam_pos, dc, shs, clamped);
-		rgb[idx * C + 0] = result.x;
-		rgb[idx * C + 1] = result.y;
-		rgb[idx * C + 2] = result.z;
-	}
+	// Convert spherical harmonics coefficients to RGB color.
+	glm::vec3 result = computeColorFromSH(idx, D, M, (glm::vec3*)orig_points, *cam_pos, dc, shs, clamped);
+	rgb[idx * C + 0] = result.x;
+	rgb[idx * C + 1] = result.y;
+	rgb[idx * C + 2] = result.z;
 
 	// Store some useful helper data for the next steps.
 	depths[idx] = p_view.z;
@@ -478,8 +466,6 @@ void FORWARD::preprocess(int P, int D, int M,
 	const float* dc,
 	const float* shs,
 	bool* clamped,
-	const float* cov3D_precomp,
-	const float* colors_precomp,
 	const float* viewmatrix,
 	const float* projmatrix,
 	const glm::vec3* cam_pos,
@@ -507,8 +493,6 @@ void FORWARD::preprocess(int P, int D, int M,
 		dc,
 		shs,
 		clamped,
-		cov3D_precomp,
-		colors_precomp,
 		viewmatrix, 
 		projmatrix,
 		cam_pos,

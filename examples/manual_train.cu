@@ -3,18 +3,20 @@
 #include <algorithm>
 #include <iostream>
 #include <opencv2/opencv.hpp>
+#include <stdexcept>
 #include <tinygs/core/camera.hpp>
 
-#include "tinygs/cuda/reduce.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/cuda/reduce.hpp"
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/dataset/png_folder.hpp"
 #include "tinygs/initialization/knn.hpp"
 #include "tinygs/loss/fused_ssim.hpp"
 #include "tinygs/loss/l1.hpp"
 #include "tinygs/optim/adamw.hpp"
+#include "tinygs/rasterizer/default.hpp"
 #include "tinygs/rasterizer/fastgs.hpp"
 #include "tinygs/strategy/default.hpp"
 #include "tinygs/strategy/mcmc.hpp"
@@ -26,7 +28,7 @@ using namespace tinygs;
 
 int main() {
   spdlog::set_level(spdlog::level::debug);
-  std::string data_path = "/data/accgs/1747834320424/";
+  std::string data_path = "/data/accgs/1748422612463/";
   std::string camera_intrinsics_path = data_path + "inputs/slam/cameras.txt";
   std::string camera_extrinsics_path = data_path + "inputs/traj_full.txt.bak";
 
@@ -55,6 +57,7 @@ int main() {
   gs3d->copy_from_host(init_result);
   std::shared_ptr<tinygs::GPUGaussian3d> grads = gs3d->clone();
   gs3d->set_scene_scale(knn.get_scene_scale());
+  gs3d->set_sh_degree(0);
 
   tinygs::GPUBatchInputOutput io;
   io.input.width = width;
@@ -77,9 +80,11 @@ int main() {
   rasterize_ctx.fwd_input = io.input;
   rasterize_ctx.fwd_output = io.output;
   rasterize_ctx.gaussians_grad = grads;
+  rasterize_ctx.radii.resize(gs3d->size());
 
   // Rendering.
-  tinygs::FastGSRasterizer rasterizer;
+  tinygs::DefaultRasterizer rasterizer;
+  // tinygs::FastGSRasterizer rasterizer;
   rasterizer.set_gaussians(gs3d);
 
   // Optimizer
@@ -87,7 +92,7 @@ int main() {
 
   // Loss
   GPUBuffer<float> loss_buffer = GPUBuffer<float>(shape.width * shape.height * 4);
-  tinygs::GPUMemory<float> out_image_grad(width * height * 3);
+  GPUMemory<float> out_image_grad(width * height * 3);
   auto l1_loss = std::make_unique<tinygs::L1Loss>();
   auto ssim_loss = std::make_unique<tinygs::FusedSSIMLoss>();
   LossContext loss_ctx;
@@ -95,7 +100,8 @@ int main() {
   loss_ctx.pred = rasterize_ctx.fwd_output.image;
   loss_ctx.grad = Image<float>(shape, ImageFormat::CHW, out_image_grad.data());
 
-  auto strategy = std::make_unique<MCMCStrategy>(gs3d);
+  // Densification Strategy
+  auto strategy = std::make_unique<DefaultStrategy>(gs3d);
   strategy->set_remove_callback([&](char* kept_flag, int num_kept) {
     if (num_kept == gs3d->size()) return;
     optimizer->remove(kept_flag, num_kept);
@@ -127,6 +133,7 @@ int main() {
     grads->memset(0);
     loss_buffer.memset(0);
     out_image_grad.memset(0);
+
     auto data = loader.next();
     io.input.K = data.input.K;
     io.input.w2c = data.input.w2c;
@@ -144,7 +151,7 @@ int main() {
         loss_buffer.data() + shape.width * shape.height * 3);
     rasterizer.backward(rasterize_ctx);
 
-    if (frame_count % 100 == 0) {
+    if (frame_count % 1 == 0) {
       auto now = std::chrono::steady_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - beg);
       log_info("step {} loss: {} time: {}ms/100step, {}s elapsed", frame_count, //
@@ -171,6 +178,7 @@ int main() {
       }
 
       cv::Mat img(height, width, CV_8UC3, h_img_hwc.data());
+      // cv::imwrite("render.png", img);
       cv::imshow("render", img);
 
       if (char key = cv::waitKey(1); key == 27) {
@@ -183,6 +191,7 @@ int main() {
     optimizer->step(current_step_size);
     strategy->step(rasterize_ctx);
 
+    gs3d->set_sh_degree(frame_count / 1000);
 
     frame_count++;
     if (frame_count > 30000) {
@@ -194,5 +203,4 @@ int main() {
   cv::destroyAllWindows();
   tinygs::GlobalTimerRegistry::get_instance().print_all_stats();
   return EXIT_SUCCESS;
-
 }

@@ -12,6 +12,7 @@
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/dataset/png_folder.hpp"
 #include "tinygs/initialization/knn.hpp"
+#include "tinygs/rasterizer/default.hpp"
 #include "tinygs/rasterizer/fastgs.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
@@ -74,7 +75,8 @@ int main() {
     params.fwd_output = io.output;
 
     // Rendering.
-    tinygs::FastGSRasterizer rasterizer;
+    tinygs::DefaultRasterizer rasterizer;
+    // tinygs::FastGSRasterizer rasterizer;
     rasterizer.set_gaussians(gs3d);
     
     std::cout << "Press 'q' to quit, any other key to load next image" << std::endl;

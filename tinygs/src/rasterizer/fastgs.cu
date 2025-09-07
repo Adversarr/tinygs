@@ -31,7 +31,7 @@ struct FastGSRasterizer::Impl {
   // 3. helper
   int n_visible_primitives, n_instances, n_buckets;
   int primitive_primitive_indices_selector, instance_primitive_indices_selector;
-  std::shared_ptr<GPUMemoryArena> arena;
+  // std::shared_ptr<GPUMemoryArena> arena;
   // std::map<std::string, std::unique_ptr<GPUBuffer<char>>> temp_buffers;
   std::map<std::string, thrust::device_vector<char>> temp_buffers;
 
@@ -44,7 +44,9 @@ struct FastGSRasterizer::Impl {
   char* alloc(const std::string &name, size_t size) { 
     TINYGS_TIMER("FastGSRasterizer::Impl::alloc");
     auto& buffer = temp_buffers[name];
-    buffer.resize(size * 4);
+    if (size > buffer.size()) {
+      buffer.resize(size);
+    }
     return thrust::raw_pointer_cast(buffer.data());
     // if (buffer == nullptr || buffer->size() < size) {
     //   buffer = std::make_unique<GPUBuffer<char>>(arena, size);
@@ -55,7 +57,7 @@ struct FastGSRasterizer::Impl {
 
 FastGSRasterizer::FastGSRasterizer() {
     m_impl = std::make_unique<Impl>();
-    m_impl->arena = m_memory_arena;
+    // m_impl->arena = m_memory_arena;
 }
 
 void FastGSRasterizer::forward(const RasterizeContext& ctx) {
@@ -153,8 +155,6 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   float fy = params.fwd_input.K[1][1];
   float cx = params.fwd_input.K[2][0];
   float cy = params.fwd_input.K[2][1];
-  // float cx = params.fwd_input.K[0][2];
-  // float cy = params.fwd_input.K[1][2];
 
   // zero grad buffer.
   auto& means_grad = params.gaussians_grad->means();
