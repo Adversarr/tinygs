@@ -117,7 +117,7 @@ __global__ void launch_gaussian_adam_step_SoA(
   { // opacities
     float& val = opacities[idx];
     float actual = logistic(val); // 0 < actual < 1 => L1(actual) = actual => dL1/dval = actual * (1 - actual)
-    float grad = opacities_grad[idx] + (general_p.opacities_l1 * actual * (1 - actual))  / (float) num_gaussians;
+    float grad = opacities_grad[idx] + (general_p.opacities_l1 * actual * (1 - actual)) * inv_n;
     float& first_moment = opacities_first_second[idx * 2];
     float& second_moment = opacities_first_second[idx * 2 + 1];
     adam_step_func(
@@ -148,7 +148,7 @@ __global__ void launch_gaussian_adam_step_SoA(
   { // scales
     vec3& val = scales[idx];
     // actual > 0 => L1(actual) = actual => dL1/dval = actual
-    vec3 grad = scales_grad[idx] + (general_p.scales_l1 * exp(val)) / (float) num_gaussians;
+    vec3 grad = scales_grad[idx] + (general_p.scales_l1 * inv_n) * exp(val);
     vec3& first_moment = scales_first_second[idx * 2];
     vec3& second_moment = scales_first_second[idx * 2 + 1];
     adam_step_func(

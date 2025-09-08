@@ -52,7 +52,7 @@ __global__ void launch_gaussian_sgd_step_SoA(
   { // opacities
     float& val = opacities[idx];
     float actual = logistic(val); // 0 < actual < 1 => L1(actual) = actual => dL1/dval = actual * (1 - actual)
-    float grad = opacities_grad[idx] + (general_p.opacities_l1 * actual * (1 - actual))  / (float) num_gaussians;
+    float grad = opacities_grad[idx] + (general_p.opacities_l1 * actual * (1 - actual)) * inv_n;
     const float grad_clipped = general_p.max_grad_1 != 0.0f ? 
       copysign(min(abs(grad), general_p.max_grad_1), grad) : grad;
     val -= general_p.opacities_lr * global_step_size * grad_clipped;
@@ -69,7 +69,7 @@ __global__ void launch_gaussian_sgd_step_SoA(
   { // scales
     vec3& val = scales[idx];
     // actual > 0 => L1(actual) = actual => dL1/dval = actual
-    vec3 grad = scales_grad[idx] + (general_p.scales_l1 * exp(val)) / (float) num_gaussians;
+    vec3 grad = scales_grad[idx] + (general_p.scales_l1 * exp(val)) * inv_n;
     const vec3 grad_clipped = general_p.max_grad_1 != 0.0f ? 
       copysign(min(abs(grad), vec3(general_p.max_grad_1)), grad) : grad;
     val -= general_p.scales_lr * global_step_size * grad_clipped;

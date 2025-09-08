@@ -58,7 +58,6 @@ private:
     tinygs::GPUBatchInputOutput io;
     io.input.width = width;
     io.input.height = height;
-    io.input.batch_size = 1;
     io.input.near = 0.001f;
     io.input.far = 10000.0f;
     

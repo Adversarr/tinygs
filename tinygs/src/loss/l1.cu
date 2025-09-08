@@ -40,8 +40,12 @@ namespace tinygs {
 void L1Loss::evaluate(LossContext ctx) {
   int n = ctx.pred.size();
   const float actual_scale = ctx.scale / n;
-  linear_kernel(l1_kernel, 0, ctx.stream, n, ctx.pred.data, //
-                ctx.target.data, ctx.loss.data, ctx.grad.data, actual_scale);
+  linear_kernel(l1_kernel, 0, ctx.stream, n,
+    static_cast<const float*>(ctx.pred.data),
+    static_cast<const float*>(ctx.target.data),
+    static_cast<float*>(ctx.loss.data),
+    static_cast<float*>(ctx.grad.data),
+    actual_scale);
 }
 
 } // namespace tinygs

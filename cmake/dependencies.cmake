@@ -54,3 +54,5 @@ if(TINYGS_BUILD_BENCHMARKS)
         )
     endif()
 endif()
+
+find_package(OpenCV REQUIRED)

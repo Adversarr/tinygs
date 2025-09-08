@@ -5,7 +5,8 @@
 #include <chrono>
 #include <stdexcept>
 
-#include "core/camera.hpp"
+#include "tinygs/core/camera.hpp"
+#include "tinygs/core/camera_loader.hpp"
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/stbi/stbi_wrapper.h"
@@ -66,35 +67,18 @@ static void load_single_image(size_t index, const std::string& image_path, float
   free(img_data);
 }
 
-static std::vector<CameraExtrinsics> load_cameras(const std::string& camera_file_path) {
-  auto lines = readlines(camera_file_path);
-  std::vector<CameraExtrinsics> cameras;
-  cameras.reserve(lines.size());
-for (const auto& line : lines) {
-    cameras.emplace_back(CameraExtrinsics::parse(line));
-  }
-  return cameras;
-}
 
-CameraIntrinsics load_intrinsics(const std::string& intrinsics_file_path) {
-  auto lines = readlines(intrinsics_file_path);
-  if (lines.empty()) {
-    throw std::runtime_error("No camera intrinsics found in file: " + intrinsics_file_path);
-  }
-  return CameraIntrinsics::parse(lines[0]);
-}
 
 PngFolderDataset::PngFolderDataset(const std::string &folder_path,
                                    const std::string &extrinsics_file_path,
                                    const std::string &intrinsics_file_path,
                                    const ImageShape &image_shape)
     : m_image_paths(list_png_files(folder_path)), m_folder_path(folder_path),
-    m_cameras(load_cameras(extrinsics_file_path)), 
-    m_camera_intrinsics(load_intrinsics(intrinsics_file_path)),
+    m_camera_loader(extrinsics_file_path, intrinsics_file_path),
     m_image_shape(image_shape) {
   TINYGS_TIMER("PngFolderDataset::PngFolderDataset");
   auto start = std::chrono::steady_clock::now();
-  m_size = std::min(m_image_paths.size(), m_cameras.size());
+  m_size = std::min(m_image_paths.size(), m_camera_loader.get_camera_extrinsics().size());
   if (m_size == 0) {
     throw std::runtime_error("No PNG files found in folder: " + folder_path);
   }
@@ -103,8 +87,8 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
     throw std::runtime_error("Only 3 channels (RGB) are supported now.");
   }
 
-  if (m_size != m_cameras.size()) {
-    log_warning("Number of PNG files ({}) and camera extrinsics ({}) do not match.", m_size, m_cameras.size());
+  if (m_size != m_camera_loader.get_camera_extrinsics().size()) {
+    log_warning("Number of PNG files ({}) and camera extrinsics ({}) do not match.", m_size, m_camera_loader.get_camera_extrinsics().size());
   } else if (m_size != m_image_paths.size()) {
     log_warning("Number of PNG files ({}) and camera extrinsics ({}) do not match.", m_size, m_image_paths.size());
   }
@@ -124,7 +108,7 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
             m_size, m_image_shape.width, m_image_shape.height, static_cast<double>(total_size) / (1024 * 1024 * 1024),
             std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
 
-  log_info("Camera Intrisics: {}", to_string(m_camera_intrinsics));
+  log_info("Camera Intrisics: {}", to_string(m_camera_loader.get_camera_intrinsics()));
 }
 
 ImageShape PngFolderDataset::image_shape() const {
@@ -144,15 +128,15 @@ Data PngFolderDataset::operator[](size_t index) const {
   Data data;
 
   // Set up image data
-  const float* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
+  float* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
   data.image.shape = image_shape();
   data.image.format = ImageFormat::CHW;  // Converted to CHW format
   data.image.data = image_ptr;
 
   // Initialize camera matrices to identity (placeholder values)
   // In a real implementation, these would be loaded from camera calibration files
-  data.w2c = m_cameras[index].get_w2c();
-  data.K = m_camera_intrinsics.get_K();
+  data.w2c = m_camera_loader.get_camera_extrinsics()[index].get_w2c();
+  data.K = m_camera_loader.get_camera_intrinsics().get_K();
   return data;
 }
 

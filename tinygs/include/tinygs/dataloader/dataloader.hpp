@@ -1,25 +1,20 @@
 #pragma once
 #include "tinygs/core/image.hpp"
-#include "tinygs/cuda/common_host.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/dataset/dataset.hpp"
 
 namespace tinygs {
 
 struct GPUBatchInput {
-  uint32_t batch_size;  // Only 1 is support for now.
   uint32_t width, height;
   float near, far;
   mat3x3 K;
   mat4x4 w2c;
-
-  // TODO: support multiple views.
-  // // Ks is nullptr, K is used. Use Ks otherwise.
-  // const float* Ks;
 };
 
 struct GPUBatchOutput {
-  Image<float> image;
-  Image<float> alpha;
+  Image image;
+  Image alpha;
 };
 
 /**
@@ -43,33 +38,34 @@ public:
    * @param stream CUDA stream to use for asynchronous data transfers
    * @return GPUBatchInputOutput
    */
-  virtual GPUBatchInputOutput next(cudaStream_t stream) noexcept = 0;
+  virtual GPUBatchInputOutput next(cudaStream_t stream) = 0;
 
   /**
    * @brief Get next batch of data ready for compute using default stream.
    *
    * @return GPUBatchInputOutput
    */
-  virtual GPUBatchInputOutput next() noexcept { return next(cudaStreamDefault); }
+  virtual GPUBatchInputOutput next() = 0;
 
   virtual void reset() {};
 
+  /**
+  * @brief Helper function to transfer data from host to GPU.
+  *
+  * @param stream CUDA stream to use for asynchronous transfer.
+  * @param gpu_data GPU batch input/output data structure.
+  * @param host_data Host batch input/output data structure.
+  */
+  void transfer_gpu(cudaStream_t stream, const Image& gpu_data, const Image& host_data);
+
+  void transfer_gpu(const Image &gpu_data, const Image &host_data);
+
 protected:
   std::shared_ptr<DatasetBase> m_dataset;
-  size_t m_batch_size = 1;  /// TODO: must be 1.
+
+private:
+  GPUMemory<char> m_raw_data;
 };
 
-/**
- * @brief Helper function to transfer data from host to GPU.
- *
- * @param stream CUDA stream to use for asynchronous transfer.
- * @param gpu_data GPU batch input/output data structure.
- * @param host_data Host batch input/output data structure.
- */
-void transfer_gpu(cudaStream_t stream, const Image<float>& gpu_data, const Image<const float>& host_data);
-
-inline void transfer_gpu(const Image<float>& gpu_data, const Image<const float>& host_data) {
-  transfer_gpu(cudaStreamDefault, gpu_data, host_data);
-}
 
 }  // namespace tinygs

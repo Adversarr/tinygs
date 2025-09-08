@@ -12,7 +12,7 @@ class PsnrMetric : public MetricBase {
 public:
   PsnrMetric() = default;
 
-  float evaluate(Image<float> pred, Image<const float> target) override;
+  float evaluate(Image pred, Image target) override;
 
 private:
   GPUBuffer<float> m_sqr_diff;

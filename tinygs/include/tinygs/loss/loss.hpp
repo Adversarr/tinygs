@@ -5,10 +5,10 @@ namespace tinygs {
 
 struct LossContext {
   float scale = 1.0f;
-  Image<float> pred;
-  Image<const float> target;
-  Image<float> loss;
-  Image<float> grad;
+  Image pred;
+  Image target;
+  Image loss;
+  Image grad;
   cudaStream_t stream = nullptr;
 };
 
@@ -43,7 +43,7 @@ public:
    * @param target The target image.
    * @return float The metric value.
    */
-  virtual float evaluate(Image<float> pred, Image<const float> target) = 0;
+  virtual float evaluate(Image pred, Image target) = 0;
 };
 
 } // namespace tinygs

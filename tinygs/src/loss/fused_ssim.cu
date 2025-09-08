@@ -1,7 +1,5 @@
 #include "cuda/gpu_memory.hpp"
 #include <cooperative_groups.h>
-#include <algorithm>
-#include <iostream>
 #include <tinygs/loss/fused_ssim.hpp>
 
 namespace cg = cooperative_groups;
@@ -435,24 +433,21 @@ __global__ void fusedssim_backwardCUDA(
 namespace tinygs {
 
 struct FusedSSIMLoss::Impl {
-    GPUBuffer<float> dm_dmu1;
-    GPUBuffer<float> dm_dsigma1_sq;
-    GPUBuffer<float> dm_dsigma12;
+  GPUBuffer<float> dm_dmu1;
+  GPUBuffer<float> dm_dsigma1_sq;
+  GPUBuffer<float> dm_dsigma12;
 
-    void ensure(size_t total, cudaStream_t stream) {
-      if (!dm_dmu1 || dm_dmu1.size() < total) {
-        dm_dmu1 = GPUBuffer<float>(stream, total);
-      }
-      if (!dm_dsigma1_sq || dm_dsigma1_sq.size() < total) {
-        dm_dsigma1_sq = GPUBuffer<float>(stream, total);
-      }
-      if (!dm_dsigma12 || dm_dsigma12.size() < total) {
-        dm_dsigma12 = GPUBuffer<float>(stream, total);
-      }
-    //   dm_dmu1.memset(0);
-    //   dm_dsigma1_sq.memset(0);
-    //   dm_dsigma12.memset(0);
+  void ensure(size_t total, cudaStream_t stream) {
+    if (!dm_dmu1 || dm_dmu1.size() < total) {
+      dm_dmu1 = GPUBuffer<float>(stream, total);
     }
+    if (!dm_dsigma1_sq || dm_dsigma1_sq.size() < total) {
+      dm_dsigma1_sq = GPUBuffer<float>(stream, total);
+    }
+    if (!dm_dsigma12 || dm_dsigma12.size() < total) {
+      dm_dsigma12 = GPUBuffer<float>(stream, total);
+    }
+  }
 };
 
 FusedSSIMLoss::~FusedSSIMLoss() = default;
@@ -472,40 +467,29 @@ void FusedSSIMLoss::evaluate(LossContext ctx) {
     m_impl->ensure(total, ctx.stream);
     const float actual_scale = ctx.scale / (total);
 
-    if (ctx.grad) {
-        fusedssimCUDA<<<grid, block, 0, ctx.stream>>>(
-            H, W, CH, m_c1, m_c2,
-            actual_scale,
-            ctx.pred.data,
-            ctx.target.data,
-            ctx.loss.data,
-            m_impl->dm_dmu1.data(),
-            m_impl->dm_dsigma1_sq.data(),
-            m_impl->dm_dsigma12.data()
-        );
+    const float* pred = static_cast<float*>(ctx.pred.data);
+    const float* targ = static_cast<float*>(ctx.target.data);
+    float* loss = static_cast<float*>(ctx.loss.data);
+    float* grad = static_cast<float*>(ctx.grad.data);
 
-        fusedssim_backwardCUDA<<<grid, block, 0, ctx.stream>>>(
-            H, W, CH, m_c1, m_c2,
-            actual_scale,
-            ctx.pred.data,
-            ctx.target.data,
-            ctx.grad.data,
-            m_impl->dm_dmu1.data(),
-            m_impl->dm_dsigma1_sq.data(),
-            m_impl->dm_dsigma12.data()
-        );
+    if (ctx.grad) {
+      fusedssimCUDA<<<grid, block, 0, ctx.stream>>>( //
+          H, W, CH, m_c1, m_c2, actual_scale,        //
+          pred, targ, loss,                          //
+          m_impl->dm_dmu1.data(), m_impl->dm_dsigma1_sq.data(),
+          m_impl->dm_dsigma12.data());
+
+      fusedssim_backwardCUDA<<<grid, block, 0, ctx.stream>>>( //
+          H, W, CH, m_c1, m_c2, actual_scale,                 //
+          pred, targ, grad,                                   //
+          m_impl->dm_dmu1.data(), m_impl->dm_dsigma1_sq.data(),
+          m_impl->dm_dsigma12.data());
     } else {
-        fusedssimCUDA<<<grid, block, 0, ctx.stream>>>(
-            H, W, CH, m_c1, m_c2,
-            actual_scale,
-            ctx.pred.data,
-            ctx.target.data,
-            ctx.loss.data,
-            nullptr,
-            nullptr,
-            nullptr
-        );
+      fusedssimCUDA<<<grid, block, 0, ctx.stream>>>( //
+          H, W, CH, m_c1, m_c2, actual_scale,        //
+          pred, targ, loss,                          //
+          nullptr, nullptr, nullptr);
     }
 }
 
-}
+} // namespace tinygs

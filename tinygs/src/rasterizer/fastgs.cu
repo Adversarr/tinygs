@@ -113,8 +113,8 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_rest.data())),
             /* w2c */ m_impl->w2c.data(),
             /* cam_position */ m_impl->cam_position.data(),
-            /* image */ ctx.fwd_output.image.data,
-            /* alpha */ ctx.fwd_output.alpha.data,
+            /* image */ static_cast<float*>(ctx.fwd_output.image.data),
+            /* alpha */ static_cast<float*>(ctx.fwd_output.alpha.data),
             /* n_primitives */ m_gaussians->size(),
             /* active_sh_bases */ m_gaussians->get_sh_degree(),
             /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
@@ -165,10 +165,10 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   }
 
   fast_gs::rasterization::backward(
-    /* grad_image */ params.grad_output.image.data,
-    /* grad_alpha */ params.grad_output.alpha.data,
-    /* image */ params.fwd_output.image.data,
-    /* alpha */ params.fwd_output.alpha.data,
+    /* grad_image */ static_cast<float*>(params.grad_output.image.data),
+    /* grad_alpha */ static_cast<float*>(params.grad_output.alpha.data),
+    /* image */ static_cast<float*>(params.fwd_output.image.data),
+    /* alpha */ static_cast<float*>(params.fwd_output.alpha.data),
     /* means */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
     /* scales */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
     /* rotations */ reinterpret_cast<const float4*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),

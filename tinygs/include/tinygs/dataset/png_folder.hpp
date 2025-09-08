@@ -1,6 +1,7 @@
 #pragma once
 #include "tinygs/common.hpp"
 #include "tinygs/core/camera.hpp"
+#include "tinygs/core/camera_loader.hpp"
 #include "tinygs/dataset/dataset.hpp"
 
 namespace tinygs {
@@ -29,8 +30,7 @@ public:
 private:
   std::string m_folder_path;
   std::vector<std::string> m_image_paths;
-  std::vector<CameraExtrinsics> m_cameras;
-  CameraIntrinsics m_camera_intrinsics;
+  SingleCameraIntrinsics m_camera_loader;
 
   ImageShape m_image_shape;
   float* m_data;

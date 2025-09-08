@@ -110,7 +110,6 @@ int main() {
   GPUBatchInputOutput io;
   io.input.width = width;
   io.input.height = height;
-  io.input.batch_size = 1;
   io.input.near = 0.01f;
   io.input.far = 100.0f;
 
@@ -145,9 +144,9 @@ int main() {
   auto l1_loss = std::make_unique<L1Loss>();
   auto ssim_loss = std::make_unique<FusedSSIMLoss>();
   LossContext loss_ctx;
-  loss_ctx.loss = Image<float>(shape, ImageFormat::CHW, loss_buffer.data());
+  loss_ctx.loss = Image(shape, ImageFormat::CHW, ImageDataType::Float32, loss_buffer.data());
   loss_ctx.pred = rasterize_ctx.fwd_output.image;
-  loss_ctx.grad = Image<float>(shape, ImageFormat::CHW, out_image_grad.data());
+  loss_ctx.grad = Image(shape, ImageFormat::CHW, ImageDataType::Float32, out_image_grad.data());
 
   // Densification Strategy
   // auto strategy = std::make_unique<MCMCStrategy>(gs3d);
@@ -200,8 +199,8 @@ int main() {
     ssim_loss->evaluate(loss_ctx);
     
     rasterize_ctx.grad_output.image = loss_ctx.grad;
-    rasterize_ctx.grad_output.alpha = Image<float>(  //
-      shape, ImageFormat::CHW,                     //
+    rasterize_ctx.grad_output.alpha = Image(  //
+      shape, ImageFormat::CHW, ImageDataType::Float32,                     //
         loss_buffer.data() + shape.width * shape.height * 3);
     rasterizer.backward(rasterize_ctx);
 
@@ -213,7 +212,7 @@ int main() {
       log_info(
           "step {} loss: {} psnr: {} time: {}ms/100step, {}s elapsed",
           frame_count,
-          gpu_sum(loss_ctx.loss.data, shape.width * shape.height * 3),
+          gpu_sum(static_cast<float*>(loss_ctx.loss.data), shape.width * shape.height * 3),
           metric_psnr, duration.count(),
           std::chrono::duration_cast<std::chrono::seconds>(now - last).count());
       beg = now;

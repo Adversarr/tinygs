@@ -12,10 +12,14 @@ public:
 
   ~SimpleDataLoader() = default;
 
-  GPUBatchInputOutput next(cudaStream_t stream) noexcept override;
-  GPUBatchInputOutput next() noexcept override {
-    return next(cudaStreamDefault);
-  }
+  /**
+   * @brief Get the next batch of data from the dataset.
+   * 
+   * @param stream The CUDA stream to use for the data transfer.
+   * @return GPUBatchInputOutput The next batch of data.
+   */
+  GPUBatchInputOutput next(cudaStream_t stream) override;
+  GPUBatchInputOutput next() override;
 
 private:
   // It always use this buffer to store the data on GPU.

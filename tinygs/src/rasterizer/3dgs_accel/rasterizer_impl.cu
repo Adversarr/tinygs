@@ -20,10 +20,12 @@
 #include <cub/cub.cuh>
 #include <cub/device/device_radix_sort.cuh>
 #define GLM_FORCE_CUDA
-#include <glm/glm.hpp>
-
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
+
+#include <glm/glm.hpp>
+
+#include "utils/scope_timer.hpp"
 namespace cg = cooperative_groups;
 
 #include "auxiliary.h"

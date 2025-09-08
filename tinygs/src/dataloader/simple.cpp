@@ -7,7 +7,7 @@ SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataL
   m_rng.seed(0); // TODO: make it configurable
 }
 
-GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) noexcept {
+GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
 #ifdef NDEBUG
   // Randomly pick a data from the dataset
   size_t current_index = m_rng.next_uint(m_dataset->size());
@@ -23,7 +23,6 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) noexcept {
 
   // Prepare GPU batch input
   GPUBatchInput gpu_input;
-  gpu_input.batch_size = 1; // Only batch size 1 is supported
   gpu_input.height = host_data.image.shape.height;
   gpu_input.width = host_data.image.shape.width;
   gpu_input.near = 0.1f; // Default near plane
@@ -36,28 +35,31 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) noexcept {
   m_gpu_memory.resize(image_size);
   
   // Create GPU image structure
-  Image<float> gpu_image;
+  Image gpu_image;
   gpu_image.shape = host_data.image.shape;
   gpu_image.format = host_data.image.format;
+  gpu_image.data_type = ImageDataType::Float32;
   gpu_image.data = m_gpu_memory.data();
-  
+
   // Transfer data from host to GPU using the provided CUDA stream
-  // Create a non-const version of host image for transfer
-  Image<const float> host_image_mutable;
-  host_image_mutable.shape = host_data.image.shape;
-  host_image_mutable.format = host_data.image.format;
-  host_image_mutable.data = host_data.image.data;
-  transfer_gpu(stream, gpu_image, host_image_mutable);
-  
+  transfer_gpu(stream, gpu_image, host_data.image);
+
   // Prepare GPU batch output
   GPUBatchOutput gpu_output;
-  gpu_output.image = Image<float>{
+  gpu_output.image = Image{
     gpu_image.shape,
     gpu_image.format,
+    gpu_image.data_type,
     gpu_image.data
   };
-  
+
   return GPUBatchInputOutput{gpu_input, gpu_output};
 }
 
+GPUBatchInputOutput SimpleDataLoader::next() {
+  auto r = next(cudaStreamDefault);
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
+  return std::move(r);
 }
+
+} // namespace tinygs

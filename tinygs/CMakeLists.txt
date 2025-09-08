@@ -59,6 +59,8 @@ target_link_libraries(tinygs
         cxxopts::cxxopts
         OpenMP::OpenMP_CXX
         glm::glm
+        # OpenCV
+        ${OpenCV_LIBS}
 )
 
 target_compile_definitions(
@@ -79,10 +81,13 @@ target_include_directories(tinygs
         $<INSTALL_INTERFACE:include>
         # Add CUDA include directories
         ${CUDAToolkit_INCLUDE_DIRS}
+        ${OpenCV_INCLUDE_DIRS}
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         # Add internal headers
         ${CMAKE_CURRENT_SOURCE_DIR}/include/tinygs
+        # Add OpenCV include directories
+        ${OpenCV_INCLUDE_DIRS}
 )
 
 # Compiler definitions (following tiny-cuda-nn patterns)

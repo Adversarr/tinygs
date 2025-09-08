@@ -37,7 +37,7 @@ __global__ void psnr_squared_diff_kernel(int N, const float *__restrict__ pred,
 
 namespace tinygs {
 
-float PsnrMetric::evaluate(Image<float> pred, Image<const float> target) {
+float PsnrMetric::evaluate(Image pred, Image target) {
   int n = pred.size();
   
   // Allocate temporary memory for squared differences
@@ -47,8 +47,10 @@ float PsnrMetric::evaluate(Image<float> pred, Image<const float> target) {
   float* squared_diff = m_sqr_diff.data();
   
   // Compute squared differences
-  linear_kernel(psnr_squared_diff_kernel, 0, nullptr, n, pred.data,
-                target.data, squared_diff);
+  linear_kernel(psnr_squared_diff_kernel, 0, nullptr, n,
+    static_cast<const float*>(pred.data),
+    static_cast<const float*>(target.data),
+    squared_diff);
   
   // Compute MSE (mean squared error)
   float mse = mean(squared_diff, n);

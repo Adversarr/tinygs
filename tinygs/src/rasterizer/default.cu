@@ -168,7 +168,7 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
   // For spherical harmonics: 3 colors (RGB) per Gaussian for DC component
   const int D = 1 + m_gaussians->get_sh_degree();
   constexpr int M = kMaxSphericalHarmonicsCoefficients - 1;
-  float* out_color = ctx.fwd_output.image.data;
+  float* out_color = static_cast<float*>(ctx.fwd_output.image.data);
   m_impl->num_gaussians = num_gaussians;
 
   // Call CudaRasterizer forward pass
@@ -257,7 +257,6 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
   cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dcolor.data()), 0, m_impl->dL_dcolor.size() * sizeof(vec3));
   cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dinvdepth_gs.data()), 0, m_impl->dL_dinvdepth_gs.size() * sizeof(float));
   cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dcov3D.data()), 0, m_impl->dL_dcov3D.size() * sizeof(float));
-
   // do the backward.
   CudaRasterizer::Rasterizer::backward(
     /* P, D, M, R, B */ num_gaussians, D, M, R, B,
@@ -279,7 +278,7 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
     /* binning_buffer */ m_impl->get_allocated("binningBuffer"),
     /* image_buffer */ m_impl->get_allocated("imageBuffer"),
     /* sample_buffer */ m_impl->get_allocated("sampleBuffer"),
-    /* dL_dpix*/ ctx.grad_output.image.data,
+    /* dL_dpix*/ static_cast<float*>(ctx.grad_output.image.data),
     /* dL_dinvdepth */ thrust::raw_pointer_cast(m_impl->dL_dinvdepth.data()),
     /* dL_dmean2D */ reinterpret_cast<float*>(thrust::raw_pointer_cast(m_impl->dL_dmean2D.data())),
     /* dL_dconic */ reinterpret_cast<float*>(thrust::raw_pointer_cast(m_impl->dL_dconic.data())),

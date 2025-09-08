@@ -8,6 +8,11 @@ enum class ImageFormat {
   CHW,
 };
 
+enum class ImageDataType {
+  Float32,
+  UInt8,
+};
+
 struct ImageShape {
   uint16_t width, height;
   uint16_t channel; // 3, 4 is supported.
@@ -35,20 +40,19 @@ inline std::string to_string(const ImageFormat& format) {
   return "Unknown";
 }
 
-template <typename T> struct Image {
+struct Image {
   ImageShape shape;
   ImageFormat format = ImageFormat::HWC;
-  T* data;
+  ImageDataType data_type = ImageDataType::Float32;
+  void* data;
 
   Image() = default;
-  Image(ImageShape shape, ImageFormat format, T* data) : shape(shape), format(format), data(data) {}
+  Image(ImageShape shape, ImageFormat format, ImageDataType data_type, void* data) 
+    : shape(shape), format(format), data_type(data_type), data(data) {}
   Image(const Image& other) = default;
   Image(Image&& other) = default;
   Image& operator=(const Image& other) = default;
   Image& operator=(Image&& other) = default;
-
-  template <typename T2>
-  Image(const Image<T2>& other) : shape(other.shape), format(other.format), data(other.data) {}
 
   TINYGS_HOST_DEVICE explicit operator bool() const noexcept {
     return data != nullptr;
