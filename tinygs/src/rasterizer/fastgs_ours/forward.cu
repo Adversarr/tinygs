@@ -49,16 +49,7 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
     char* per_tile_buffers_blob = per_tile_buffers_func(required<PerTileBuffers>(n_tiles));
     PerTileBuffers per_tile_buffers = PerTileBuffers::from_blob(per_tile_buffers_blob, n_tiles);
 
-    static cudaStream_t memset_stream = 0;
-    if constexpr (!config::debug) {
-        static bool memset_stream_initialized = false;
-        if (!memset_stream_initialized) {
-            cudaStreamCreate(&memset_stream);
-            memset_stream_initialized = true;
-        }
-        cudaMemsetAsync(per_tile_buffers.instance_ranges, 0, sizeof(uint2) * n_tiles, memset_stream);
-    } else
-        cudaMemset(per_tile_buffers.instance_ranges, 0, sizeof(uint2) * n_tiles);
+    cudaMemset(per_tile_buffers.instance_ranges, 0, sizeof(uint2) * n_tiles);
 
     char* per_primitive_buffers_blob = per_primitive_buffers_func(required<PerPrimitiveBuffers>(n_primitives));
     PerPrimitiveBuffers per_primitive_buffers = PerPrimitiveBuffers::from_blob(per_primitive_buffers_blob, n_primitives);
@@ -149,9 +140,6 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
         per_instance_buffers.primitive_indices,
         n_instances);
     CHECK_CUDA(config::debug, "cub::DeviceRadixSort::SortPairs (Tile)")
-
-    if constexpr (!config::debug)
-        cudaStreamSynchronize(memset_stream);
 
     if (n_instances > 0) {
         kernels::forward::extract_instance_ranges_cu<<<div_round_up(n_instances, config::block_size_extract_instance_ranges), config::block_size_extract_instance_ranges>>>(

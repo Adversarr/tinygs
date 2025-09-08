@@ -1,3 +1,5 @@
+// https://github.com/MrNeRF/gaussian-splatting-cuda
+
 #include <cuda_runtime.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
@@ -13,14 +15,6 @@
 #include "utils/scope_timer.hpp"
 
 namespace tinygs {
-
-inline __host__ __device__ float3 make_float3(vec3 v) {
-  return {v.x, v.y, v.z};
-}
-
-inline __host__ __device__ float4 make_float4(vec4 v) {
-  return {v.x, v.y, v.z, v.w};
-}
 
 struct FastGSRasterizer::Impl {
   GPUMemory<float4> w2c;           // [4, 4]
@@ -122,7 +116,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* image */ ctx.fwd_output.image.data,
             /* alpha */ ctx.fwd_output.alpha.data,
             /* n_primitives */ m_gaussians->size(),
-            /* active_sh_bases */ kMaxSphericalHarmonicsCoefficients, // TODO: fix
+            /* active_sh_bases */ m_gaussians->get_sh_degree(),
             /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
             /* width */ ctx.fwd_input.width,
             /* height */ ctx.fwd_input.height,
@@ -166,13 +160,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   m_impl->w2c_grad.memset(0);
 
   float* densification_info = nullptr;
-  if (!params.densification_info) {
-    static bool warned = false;
-    if (!warned) {
-      log_warning("Densification info is not provided, pass as nullptr");
-      warned = true;
-    }
-  } else {
+  if (params.densification_info) {
     densification_info = params.densification_info->data();
   }
 
@@ -207,7 +195,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* n_buckets */ m_impl->n_buckets,
     /* primitive_primitive_indices_selector */ m_impl->primitive_primitive_indices_selector,
     /* instance_primitive_indices_selector */ m_impl->instance_primitive_indices_selector,
-    /* active_sh_bases */ kMaxSphericalHarmonicsCoefficients,
+    /* active_sh_bases */ m_gaussians->get_sh_degree(),
     /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
     /* width */ params.fwd_input.width,
     /* height */ params.fwd_input.height,

@@ -15,6 +15,7 @@ void reset_opacity(
   const std::shared_ptr<GPUGaussian3d>& gaussians,
   float min_opacity_threshold
 ) {
+  TINYGS_TIMER("DefaultStrategy::reset_opacity");
   // def reset_opacity(self):
   //     opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
   //     optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
@@ -30,8 +31,15 @@ void reset_opacity(
   );
 }
 
+thrust::default_random_engine rng(42);
+
 void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   TINYGS_TIMER("DefaultStrategy::step");
+  if (!ctx.densification_info) {
+    size_t num_gaussians = m_gaussians->size();
+    ctx.densification_info = std::make_shared<GPUBuffer<float>>(num_gaussians * 2);
+    ctx.densification_info->memset(0);
+  }
 
   auto step = this_step();
   if (step % m_params.refine_every == 0 &&
@@ -153,7 +161,6 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
 
 
   // TODO: replace the seed with global defined.
-  thrust::default_random_engine rng(42);
   thrust::normal_distribution<float> dist(0.f, 1.f);
   thrust::host_vector<float> host_scales(num_grows * 6);
   thrust::generate(host_scales.begin(), host_scales.end(), [&] { return dist(rng); });
@@ -237,12 +244,10 @@ void DefaultStrategy::prune(const RasterizeContext& ctx, const thrust::device_ve
       thrust::make_counting_iterator<int>(0),                                //
       thrust::make_counting_iterator<int>(num_gaussians),                    //
       [d_is_alive = is_alive.data(), d_opacity,                              //
-       d_disable = disable_prune.data(),                                     //
        scale = thrust::raw_pointer_cast(m_gaussians->scales().data()),       //
        scene_scale = m_gaussians->scene_scale(),                             //
        pruning_scale_threshold = m_params.pruning_scale_threshold,           //
        prune_large = this_step() > m_params.reset_every,                     //
-       max_radii_threshold = m_params.max_screen_size,                       //
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) { //
         bool not_large_ws = max(exp(scale[i])) < pruning_scale_threshold * scene_scale;
         bool not_transparent = logistic(d_opacity[i]) > min_opacity;

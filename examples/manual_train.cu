@@ -67,7 +67,7 @@ std::vector<vec3> skybox(
 
 int main() {
   spdlog::set_level(spdlog::level::debug);
-  std::string data_path = "/data/accgs/1748422612463/";
+  std::string data_path = "/data/accgs/1747834320424/";
   std::string camera_intrinsics_path = data_path + "inputs/slam/cameras.txt";
   std::string camera_extrinsics_path = data_path + "inputs/traj_full.txt.bak";
 
@@ -100,7 +100,6 @@ int main() {
   knn.initialize(pc);
   auto init_result = knn.gaussians();
 
-
   // Prepare Render data.
   auto gs3d = std::make_shared<GPUGaussian3d>();
   gs3d->copy_from_host(init_result);
@@ -112,8 +111,8 @@ int main() {
   io.input.width = width;
   io.input.height = height;
   io.input.batch_size = 1;
-  io.input.near = 0.001f;
-  io.input.far = 10000.0f;
+  io.input.near = 0.01f;
+  io.input.far = 100.0f;
 
   GPUMemory<float> out_image(width * height * 3);
   GPUMemory<float> out_alpha(width * height * 1);
@@ -151,6 +150,7 @@ int main() {
   loss_ctx.grad = Image<float>(shape, ImageFormat::CHW, out_image_grad.data());
 
   // Densification Strategy
+  // auto strategy = std::make_unique<MCMCStrategy>(gs3d);
   auto strategy = std::make_unique<DefaultStrategy>(gs3d);
   strategy->set_remove_callback([&](char* kept_flag, int num_kept) {
     if (num_kept == gs3d->size()) return;
@@ -246,8 +246,8 @@ int main() {
     }
 
     
-    float current_step_size = 1.0f;
-    // float current_step_size = std::powf(0.01f, frame_count / 30000.0f);
+    // float current_step_size = 1.0f;
+    float current_step_size = std::powf(0.01f, frame_count / 30000.0f);
     optimizer->step(current_step_size);
     strategy->step(rasterize_ctx);
     gs3d->set_sh_degree(frame_count / 1000);

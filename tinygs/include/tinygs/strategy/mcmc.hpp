@@ -14,7 +14,7 @@ public:
 
   void step_impl(const RasterizeContext& ctx) override;
 protected:
-  float m_noise_lr = 5e5;
+  float m_noise_lr = 1;
 
 public:
   // NOTE: MCMC use relocate instead of pruning.

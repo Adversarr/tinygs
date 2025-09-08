@@ -248,15 +248,15 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
   m_impl->dL_dcolor.resize(num_gaussians, vec3(0.f, 0.f, 0.f));
   m_impl->dL_dinvdepth_gs.resize(num_gaussians, 0.f);
   m_impl->dL_dcov3D.resize(6 * num_gaussians, 0.f);
-  thrust::fill(grad_exp_scales.begin(), grad_exp_scales.end(), vec3(0.f, 0.f, 0.f));
-  thrust::fill(grad_rotations_normalized.begin(), grad_rotations_normalized.end(), vec4(0.f, 0.f, 0.f, 0.f));
-  thrust::fill(grad_opacities_normalized.begin(), grad_opacities_normalized.end(), 0.f);
-  thrust::fill(m_impl->dL_dinvdepth.begin(), m_impl->dL_dinvdepth.end(), 0.f);
-  thrust::fill(m_impl->dL_dmean2D.begin(), m_impl->dL_dmean2D.end(), vec3(0.f, 0.f, 0.f));
-  thrust::fill(m_impl->dL_dconic.begin(), m_impl->dL_dconic.end(), vec4(0.f, 0.f, 0.f, 0.f));
-  thrust::fill(m_impl->dL_dcolor.begin(), m_impl->dL_dcolor.end(), vec3(0.f, 0.f, 0.f));
-  thrust::fill(m_impl->dL_dinvdepth_gs.begin(), m_impl->dL_dinvdepth_gs.end(), 0.f);
-  thrust::fill(m_impl->dL_dcov3D.begin(), m_impl->dL_dcov3D.end(), 0.f);
+  cudaMemset(thrust::raw_pointer_cast(grad_exp_scales.data()), 0, grad_exp_scales.size() * sizeof(vec3));
+  cudaMemset(thrust::raw_pointer_cast(grad_rotations_normalized.data()), 0, grad_rotations_normalized.size() * sizeof(vec4));
+  cudaMemset(thrust::raw_pointer_cast(grad_opacities_normalized.data()), 0, grad_opacities_normalized.size() * sizeof(float));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dinvdepth.data()), 0, m_impl->dL_dinvdepth.size() * sizeof(float));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dmean2D.data()), 0, m_impl->dL_dmean2D.size() * sizeof(vec3));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dconic.data()), 0, m_impl->dL_dconic.size() * sizeof(vec4));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dcolor.data()), 0, m_impl->dL_dcolor.size() * sizeof(vec3));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dinvdepth_gs.data()), 0, m_impl->dL_dinvdepth_gs.size() * sizeof(float));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dcov3D.data()), 0, m_impl->dL_dcov3D.size() * sizeof(float));
 
   // do the backward.
   CudaRasterizer::Rasterizer::backward(

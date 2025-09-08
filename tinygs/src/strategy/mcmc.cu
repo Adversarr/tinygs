@@ -1,10 +1,14 @@
-#include "tinygs/strategy/mcmc.hpp"
-#include "tinygs/random/multinomial.hpp"
-#include "tinygs/cuda/common_device.cuh"
-#include "utils/scope_timer.hpp"
 #include <thrust/execution_policy.h>
+#include <thrust/host_vector.h>
+#include <thrust/random.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/uninitialized_copy.h>
+
+#include "rasterizer/3dgs_accel/auxiliary.h"
+#include "tinygs/cuda/common_device.cuh"
+#include "tinygs/random/multinomial.hpp"
+#include "tinygs/strategy/mcmc.hpp"
+#include "utils/scope_timer.hpp"
 
 namespace tinygs {
   
@@ -17,7 +21,7 @@ void init_binom() {
   if (initialized) return;
   initialized = true;
 
-  float h_binom[max_binom_size * max_binom_size]{0};
+  float h_binom[max_binom_size * max_binom_size];
   for (int n = 0; n < max_binom_size; ++n) {
     for (int k = 0; k <= n; ++k) {
       // Compute binomial coefficient C(n,k)
@@ -30,7 +34,6 @@ void init_binom() {
     }
   }
   CUDA_CHECK_THROW(cudaMemcpyToSymbol(binom, h_binom, sizeof(h_binom)));
-
 }
 
 // Custom CUDA kernel for `index_add_` (scatter-add) operation
@@ -60,15 +63,16 @@ __global__ static void relocation_kernel(
     float denom_sum = 0.0f;
 
     // compute new opacity
-    new_opacities[idx] = 1.0f - ::powf(1.0f - opacities[idx], 1.0f / n_idx);
-    new_opacities[idx] = clamp(new_opacities[idx], opacity_threshold, 1 - 1e-8f);
+    float nop = 1.0f - ::powf(1.0f - opacities[idx], 1.0f / n_idx);
+    nop = clamp(nop, opacity_threshold, 1.0f - 1e-8f);
+    new_opacities[idx] = nop;
 
     // compute new scale
     for (int i = 1; i <= n_idx; ++i) {
         for (int k = 0; k <= (i - 1); ++k) {
             float bin_coeff = binom[(i - 1) * max_binom_size + k];
             float term = (::pow(-1.0f, k) / sqrt(static_cast<float>(k + 1))) *
-                          ::pow(new_opacities[idx], k + 1);
+                          ::pow(nop, k + 1);
             denom_sum += (bin_coeff * term);
         }
     }
@@ -92,24 +96,42 @@ __global__ void add_noise_kernel(
         return;
 
     int idx_3d = 3 * idx;
-    //
-    // const vec3 raw_scale = vec3(raw_scales + idx_3d);
-    // mat3 S2 = mat3(__expf(2.f * raw_scale[0]), 0.f, 0.f, 0.f, __expf(2.f * raw_scale[1]), 0.f, 0.f, 0.f, __expf(2.f * raw_scale[2]));
-    //
-    // quat raw_quat = normalize(quat(raw_quats + 4 * idx));
-    // mat3 R = to_mat3(raw_quat);
-    //
-    // mat3 covariance = R * S2 * transpose(R);
-    //
-    // vec3 transformed_noise = covariance * vec3(noise + idx_3d);
-    //
-    // float opacity = __frcp_rn(1.f + __expf(-raw_opacities[idx]));
-    // float op_sigmoid = __frcp_rn(1.f + __expf(100.f * opacity - 0.5f));
-    // float noise_factor = current_lr * op_sigmoid;
-    //
-    // means[idx_3d] += noise_factor * transformed_noise.x;
-    // means[idx_3d + 1] += noise_factor * transformed_noise.y;
-    // means[idx_3d + 2] += noise_factor * transformed_noise.z;
+    
+    const vec3 raw_scale = vec3(
+      raw_scales[idx_3d + 0],
+      raw_scales[idx_3d + 1],
+      raw_scales[idx_3d + 2]
+    );
+    mat3x3 S2 = mat3x3(
+      __expf(2.f * raw_scale[0]), 0.f, 0.f,
+      0.f, __expf(2.f * raw_scale[1]), 0.f,
+      0.f, 0.f, __expf(2.f * raw_scale[2])
+    );
+
+    quat raw_quat = normalize(quat( //
+        raw_quats[4 * idx + 0],     //
+        raw_quats[4 * idx + 1],     //
+        raw_quats[4 * idx + 2],     //
+        raw_quats[4 * idx + 3]      //
+        ));
+    mat3x3 R = quat_to_mat3(raw_quat);
+
+    mat3x3 covariance = R * S2 * transpose(R);
+
+    vec3 transformed_noise = covariance * vec3(
+      noise[idx_3d + 0],
+      noise[idx_3d + 1],
+      noise[idx_3d + 2]
+    );
+
+    float opacity = logistic(-raw_opacities[idx]); // convert to [0, 1]
+    float op_sigmoid = __frcp_rn(1.f + __expf(100.f * opacity - 0.5f));
+    // float op_sigmoid = 1.0f / (1 + expf(-100.0f * ((1 - opacity) - 0.995f)));
+    float noise_factor = current_lr * op_sigmoid;
+
+    means[idx_3d] += noise_factor * transformed_noise.x;
+    means[idx_3d + 1] += noise_factor * transformed_noise.y;
+    means[idx_3d + 2] += noise_factor * transformed_noise.z;
 }
 
 MCMCStrategy::MCMCStrategy(std::shared_ptr<GPUGaussian3d> gaussians) : StrategyBase(gaussians) {
@@ -118,6 +140,7 @@ MCMCStrategy::MCMCStrategy(std::shared_ptr<GPUGaussian3d> gaussians) : StrategyB
 
 
 void MCMCStrategy::step_impl(const RasterizeContext& ctx) {
+  ctx.densification_info.reset();
   const size_t step = this_step();
   add_noise(ctx);
   if (step % m_params.refine_every == 0 && step >= m_params.start_refine && step <= m_params.end_refine) {
@@ -130,11 +153,28 @@ void MCMCStrategy::reset() {
   // TODO: reset internal states
 }
 
+static thrust::default_random_engine rng;
 void MCMCStrategy::set_noise_lr(float noise_lr) { m_noise_lr = noise_lr; }
 
 void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
   // TODO: this is simpler than expected.
   TINYGS_TIMER("MCMCStrategy::add_noise");
+  m_noise_lr *= 1 - 1e-5;
+  size_t num_gaussians = m_gaussians->size();
+  if (num_gaussians == 0) return;
+  thrust::host_vector<float> h_noise(3 * num_gaussians);
+  thrust::uniform_real_distribution<float> dist(0, 1);
+  thrust::generate(h_noise.begin(), h_noise.end(), [&]() { return m_noise_lr * dist(rng); });
+  thrust::device_vector<float> noise = h_noise;
+  add_noise_kernel<<<(num_gaussians + 255) / 256, 256>>>(
+    num_gaussians,
+    thrust::raw_pointer_cast(m_gaussians->opacities().data()),
+    reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
+    reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
+    thrust::raw_pointer_cast(noise.data()),
+    reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
+    m_noise_lr
+  );
 }
 
 void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
@@ -153,20 +193,20 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
     m_gaussians->opacities().begin(),
     m_gaussians->opacities().end(),
     opacities.begin(),
-    [] __device__ (float opacity) { return __frcp_rn(1.f + __expf(-opacity)); }
+    [] __device__ (float opacity) { return logistic(opacity); }
   ); // actual opacity = sigmoid(opacity)
 
 
   // Sample from alive Gaussians based on opacity
   const auto& probs = opacities;
-  auto sampled_idxs_local = multinomial_cuda_with_replacement(
+  auto sampled_idxs_local = multinomial_cuda_cpu(
     thrust::raw_pointer_cast(probs.data()),
     num_gaussians,
     num_to_add,
     time(nullptr) // TODO: replace with real seed.
   );
   thrust::device_vector<int> sampled_idxs(num_to_add);
-  thrust::uninitialized_copy(
+  thrust::copy(
     thrust::device,
     sampled_idxs_local.data(),
     sampled_idxs_local.data() + num_to_add,
@@ -259,7 +299,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     m_gaussians->opacities().begin(),
     m_gaussians->opacities().end(),
     opacities.begin(),
-    [] __device__ (float opacity) { return __frcp_rn(1.f + __expf(-opacity)); }
+    [] __device__ (float opacity) { return logistic(opacity); }
   ); // actual opacity = sigmoid(opacity)
 
   auto rotations = m_gaussians->rotations();
@@ -270,10 +310,16 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     is_alive.begin(),
     [
       opacities = thrust::raw_pointer_cast(opacities.data()),
-      rotations = thrust::raw_pointer_cast(rotations.data()),
+      scale = thrust::raw_pointer_cast(m_gaussians->scales().data()),
+      scene_scale = m_gaussians->scene_scale(),
+      pruning_scale_threshold = m_params.pruning_scale_threshold,
+      prune_large = this_step() > m_params.reset_every,
       min_opacity = m_params.pruning_opacity_threshold
     ] __device__ (int idx) {
-      if (length2(rotations[idx]) > 1e-7 && opacities[idx] > min_opacity) {
+      bool not_large_ws = max(exp(scale[idx])) < pruning_scale_threshold * scene_scale;
+      bool not_transparent = opacities[idx] > min_opacity;
+
+      if (not_transparent && (not_large_ws || !prune_large)) {
         return 1;
       }
       return 0;
@@ -283,7 +329,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   const int num_kept = thrust::reduce(is_alive.begin(), is_alive.end());
   const int num_dead = num_gaussians - num_kept;
   if (num_dead <= 0) {
-    assert(num_dead == 0);
+    log_debug("No gaussians to relocate");
     return;
   }
   log_debug("Relocating {} gaussians", num_dead);

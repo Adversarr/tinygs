@@ -364,36 +364,39 @@ __global__ static void duplicate_optimizer_state_kernel(
   const int src_idx = indices[idx];
   const int dst_idx = new_indices[idx];
 
+  constexpr float kHalf = 0.45f;
+  constexpr float kQuarter = 0.20f;
+
   // Copy means first and second moments
-  means_first_second[dst_idx * 2] = means_first_second[src_idx * 2];
-  means_first_second[dst_idx * 2 + 1] = means_first_second[src_idx * 2 + 1];
+  means_first_second[dst_idx * 2] = means_first_second[src_idx * 2] *= kHalf;
+  means_first_second[dst_idx * 2 + 1] = means_first_second[src_idx * 2 + 1] *= kQuarter;
 
   // Copy opacities first and second moments
-  opacities_first_second[dst_idx * 2] = opacities_first_second[src_idx * 2];
-  opacities_first_second[dst_idx * 2 + 1] = opacities_first_second[src_idx * 2 + 1];
+  opacities_first_second[dst_idx * 2] = opacities_first_second[src_idx * 2] *= kHalf;
+  opacities_first_second[dst_idx * 2 + 1] = opacities_first_second[src_idx * 2 + 1] *= kQuarter;
 
   // Copy rotations first and second moments
-  rotations_first_second[dst_idx * 2] = rotations_first_second[src_idx * 2];
-  rotations_first_second[dst_idx * 2 + 1] = rotations_first_second[src_idx * 2 + 1];
+  rotations_first_second[dst_idx * 2] = rotations_first_second[src_idx * 2] *= kHalf;
+  rotations_first_second[dst_idx * 2 + 1] = rotations_first_second[src_idx * 2 + 1] *= kQuarter;
 
   // Copy scales first and second moments
-  scales_first_second[dst_idx * 2] = scales_first_second[src_idx * 2];
-  scales_first_second[dst_idx * 2 + 1] = scales_first_second[src_idx * 2 + 1];
+  scales_first_second[dst_idx * 2] = scales_first_second[src_idx * 2] *= kHalf;
+  scales_first_second[dst_idx * 2 + 1] = scales_first_second[src_idx * 2 + 1] *= kQuarter;
 
   // Copy sh_coefficient_0 first and second moments
-  sh_coefficient_0_first_second[dst_idx * 2] = sh_coefficient_0_first_second[src_idx * 2];
-  sh_coefficient_0_first_second[dst_idx * 2 + 1] = sh_coefficient_0_first_second[src_idx * 2 + 1];
+  sh_coefficient_0_first_second[dst_idx * 2] = sh_coefficient_0_first_second[src_idx * 2] *= kHalf;
+  sh_coefficient_0_first_second[dst_idx * 2 + 1] = sh_coefficient_0_first_second[src_idx * 2 + 1] *= kQuarter;
 
   // Copy sh_coefficients_rest first and second moments
   for (uint32_t i = 0; i < num_sh_rest_per_gaussian; i++) {
     const int src_sh_idx = src_idx * num_sh_rest_per_gaussian + i;
     const int dst_sh_idx = dst_idx * num_sh_rest_per_gaussian + i;
-    sh_coefficients_rest_first_second[dst_sh_idx * 2] = sh_coefficients_rest_first_second[src_sh_idx * 2];
-    sh_coefficients_rest_first_second[dst_sh_idx * 2 + 1] = sh_coefficients_rest_first_second[src_sh_idx * 2 + 1];
+    sh_coefficients_rest_first_second[dst_sh_idx * 2] = sh_coefficients_rest_first_second[src_sh_idx * 2] *= kHalf;
+    sh_coefficients_rest_first_second[dst_sh_idx * 2 + 1] = sh_coefficients_rest_first_second[src_sh_idx * 2 + 1] *= kQuarter;
   }
 
   // Copy step count: but with half the value to ensure it could be optimized efficiently.
-  gaussian_steps[dst_idx] = (gaussian_steps[src_idx] /= 2);
+  gaussian_steps[dst_idx] = (gaussian_steps[src_idx]);
 }
 
 void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
@@ -409,20 +412,20 @@ void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
   m_gaussian_steps.resize(m_gaussians->size(), 0);
 
   // TODO: This design does not provide better result. Why?
-  // const int grid = (num_duplicate + 255) / 256;
-  // duplicate_optimizer_state_kernel<<<grid, 256>>>(
-  //   thrust::raw_pointer_cast(m_means_first_second.data()),
-  //   thrust::raw_pointer_cast(m_opacities_first_second.data()),
-  //   thrust::raw_pointer_cast(m_rotations_first_second.data()),
-  //   thrust::raw_pointer_cast(m_scales_first_second.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
-  //   thrust::raw_pointer_cast(m_gaussian_steps.data()),
-  //   indices,
-  //   new_indices,
-  //   num_duplicate,
-  //   num_sh_rest_per_gaussian
-  // );
+  const int grid = (num_duplicate + 255) / 256;
+  duplicate_optimizer_state_kernel<<<grid, 256>>>(
+    thrust::raw_pointer_cast(m_means_first_second.data()),
+    thrust::raw_pointer_cast(m_opacities_first_second.data()),
+    thrust::raw_pointer_cast(m_rotations_first_second.data()),
+    thrust::raw_pointer_cast(m_scales_first_second.data()),
+    thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
+    thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
+    thrust::raw_pointer_cast(m_gaussian_steps.data()),
+    indices,
+    new_indices,
+    num_duplicate,
+    num_sh_rest_per_gaussian
+  );
 }
 
 void AdamW::reset() {
