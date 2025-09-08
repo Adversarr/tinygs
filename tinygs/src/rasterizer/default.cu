@@ -301,44 +301,31 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
   );
 
 
-  // transform the gradients of the rotations to the original space.
+  // transform the gradients of rotations, opacities, and scales to the original space.
   thrust::for_each(
     thrust::make_counting_iterator<uint32_t>(0),
     thrust::make_counting_iterator<uint32_t>(num_gaussians),
     [
       grad_rotations_normalized = thrust::raw_pointer_cast(grad_rotations_normalized.data()),
       rotations = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
-      grad_rotations = thrust::raw_pointer_cast(grad_rotations.data())
-    ] __device__(uint32_t i) {
-      const vec4 grad_rotation = grad_rotations_normalized[i];
-      grad_rotations[i] = bwd_normalize(rotations[i], grad_rotation);
-    }
-  );
-
-  // transform the gradients of the opacities to the original space.
-  thrust::for_each(
-    thrust::make_counting_iterator<uint32_t>(0),
-    thrust::make_counting_iterator<uint32_t>(num_gaussians),
-    [
+      grad_rotations = thrust::raw_pointer_cast(grad_rotations.data()),
       grad_opacities_normalized = thrust::raw_pointer_cast(grad_opacities_normalized.data()),
       opacities = thrust::raw_pointer_cast(m_gaussians->opacities().data()),
-      grad_opacities = thrust::raw_pointer_cast(grad_opacities.data())
-    ] __device__(uint32_t i) {
-      const float grad_sigmoid_opacity = grad_opacities_normalized[i];
-      const float sigmoid_opacity = sigmoid(opacities[i]);
-      grad_opacities[i] = grad_sigmoid_opacity * sigmoid_opacity * (1.f - sigmoid_opacity);
-    }
-  );
-
-  // transform the gradients of the scales to the original space.
-  thrust::for_each(
-    thrust::make_counting_iterator<uint32_t>(0),
-    thrust::make_counting_iterator<uint32_t>(num_gaussians),
-    [
+      grad_opacities = thrust::raw_pointer_cast(grad_opacities.data()),
       grad_exp_scales = thrust::raw_pointer_cast(grad_exp_scales.data()),
       exp_scales = thrust::raw_pointer_cast(scales.data()),
       grad_scales = thrust::raw_pointer_cast(grad_scales.data())
     ] __device__(uint32_t i) {
+      // transform rotation gradients
+      const vec4 grad_rotation = grad_rotations_normalized[i];
+      grad_rotations[i] = bwd_normalize(rotations[i], grad_rotation);
+      
+      // transform opacity gradients
+      const float grad_sigmoid_opacity = grad_opacities_normalized[i];
+      const float sigmoid_opacity = sigmoid(opacities[i]);
+      grad_opacities[i] = grad_sigmoid_opacity * sigmoid_opacity * (1.f - sigmoid_opacity);
+      
+      // transform scale gradients
       const vec3 grad_scale = grad_exp_scales[i];
       const vec3 exp_scale = exp_scales[i];
       grad_scales[i] = grad_scale * exp_scale;
@@ -356,7 +343,7 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
     thrust::make_counting_iterator<uint32_t>(num_gaussians),
     [
       dL_dmean2D = thrust::raw_pointer_cast(m_impl->dL_dmean2D.data()),
-      radii = m_impl->radii.data(),
+      radii = m_impl->radii.data(), // actual rendered
       data = dinfo->data(), num_gaussians
     ] __device__ (uint32_t i) {
       if (radii[i] > 0) {
@@ -364,20 +351,6 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
         data[i] += 1;
       }
     });
-
-  thrust::for_each(
-    thrust::device,
-    thrust::make_counting_iterator<uint32_t>(0),
-    thrust::make_counting_iterator<uint32_t>(num_gaussians),
-    [
-      radii_local = thrust::raw_pointer_cast(m_impl->radii.data()),
-      radii_global = thrust::raw_pointer_cast(ctx.radii.data())
-    ] __device__ (uint32_t i) {
-      radii_global[i] = ::max(radii_global[i], radii_local[i]);
-    });
-
-  // int max_radii = thrust::reduce(ctx.radii.begin(), ctx.radii.end(), 0, thrust::maximum<int>());
-  // log_info("max_radii: {}", max_radii);
 }
 
 

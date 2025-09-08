@@ -146,7 +146,7 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 // Backward version of INVERSE 2D covariance matrix computation
 // (due to length launched as separate kernel before other 
 // backward steps contained in preprocess)
-__global__ void computeCov2DCUDA(int P,
+__global__ void computeCov2DCUDA_backward(int P,
 	const float3* means,
 	const int* radii,
 	const float* cov3Ds,
@@ -394,7 +394,7 @@ __device__ void computeCov3D(int idx, const glm::vec3 scale, float mod, const gl
 // for the covariance computation and inversion
 // (those are handled by a previous kernel call)
 template<int C>
-__global__ void preprocessCUDA(
+__global__ void preprocessCUDA_backward(
 	int P, int D, int M,
 	const float3* means,
 	const int* radii,
@@ -450,7 +450,7 @@ __global__ void preprocessCUDA(
 
 template<uint32_t C>
 __global__ void
-PerGaussianRenderCUDA_Backward(
+PerGaussianRenderCUDA_backward(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	int W, int H, int B,
@@ -689,7 +689,7 @@ void BACKWARD::preprocess(
 	// Somewhat long, thus it is its own kernel rather than being part of 
 	// "preprocess". When done, loss gradient w.r.t. 3D means has been
 	// modified and gradient w.r.t. 3D covariance matrix has been computed.	
-	computeCov2DCUDA << <(P + 255) / 256, 256 >> > (
+	computeCov2DCUDA_backward << <(P + 255) / 256, 256 >> > (
 		P,
 		means3D,
 		radii,
@@ -710,7 +710,7 @@ void BACKWARD::preprocess(
 	// Propagate gradients for remaining steps: finish 3D mean gradients,
 	// propagate color gradients to SH (if desireD), propagate 3D covariance
 	// matrix gradients to scale and rotation.
-	preprocessCUDA<NUM_CHANNELS_3DGS> << < (P + 255) / 256, 256 >> > (
+	preprocessCUDA_backward<NUM_CHANNELS_3DGS> << < (P + 255) / 256, 256 >> > (
 		P, D, M,
 		(float3*)means3D,
 		radii,
@@ -760,7 +760,7 @@ void BACKWARD::render(
 	float* dL_dinvdepths)
 {
 	const int THREADS = 32;
-	PerGaussianRenderCUDA_Backward<NUM_CHANNELS_3DGS> <<<((B*32) + THREADS - 1) / THREADS,THREADS>>>(
+	PerGaussianRenderCUDA_backward<NUM_CHANNELS_3DGS> <<<((B*32) + THREADS - 1) / THREADS,THREADS>>>(
 		ranges,
 		point_list,
 		W, H, B,

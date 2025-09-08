@@ -25,9 +25,6 @@ struct RasterizeContext {
   GPUBatchOutput grad_output;
   std::shared_ptr<GPUGaussian3d> gaussians_grad;
 
-  /// for Default Strategy, it maintains the max screen space radius of each gaussian.
-  mutable thrust::device_vector<int> radii;
-
   //! This is not a good design. But for now, we just put the densification info here.
   mutable std::shared_ptr<GPUBuffer<float>> densification_info;
 };

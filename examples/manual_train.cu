@@ -129,7 +129,6 @@ int main() {
   rasterize_ctx.fwd_input = io.input;
   rasterize_ctx.fwd_output = io.output;
   rasterize_ctx.gaussians_grad = grads;
-  rasterize_ctx.radii.resize(gs3d->size());
 
   // Rendering.
   DefaultRasterizer rasterizer;
