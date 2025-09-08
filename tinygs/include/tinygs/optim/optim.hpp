@@ -17,8 +17,8 @@ struct GaussianOptimizationParams {
   float rotations_lr = 1.0e-3f;
 
   // L1 regularization
-  float opacities_l1 = 0.00f; //0.01f;
-  float scales_l1 = 0.00f;    //0.01f;
+  float opacities_l1 = 0.0f; //0.01f;
+  float scales_l1 = 0.0f;    //0.01f;
 };
 
 class OptimizerBase {
@@ -55,6 +55,10 @@ public:
    * @param num_reset The number of gaussians to reset.
    */
   virtual void reset(int* indices, int num_reset) = 0;
+
+
+  // Fxxk the default strategy.
+  virtual void reset_opacity() = 0;
 
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;

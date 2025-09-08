@@ -450,7 +450,7 @@ __global__ void preprocessCUDA(
 
 template<uint32_t C>
 __global__ void
-PerGaussianRenderCUDA(
+PerGaussianRenderCUDA_Backward(
 	const uint2* __restrict__ ranges,
 	const uint32_t* __restrict__ point_list,
 	int W, int H, int B,
@@ -760,7 +760,7 @@ void BACKWARD::render(
 	float* dL_dinvdepths)
 {
 	const int THREADS = 32;
-	PerGaussianRenderCUDA<NUM_CHANNELS_3DGS> <<<((B*32) + THREADS - 1) / THREADS,THREADS>>>(
+	PerGaussianRenderCUDA_Backward<NUM_CHANNELS_3DGS> <<<((B*32) + THREADS - 1) / THREADS,THREADS>>>(
 		ranges,
 		point_list,
 		W, H, B,

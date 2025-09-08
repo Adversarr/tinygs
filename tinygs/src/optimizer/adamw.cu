@@ -400,12 +400,12 @@ void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
   if (num_duplicate == 0) return;
   const uint32_t num_sh_rest_per_gaussian = kMaxSphericalHarmonicsCoefficients - 1;
   // Resize vectors to accommodate duplicated gaussians
-  m_means_first_second.resize(m_gaussians->size() * 2, vec3(0.f));
+  m_means_first_second.resize(m_gaussians->size() * 2, vec3(0.f, 0.f, 0.f));
   m_opacities_first_second.resize(m_gaussians->size() * 2, 0.f);
-  m_rotations_first_second.resize(m_gaussians->size() * 2, vec4(0.f));
-  m_scales_first_second.resize(m_gaussians->size() * 2, vec3(0.f));
-  m_sh_coefficient_0_first_second.resize(m_gaussians->size() * 2, vec3(0.f));
-  m_sh_coefficients_rest_first_second.resize(m_gaussians->size() * 2 * num_sh_rest_per_gaussian, vec3(0.f));
+  m_rotations_first_second.resize(m_gaussians->size() * 2, vec4(0.f, 0.f, 0.f, 0.f));
+  m_scales_first_second.resize(m_gaussians->size() * 2, vec3(0.f, 0.f, 0.f));
+  m_sh_coefficient_0_first_second.resize(m_gaussians->size() * 2, vec3(0.f, 0.f, 0.f));
+  m_sh_coefficients_rest_first_second.resize(m_gaussians->size() * 2 * num_sh_rest_per_gaussian, vec3(0.f, 0.f, 0.f));
   m_gaussian_steps.resize(m_gaussians->size(), 0);
 
   // TODO: This design does not provide better result. Why?
@@ -468,6 +468,11 @@ void AdamW::reset(int* indices, int num_reset) {
       gaussian_steps[idx] = 0;
     }
   );
+}
+
+void AdamW::reset_opacity() {
+  // fxxk.
+  thrust::fill(m_opacities_first_second.begin(), m_opacities_first_second.end(), 0.f);
 }
 
 }

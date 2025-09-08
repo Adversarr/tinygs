@@ -19,7 +19,7 @@ struct AdamWParameters {
  * @brief A baseline version for Gaussian Splatting
  *
  */
-class AdamW : public OptimizerBase {
+class AdamW final : public OptimizerBase {
 public:
   AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad,
         const AdamWParameters& params = {});
@@ -31,6 +31,7 @@ public:
   void remove(char* kept_flag, int num_kept) override;
   void duplicate(int* indices, int* new_indices, int num_duplicate) override;
   void reset(int* indices, int num_reset) override;
+  void reset_opacity() override;
 
 private:
   AdamWParameters m_adam_params;

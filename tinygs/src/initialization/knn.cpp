@@ -51,7 +51,7 @@ std::vector<float> KnnInitialization::compute_mean_neighbor_distances(const std:
   KDTree index(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
   index.buildIndex();
 
-#pragma omp parallel for
+// #pragma omp parallel for
   for (size_t i = 0; i < num_points; ++i) {
     const float query_pt[3] = {points[i].x, points[i].y, points[i].z};
 
@@ -139,7 +139,7 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   m_gaussians.sh_coefficient_0.resize(num_points);
   m_gaussians.sh_coefficients_rest.resize(num_points * (kMaxSphericalHarmonicsCoefficients - 1));
 
-  auto init_opa = -log(1.0f / (fmin(fmax(m_params.init_opacity, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
+  auto init_opa = log(m_params.init_opacity / (1 - m_params.init_opacity));
   // Initialize gaussians using SoA structure
   for (size_t i = 0; i < num_points; ++i) {
     // Set position and opacity

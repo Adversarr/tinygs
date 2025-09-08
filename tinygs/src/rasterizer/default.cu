@@ -162,13 +162,14 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
 
   m_impl->invdepth.resize(ctx.fwd_input.width * ctx.fwd_input.height);
   m_impl->radii.resize(m_gaussians->size());
+  thrust::fill(m_impl->radii.begin(), m_impl->radii.end(), 0);
+  thrust::fill(m_impl->invdepth.begin(), m_impl->invdepth.end(), 0);
 
   // For spherical harmonics: 3 colors (RGB) per Gaussian for DC component
   const int D = 1 + m_gaussians->get_sh_degree();
   constexpr int M = kMaxSphericalHarmonicsCoefficients - 1;
   float* out_color = ctx.fwd_output.image.data;
   m_impl->num_gaussians = num_gaussians;
-  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 
   // Call CudaRasterizer forward pass
    auto [num_rendered, num_buckets] = CudaRasterizer::Rasterizer::forward(
@@ -192,7 +193,11 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
       /* depth */ thrust::raw_pointer_cast(m_impl->invdepth.data()),
       /* antialiasing */ false,
       /* radii */  thrust::raw_pointer_cast(m_impl->radii.data()),
-      /* debug */ true //! DEBUG
+#ifdef NDEBUG
+      false
+#else
+      /* debug */ true
+#endif
   );
   m_impl->num_buckets = num_buckets;
   m_impl->num_rendered = num_rendered;
@@ -288,7 +293,11 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
     /* dL_dscales */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_exp_scales.data())),
     /* dL_drotations */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_rotations_normalized.data())),
     /* antialiasing */ false,
-    /* debug*/ true
+#ifdef NDEBUG
+      false
+#else
+      /* debug */ true
+#endif
   );
 
 

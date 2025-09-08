@@ -11,6 +11,25 @@ namespace tinygs {
 
 DefaultStrategy::~DefaultStrategy() = default;
 
+void reset_opacity(
+  const std::shared_ptr<GPUGaussian3d>& gaussians,
+  float min_opacity_threshold
+) {
+  // def reset_opacity(self):
+  //     opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
+  //     optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
+  //     self._opacity = optimizable_tensors["opacity"]
+
+  thrust::for_each(
+    thrust::device,
+    gaussians->opacities().begin(),
+    gaussians->opacities().end(),
+    [min_opacity_threshold] __device__ (float& opacity) {
+      opacity = logit(::fminf(logistic(opacity), min_opacity_threshold));
+    }
+  );
+}
+
 void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   TINYGS_TIMER("DefaultStrategy::step");
 
@@ -27,6 +46,11 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
     ctx.densification_info->memset(0);
     ctx.radii.resize(m_gaussians->size());
     thrust::fill(ctx.radii.begin(), ctx.radii.end(), 0);
+  }
+
+  if (step % m_params.reset_every == 0 && step >= m_params.start_refine && step <= m_params.end_refine) {
+    reset_opacity(m_gaussians, 2 * m_params.pruning_opacity_threshold);
+    on_reset_opacity();
   }
 }
 
@@ -152,8 +176,6 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
      ] __device__(int i) {
       int src_idx = d_grow_indices_src[i];
       int target_idx = d_grow_indices_target[i];
-      assert(0 <= src_idx && src_idx < num_gaussians);
-      assert(num_gaussians <= target_idx && target_idx < num_gaussians + num_grows);
       if (d_grow_flags[src_idx] == 0) return;
 
       rotations[target_idx] = rotations[src_idx];
@@ -227,7 +249,7 @@ void DefaultStrategy::prune(const RasterizeContext& ctx, const thrust::device_ve
        max_radii_threshold = m_params.max_screen_size,                       //
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) { //
         bool not_large_ws = max(exp(scale[i])) < pruning_scale_threshold * scene_scale;
-        bool not_large_vs = i < max_radii || radii[i] < max_radii_threshold;
+        bool not_large_vs = i < max_radii || radii[i] < max_radii_threshold || true; //! we need to disable this.
         bool not_transparent = logistic(d_opacity[i]) > min_opacity;
 
         if (not_transparent && (not_large_ws && not_large_vs || !prune_large)) {

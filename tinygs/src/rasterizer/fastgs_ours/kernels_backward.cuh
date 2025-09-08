@@ -257,6 +257,7 @@ namespace fast_gs::rasterization::kernels::backward {
 #endif
             densification_info[primitive_idx] += 1.0f;
             densification_info[n_primitives + primitive_idx] += length(dL_dmean2d * make_float2(0.5f * w, 0.5f * h));
+            // densification_info[n_primitives + primitive_idx] += length(dL_dmean2d);
         }
     }
 

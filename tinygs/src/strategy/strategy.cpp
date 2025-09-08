@@ -31,4 +31,13 @@ void StrategyBase::on_reset(int* indices, int num_reset) {
   }
 }
 
+void StrategyBase::on_reset_opacity() {
+  if (m_reset_opacity_callback) {
+    m_reset_opacity_callback();
+  } else {
+    log_warning("No reset opacity callback set!");
+  }
+}
+
+
 }

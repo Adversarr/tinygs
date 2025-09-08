@@ -15,7 +15,7 @@ struct StrategyParams {
   // grow if gradient is large (Default Strategy)
   float duplicate_grad_threshold = 0.0002f;
   // split if large gaussian is found (Default Strategy)
-  float duplicate_scale_threshold = 0.01f;
+  float duplicate_scale_threshold = 0.005f;
 
   int refine_every = 100;
   int start_refine = 1000;
@@ -37,16 +37,19 @@ public:
   using RemoveCallback = std::function<void(char* /*kept_flag*/, int /*num_kept*/)>;
   using DuplicateCallback = std::function<void(int* /*indices*/, int* /*new_indices*/, int /* num_duplications */)>;
   using ResetCallback = std::function<void(int* indices, int num_reset)>;
+  using ResetOpacityCallback = std::function<void()>;
 
   virtual void step_impl(const RasterizeContext& ctx) = 0;
   void set_remove_callback(RemoveCallback callback) { m_remove_callback = callback; }
   void set_duplicate_callback(DuplicateCallback callback) { m_duplicate_callback = callback; }
   void set_reset_callback(ResetCallback callback) { m_reset_callback = callback; }
+  void set_reset_opacity_callback(ResetOpacityCallback callback) { m_reset_opacity_callback = callback; }
 
 protected:
   void on_remove(char* kept_flag, int num_kept);
   void on_duplicate(int* indices, int* new_indices, int num_duplications);
   void on_reset(int* indices, int num_reset);
+  void on_reset_opacity();
 
   int this_step() const noexcept { return m_step_count; }
 
@@ -58,7 +61,7 @@ private:
   RemoveCallback m_remove_callback;        /// use this function to remove some gaussians
   DuplicateCallback m_duplicate_callback;  /// use this function to duplicate some gaussians
   ResetCallback m_reset_callback;          /// use this function to reset some gaussians
-
+  ResetOpacityCallback m_reset_opacity_callback;  /// use this function to reset the opacity of gaussians
 };
 
 

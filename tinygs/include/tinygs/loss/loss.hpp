@@ -32,4 +32,18 @@ public:
   virtual void evaluate(LossContext ctx) = 0;
 };
 
+class MetricBase {
+public:
+  virtual ~MetricBase() = default;
+
+  /**
+   * @brief Evaluate the metric. (no gradient computation)
+   * 
+   * @param pred The prediction image.
+   * @param target The target image.
+   * @return float The metric value.
+   */
+  virtual float evaluate(Image<float> pred, Image<const float> target) = 0;
+};
+
 } // namespace tinygs

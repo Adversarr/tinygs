@@ -32,6 +32,10 @@ public:
   /// @return The data at the given index.
   virtual Data operator[](size_t idx) const = 0;
 
+  // /// Apply a transform to the dataset. (e.g. camera poses.)
+  // /// @param transform The transform to apply.
+  // virtual void apply_transform(const mat4x4& transform) = 0;
+
   // TODO: Pose Optimizer.
 };
 

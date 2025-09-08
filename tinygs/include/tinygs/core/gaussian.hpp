@@ -1,5 +1,6 @@
 #pragma once
 #include "tinygs/common.hpp"
+#include "tinygs/core/camera.hpp"
 #include "tinygs/cuda/vec.hpp"
 
 namespace tinygs {
@@ -31,5 +32,11 @@ struct Gaussian3d {
   std::vector<vec3> sh_coefficient_0;
   std::vector<vec3> sh_coefficients_rest;
 };
+
+mat4x4 normalize_scene(
+  const Gaussian3d& gs3d,
+  const std::vector<std::pair<mat4x4, mat3x3>>& w2c_k_s,
+  float ext_scale = 1.0f
+);
 
 }  // namespace tinygs
