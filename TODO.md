@@ -4,9 +4,19 @@
 
 **CMake**: many flags are not set properly in nvcc.
 
+**Strategy**:
+1. mcmc: should tune the noise, and pruning.
+
+**Configuration**:
+1. json support, cxxopts
+
+**Dataset**:
+1. Load the dataset from video.
+
 ## Trainer
 
 1. Implement the training loop class.
+2. Pose optimization
 
 ## LR scheduler
 
