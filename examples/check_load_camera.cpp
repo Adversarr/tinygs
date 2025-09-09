@@ -1,6 +1,7 @@
 #include <iostream>
 #include <tinygs/core/camera.hpp>
-
+#define GLM_ENABLE_EXPERIMENTAL
+#include "glm/gtx/string_cast.hpp"
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/dataloader/simple.hpp"
@@ -22,12 +23,12 @@ int main() {
     std::vector<std::string> camera_extrinsics_lines = tinygs::readlines(camera_extrinsics_path);
     
     auto intrisics = tinygs::CameraIntrinsics::parse(camera_intrinsics_lines.at(0));
-    std::cout << tinygs::to_string(intrisics.get_K()) << std::endl;
+    std::cout << glm::to_string(intrisics.to_mat3()) << std::endl;
     
     // first 5 extrinsics
     for (int i = 0; i < 5; i++) {
       auto extrinsics = tinygs::CameraExtrinsics::parse(camera_extrinsics_lines.at(i));
-      std::cout << tinygs::to_string(extrinsics.get_w2c()) << std::endl;
+      std::cout << glm::to_string(extrinsics.get_w2c()) << std::endl;
     }
     
     int width = 480, height = 640;
@@ -47,8 +48,8 @@ int main() {
     tinygs::SimpleDataLoader loader(dataset);
     auto data = loader.next();
     std::cout << tinygs::to_string(data.output.image.shape) << std::endl;
-    std::cout << tinygs::to_string(data.input.w2c) << std::endl;
-    std::cout << tinygs::to_string(data.input.K) << std::endl;
+    std::cout << glm::to_string(data.input.w2c) << std::endl;
+    std::cout << glm::to_string(data.input.K) << std::endl;
 
     // Example usage of PointCloud
     auto pc = tinygs::load_from_colmap_file(DATA_PATH + "inputs/slam/points3D.txt");

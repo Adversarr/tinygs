@@ -57,7 +57,7 @@ public:
   void load_camera_intrinsics(const std::string& intrinsics_file_path);
 
   /**
-   * @brief Get the camera extrinsics
+   * @brief Get the camera extrinsics, always sorted by frame_uid
    * @return Reference to the vector of camera extrinsics
    */
   const std::vector<CameraExtrinsics>& get_camera_extrinsics() const { return m_camera_extrinsics; }

@@ -3,7 +3,8 @@
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 #include <cuda_runtime.h>
-
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/string_cast.hpp>
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/dataset/png_folder.hpp"
 #include "tinygs/utils/file.hpp"
@@ -21,7 +22,7 @@ int main() {
 
     auto intrinsics = tinygs::CameraIntrinsics::parse(camera_intrinsics_lines.at(0));
     std::cout << "Camera Intrinsics K matrix:" << std::endl;
-    std::cout << tinygs::to_string(intrinsics.get_K()) << std::endl;
+    std::cout << glm::to_string(intrinsics.to_mat3()) << std::endl;
 
     int width = 480, height = 640;
     tinygs::ImageShape shape;
@@ -49,9 +50,9 @@ int main() {
       std::cout << "\n--- Frame " << frame_count << " ---" << std::endl;
       std::cout << "Image shape: " << tinygs::to_string(data.output.image.shape) << std::endl;
       std::cout << "Camera extrinsics (w2c):" << std::endl;
-      std::cout << tinygs::to_string(data.input.w2c) << std::endl;
+      std::cout << glm::to_string(data.input.w2c) << std::endl;
       std::cout << "Camera intrinsics (K):" << std::endl;
-      std::cout << tinygs::to_string(data.input.K) << std::endl;
+      std::cout << glm::to_string(data.input.K) << std::endl;
       
       // Copy image data from GPU to host
       // The image data is in CHW format with float values (0-1)

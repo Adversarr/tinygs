@@ -20,7 +20,7 @@ CameraIntrinsics CameraIntrinsics::parse(const std::string& line) {
     }
     
     CameraIntrinsics intrinsics;
-    intrinsics.id = std::stoi(tokens[0]);
+    intrinsics.uid = std::stoi(tokens[0]);
     
     // Parse camera model
     if (tokens[1] == "PINHOLE") {
@@ -79,4 +79,25 @@ CameraExtrinsics CameraExtrinsics::parse(const std::string& line) {
     return CameraExtrinsics(quat{qw, qx, qy, qz}, vec3{tx, ty, tz}, frame_uid);
 }
 
+std::string CameraIntrinsics::to_string() const {
+  std::string model_str;
+  switch (model) {
+  case CameraModel::Pinhole:
+    model_str = "PINHOLE";
+    break;
+  default:
+    model_str = "UNKNOWN";
+    break;
+  }
+
+  return fmt::format("CameraIntrinsics(id={}, model={}, width={}, height={}, "
+                     "fx={:.3f}, fy={:.3f}, cx={:.3f}, cy={:.3f}, "
+                     "k1={:.6f}, k2={:.6f}, k3={:.6f}, p1={:.6f}, p2={:.6f})",
+                     uid, model_str, width, height, fx, fy, cx, cy, k1, k2, k3,
+                     p1, p2);
+}
+
+std::string to_string(const CameraIntrinsics &intrinsics) {
+  return intrinsics.to_string();
+}
 } // namespace tinygs

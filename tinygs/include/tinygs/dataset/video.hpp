@@ -14,8 +14,7 @@ class VideoDataset final : public DatasetBase {
 public:
   explicit VideoDataset(const std::string &video_file_path,
                         const std::string &extrinsics_file_path,
-                        const std::string &intrinsics_file_path,
-                        const ImageShape &image_shape);
+                        const std::string &intrinsics_file_path);
   virtual ~VideoDataset();
 
   VideoDataset(const VideoDataset&) = delete;
@@ -32,7 +31,7 @@ private:
   SingleCameraLoader m_camera_loader;
 
   ImageShape m_image_shape;
-  float* m_data;
+  uint8_t* m_data;
   size_t m_size;
 };
 

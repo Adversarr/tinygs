@@ -16,7 +16,8 @@ enum class CameraModel: int {
 
 // Camera intrinsic parameters (corresponds to Python Camera dataclass)
 struct CameraIntrinsics {
-  int id;
+  /// @brief The camera id. (0-based)
+  int uid;
   CameraModel model;
   int width;
   int height;
@@ -26,7 +27,7 @@ struct CameraIntrinsics {
   float p1, p2;      // tangential distortion coefficients
   
   // Get 3x3 intrinsics matrix K
-  TINYGS_HOST_DEVICE mat3x3 get_K() const {
+  TINYGS_HOST_DEVICE mat3x3 to_mat3() const {
     return mat3x3{
       fx, 0.0f, 0.f,
       0.0f, fy, 0.f,
@@ -39,34 +40,17 @@ struct CameraIntrinsics {
   static CameraIntrinsics parse(const std::string& line);
   
   // Convert camera intrinsics to string representation
-  std::string to_string() const {
-    std::string model_str;
-    switch (model) {
-      case CameraModel::Pinhole:
-        model_str = "PINHOLE";
-        break;
-      default:
-        model_str = "UNKNOWN";
-        break;
-    }
-    
-    return fmt::format("CameraIntrinsics(id={}, model={}, width={}, height={}, "
-                      "fx={:.3f}, fy={:.3f}, cx={:.3f}, cy={:.3f}, "
-                      "k1={:.6f}, k2={:.6f}, k3={:.6f}, p1={:.6f}, p2={:.6f})",
-                      id, model_str, width, height, fx, fy, cx, cy, k1, k2, k3, p1, p2);
-  }
+  std::string to_string() const;
 };
 
 // Global to_string function for CameraIntrinsics
-inline std::string to_string(const CameraIntrinsics& intrinsics) {
-  return intrinsics.to_string();
-}
+std::string to_string(const CameraIntrinsics &intrinsics);
 
 // Camera extrinsic parameters (pose)
 struct CameraExtrinsics {
   quat m_q;  // quaternion (qw, qx, qy, qz)
   vec3 m_t;  // translation (tx, ty, tz)
-  /// @brief The camera id of the data.
+  /// @brief The frame id of the data. (1-based)
   uint32_t frame_uid;
 
   // Constructor from quaternion and translation

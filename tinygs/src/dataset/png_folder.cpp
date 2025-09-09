@@ -149,7 +149,7 @@ Data PngFolderDataset::operator[](size_t index) const {
   data.w2c = m_camera_loader.get_camera_extrinsics()[index].get_w2c();
   data.frame_uid = m_camera_loader.get_camera_extrinsics()[index].frame_uid;
   data.cam_uid = 0; //! assuming single camera
-  data.K = m_camera_loader.get_camera_intrinsics().get_K();
+  data.K = m_camera_loader.get_camera_intrinsics().to_mat3();
   return data;
 }
 

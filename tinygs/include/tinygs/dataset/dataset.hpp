@@ -9,10 +9,10 @@ struct Data {
   /// Camera Data
   mat4x4 w2c;
   mat3x3 K;
-  /// @brief The camera id of the data.
+  /// @brief The camera id of the data. (0-based)
   uint32_t cam_uid;
 
-  /// @brief The frame id of the data.
+  /// @brief The frame id of the data. (1-based)
   uint32_t frame_uid;
 };
 

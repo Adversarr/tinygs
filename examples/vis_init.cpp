@@ -36,7 +36,7 @@ int main() {
     auto init_result = knn.gaussians();
     auto intrinsics = tinygs::CameraIntrinsics::parse(camera_intrinsics_lines.at(0));
     std::cout << "Camera Intrinsics K matrix:" << std::endl;
-    std::cout << glm::to_string(intrinsics.get_K()) << std::endl;
+    std::cout << glm::to_string(intrinsics.to_mat3()) << std::endl;
 
     int width = 480, height = 640;
     tinygs::ImageShape shape;

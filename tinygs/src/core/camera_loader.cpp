@@ -20,6 +20,8 @@ void SingleCameraLoader::load_camera_extrinsics(const std::string& extrinsics_fi
   for (auto& line : lines) {
     m_camera_extrinsics.emplace_back(CameraExtrinsics::parse(line));
   }
+  std::sort(m_camera_extrinsics.begin(), m_camera_extrinsics.end(),
+      [](const auto& a, const auto& b) { return a.frame_uid < b.frame_uid; });
 
   log_info("Loaded {} camera extrinsics from file: {}", m_camera_extrinsics.size(), extrinsics_file_path);
 }
