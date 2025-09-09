@@ -28,18 +28,12 @@ struct BenchmarkData {
   
 private:
   std::shared_ptr<tinygs::PngFolderDataset> create_dataset() {
-    int width = 480, height = 640;
-    tinygs::ImageShape shape;
-    shape.width = width;
-    shape.height = height;
-    shape.channel = 3;
-    
     std::string camera_intrinsics_path = DATA_PATH + "inputs/slam/cameras.txt";
     std::string camera_extrinsics_path = DATA_PATH + "inputs/traj_full.txt.bak";
     
     return std::make_shared<tinygs::PngFolderDataset>(
         DATA_PATH + "inputs/images_480x640_1", camera_extrinsics_path,
-        camera_intrinsics_path, shape);
+        camera_intrinsics_path);
   }
   
   void setup() {

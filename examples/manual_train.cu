@@ -70,17 +70,13 @@ int main() {
   std::string camera_intrinsics_path = data_path + "inputs/slam/cameras.txt";
   std::string camera_extrinsics_path = data_path + "inputs/traj_full.txt.bak";
 
-  int width = 480, height = 640;
-  ImageShape shape;
-  shape.width = width;
-  shape.height = height;
-  shape.channel = 3;
+  
   std::shared_ptr<PngFolderDataset> dataset = std::make_shared<PngFolderDataset>(  //
-      data_path + "inputs/images_480x640_1",                                                       //
-      camera_extrinsics_path,                                                                      //
-      camera_intrinsics_path,                                                                      //
-      shape);
-
+    data_path + "inputs/images_480x640_1",                                                       //
+    camera_extrinsics_path,                                                                      //
+    camera_intrinsics_path);
+  auto shape = dataset->image_shape();
+  int width = shape.width, height = shape.height;
   SimpleDataLoader loader(dataset);
 
   auto pc = load_from_colmap_file(data_path + "inputs/slam/points3D.txt");

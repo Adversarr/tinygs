@@ -13,16 +13,9 @@ std::shared_ptr<tinygs::PngFolderDataset>& create_test_dataset() {
     std::string camera_intrinsics_path = data_path + "inputs/slam/cameras.txt";
     std::string camera_extrinsics_path = data_path + "inputs/traj_full.txt.bak";
     
-    // Setup image shape
-    int width = 480, height = 640;
-    tinygs::ImageShape shape;
-    shape.width = width;
-    shape.height = height;
-    shape.channel = 3;
-
     dataset = std::make_shared<tinygs::PngFolderDataset>(
         data_path + "inputs/images_480x640_1", camera_extrinsics_path,
-        camera_intrinsics_path, shape);
+        camera_intrinsics_path);
   }
   return dataset;
 }

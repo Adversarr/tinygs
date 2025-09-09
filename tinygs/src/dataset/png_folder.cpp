@@ -82,17 +82,22 @@ static void load_single_image(size_t index, const std::string& image_path, uint8
 
 PngFolderDataset::PngFolderDataset(const std::string &folder_path,
                                    const std::string &extrinsics_file_path,
-                                   const std::string &intrinsics_file_path,
-                                   const ImageShape &image_shape)
+                                   const std::string &intrinsics_file_path)
     : m_image_paths(list_png_files(folder_path)), m_folder_path(folder_path),
-    m_camera_loader(extrinsics_file_path, intrinsics_file_path),
-    m_image_shape(image_shape) {
+    m_camera_loader(extrinsics_file_path, intrinsics_file_path) {
   TINYGS_TIMER("PngFolderDataset::PngFolderDataset");
   auto start = std::chrono::steady_clock::now();
   m_size = std::min(m_image_paths.size(), m_camera_loader.get_camera_extrinsics().size());
   if (m_size == 0) {
     throw std::runtime_error("No PNG files found in folder: " + folder_path);
   }
+
+  // Infer image shape from the first image
+  auto first_img = load_stbi_u8(m_image_paths[0].c_str());
+  m_image_shape.width = first_img.shape.width;
+  m_image_shape.height = first_img.shape.height;
+  m_image_shape.channel = 3; // Always use 3 channels (RGB) for consistency
+  free(first_img.data); // Free the temporary image data
 
   if (m_image_shape.channel != 3 && m_image_shape.channel != 4) {
     throw std::runtime_error("Only 3 (RGB) or 4 (RGBA) channels are supported now.");
@@ -115,7 +120,7 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
   }
   auto end = std::chrono::steady_clock::now();
 
-  log_info("Loaded {} images with resolution={}x{}. (consumed {:.6f} GiB in {:.6f} sec.)",
+  log_info("Loaded {} images with resolution={}x{} (inferred from first image). (consumed {:.6f} GiB in {:.6f} sec.)",
             m_size, m_image_shape.width, m_image_shape.height, static_cast<double>(total_size) / (1024 * 1024 * 1024),
             std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
 

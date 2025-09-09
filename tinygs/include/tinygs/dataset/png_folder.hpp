@@ -12,10 +12,15 @@ namespace tinygs {
  */
 class PngFolderDataset final : public DatasetBase {
 public:
+  /**
+   * @brief Constructor that infers image shape from the first image in the folder
+   * @param folder_path Path to the folder containing PNG images
+   * @param extrinsics_file_path Path to camera extrinsics file
+   * @param intrinsics_file_path Path to camera intrinsics file
+   */
   explicit PngFolderDataset(const std::string &folder_path,
                             const std::string &extrinsics_file_path,
-                            const std::string &intrinsics_file_path,
-                            const ImageShape &image_shape);
+                            const std::string &intrinsics_file_path);
   virtual ~PngFolderDataset();
 
   PngFolderDataset(const PngFolderDataset&) = delete;
