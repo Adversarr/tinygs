@@ -7,7 +7,7 @@ namespace tinygs {
 constexpr float CHAR_TO_FLOAT = 1.0f / 255.0f;
 
 __global__ static void convert_u8_float(
-  const char* input,
+  const unsigned char* input,
   float* output,
   size_t total
 ) {
@@ -19,7 +19,7 @@ __global__ static void convert_u8_float(
 }
 
 __global__ static void convert_u8_float_packed4(
-    const char* input,
+    const unsigned char* input,
     float* output,
     size_t total
 ) {
@@ -28,7 +28,7 @@ __global__ static void convert_u8_float_packed4(
     return;
   }
 
-  const char4 *in = reinterpret_cast<const char4 *>(input) + idx;
+  const uchar4 *in = reinterpret_cast<const uchar4 *>(input) + idx;
   const float4 y = {CHAR_TO_FLOAT * in->x, CHAR_TO_FLOAT * in->y,
                     CHAR_TO_FLOAT * in->z, CHAR_TO_FLOAT * in->w};
   float4 *out = reinterpret_cast<float4 *>(output) + idx;
@@ -84,11 +84,15 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
 
     // now we convert the raw data to float
     if (total_elements % 4 == 0){
-      convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>( //
-        raw_data, (float *)gpu_data.data, total_elements / 4);
+      // convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>( //
+      //   raw_data, (float *)gpu_data.data, total_elements / 4);
+            // convert_u8_float_packed4<<<(total_elements + 255) / 256, 256>>>( //
+      //   raw_data, (float *)gpu_data.data, total_elements);
+      convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
+        (unsigned char*)raw_data, (float *)gpu_data.data, total_elements);
     } else {
       convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
-        raw_data, (float *)gpu_data.data, total_elements);
+        (unsigned char*)raw_data, (float *)gpu_data.data, total_elements);
     }
   }
 }
