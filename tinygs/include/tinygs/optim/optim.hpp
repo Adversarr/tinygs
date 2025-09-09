@@ -6,7 +6,7 @@ namespace tinygs {
 
 struct GaussianOptimizationParams {
   // Shared parameters
-  float max_grad_1 = 0.0f;
+  float max_grad_1 = 1.0f;
   bool skip_zero_grad = true;
 
   // Learning rates for different parameters

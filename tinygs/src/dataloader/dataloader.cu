@@ -24,7 +24,7 @@ __global__ static void convert_u8_float_packed4(
     size_t total
 ) {
   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx * 4 >= total) {// 4 elements per thread
+  if (idx >= total) {// 4 elements per thread
     return;
   }
 
@@ -84,10 +84,8 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
 
     // now we convert the raw data to float
     if (total_elements % 4 == 0){
-      // convert_u8_float_packed4<<<(total_elements + 255) / 256, 256>>>( //
-      //   raw_data, (float *)gpu_data.data, total_elements);
-      convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
-        raw_data, (float *)gpu_data.data, total_elements);
+      convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>( //
+        raw_data, (float *)gpu_data.data, total_elements / 4);
     } else {
       convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
         raw_data, (float *)gpu_data.data, total_elements);

@@ -2,13 +2,16 @@
 #include "tinygs/loss/l1.hpp"
 #include <cuda_fp16.h>
 
+namespace tinygs {
+
 /**
- * Computes L1 loss. Equivalent to L1Loss in PyTorch.
+ * Computes L1 loss with clamped predictions. Equivalent to L1Loss in PyTorch.
  *
- * L1 = |pred - target|_1 . mean()
+ * Predictions are clamped to [0,1] range before computing loss.
+ * L1 = |clamp(pred, 0, 1) - target|_1 . mean()
  *
  * The gradient is computed as:
- *    grad = sign(pred - target) / N
+ *    grad = sign(clamp(pred, 0, 1) - target) / N
  */
 
 // Optimized float specialization
@@ -21,11 +24,13 @@ __global__ void l1_kernel(int N, const float *__restrict__ pred,
     return;
   }
 
-  const float p = pred[i];
+  const float p_raw = pred[i];
+  const float p = saturate(p_raw);  // Clamp p to [0,1]
   const float t = target[i];
   const float diff = p - t;
   const float l = fabsf(diff);  // Use fabsf for float instead of fabs
   const float g = copysignf(1.0f, diff);  // More efficient than conditional
+  const float g_sat = g * saturate_deriv(p_raw);  // Derivative of saturate
   
   if (loss != nullptr) {
     loss[i] = fmaf(l, scale, loss[i]);  // Use fused multiply-add
@@ -35,7 +40,6 @@ __global__ void l1_kernel(int N, const float *__restrict__ pred,
   }
 }
 
-namespace tinygs {
 
 void L1Loss::evaluate(LossContext ctx) {
   int n = ctx.pred.size();
