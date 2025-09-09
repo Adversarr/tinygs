@@ -8,34 +8,44 @@ void StrategyBase::step(const RasterizeContext& ctx) {
 }
 
 void StrategyBase::on_remove(char* kept_flag, int num_kept) {
-  if (m_remove_callback) {
-    m_remove_callback(kept_flag, num_kept);
-  } else {
-    log_warning("No remove callback set!");
+  if (num_kept <= 0) return;
+  
+  if (m_gaussians) {
+    m_gaussians->remove(kept_flag, num_kept);
+  }
+  if (m_gaussians_grad) {
+    m_gaussians_grad->remove(kept_flag, num_kept);
+  }
+  if (m_optimizer) {
+    m_optimizer->remove(kept_flag, num_kept);
   }
 }
 
 void StrategyBase::on_duplicate(int* indices, int* new_indices, int num_duplications) {
-  if (m_duplicate_callback) {
-    m_duplicate_callback(indices, new_indices, num_duplications);
-  } else {
-    log_warning("No duplicate callback set!");
+  if (num_duplications <= 0) return;
+  
+  if (m_gaussians) {
+    m_gaussians->append(num_duplications);
+  }
+  if (m_gaussians_grad) {
+    m_gaussians_grad->append(num_duplications);
+  }
+  if (m_optimizer) {
+    m_optimizer->duplicate(indices, new_indices, num_duplications);
   }
 }
 
 void StrategyBase::on_reset(int* indices, int num_reset) {
-  if (m_reset_callback) {
-    m_reset_callback(indices, num_reset);
-  } else {
-    log_warning("No reset callback set!");
+  if (num_reset <= 0) return;
+  
+  if (m_optimizer) {
+    m_optimizer->reset(indices, num_reset);
   }
 }
 
 void StrategyBase::on_reset_opacity() {
-  if (m_reset_opacity_callback) {
-    m_reset_opacity_callback();
-  } else {
-    log_warning("No reset opacity callback set!");
+  if (m_optimizer) {
+    m_optimizer->reset_opacity();
   }
 }
 

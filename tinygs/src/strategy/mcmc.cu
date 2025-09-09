@@ -134,7 +134,11 @@ __global__ void add_noise_kernel(
     means[idx_3d + 2] += noise_factor * transformed_noise.z;
 }
 
-MCMCStrategy::MCMCStrategy(std::shared_ptr<GPUGaussian3d> gaussians) : StrategyBase(gaussians) {
+MCMCStrategy::MCMCStrategy(
+    std::shared_ptr<GPUGaussian3d> gaussians,
+    std::shared_ptr<GPUGaussian3d> gaussians_grad,
+    std::shared_ptr<OptimizerBase> optimizer
+) : StrategyBase(gaussians, gaussians_grad, optimizer) {
   init_binom();
 }
 

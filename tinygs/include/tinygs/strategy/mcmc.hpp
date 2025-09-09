@@ -5,7 +5,15 @@ namespace tinygs {
 
 class MCMCStrategy : public StrategyBase {
 public:
-  MCMCStrategy(std::shared_ptr<GPUGaussian3d> gaussians);
+  /**
+   * @brief Construct a new MCMCStrategy object with gaussians, gradients, and optimizer
+   * @param gaussians Shared pointer to GPU gaussians data
+   * @param gaussians_grad Shared pointer to GPU gaussians gradients
+   * @param optimizer Shared pointer to optimizer for updating gaussians
+   */
+  MCMCStrategy(std::shared_ptr<GPUGaussian3d> gaussians,
+               std::shared_ptr<GPUGaussian3d> gaussians_grad,
+               std::shared_ptr<OptimizerBase> optimizer);
   virtual ~MCMCStrategy();
 
   void reset() override;

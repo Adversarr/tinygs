@@ -135,7 +135,7 @@ int main() {
   PsnrMetric psnr;
 
   // Optimizer
-  auto optimizer = std::make_unique<AdamW>(gs3d, grads);
+  auto optimizer = std::make_shared<AdamW>(gs3d, grads);
 
   // Loss
   GPUBuffer<float> loss_buffer(shape.width * shape.height * 4);
@@ -148,30 +148,8 @@ int main() {
   loss_ctx.grad = Image(shape, ImageFormat::CHW, ImageDataType::Float32, out_image_grad.data());
 
   // Densification Strategy
-  // auto strategy = std::make_unique<MCMCStrategy>(gs3d);
-  auto strategy = std::make_unique<DefaultStrategy>(gs3d);
-  strategy->set_remove_callback([&](char* kept_flag, int num_kept) {
-    if (num_kept == gs3d->size()) return;
-    optimizer->remove(kept_flag, num_kept);
-    gs3d->remove(kept_flag, num_kept);
-    grads->remove(kept_flag, num_kept);
-  });
-
-  strategy->set_duplicate_callback([&](int* src, int* dst, int num_duplications) {
-    if (num_duplications <= 0) return;
-    gs3d->append(num_duplications); // It is strategy's responsibility to update the gaussians.
-    grads->append(num_duplications);
-    optimizer->duplicate(src, dst, num_duplications);
-  });
-
-  strategy->set_reset_callback([&](int* indices, int num_reset) {
-    if (num_reset <= 0) return;
-    optimizer->reset(indices, num_reset);
-  });
-
-  strategy->set_reset_opacity_callback([&] {
-    optimizer->reset_opacity();
-  });
+  // auto strategy = std::make_unique<MCMCStrategy>(gs3d, grads, optimizer);
+  auto strategy = std::make_unique<DefaultStrategy>(gs3d, grads, optimizer);
 
   int frame_count = 0;
   bool should_stop = false;

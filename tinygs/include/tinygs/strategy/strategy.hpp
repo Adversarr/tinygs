@@ -2,6 +2,7 @@
 
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
+#include "tinygs/optim/optim.hpp"
 namespace tinygs {
 
 struct StrategyParams {
@@ -26,42 +27,76 @@ struct StrategyParams {
 
 class StrategyBase {
 public:
-  explicit StrategyBase(std::shared_ptr<GPUGaussian3d> gaussians) : m_gaussians(gaussians) {}
+  /**
+   * @brief Construct a new StrategyBase object with gaussians, gradients, and optimizer
+   * @param gaussians Shared pointer to GPU gaussians data
+   * @param gaussians_grad Shared pointer to GPU gaussians gradients
+   * @param optimizer Shared pointer to optimizer for updating gaussians
+   */
+  explicit StrategyBase(std::shared_ptr<GPUGaussian3d> gaussians, 
+                       std::shared_ptr<GPUGaussian3d> gaussians_grad,
+                       std::shared_ptr<OptimizerBase> optimizer) 
+    : m_gaussians(gaussians), m_gaussians_grad(gaussians_grad), m_optimizer(optimizer) {}
   virtual ~StrategyBase() = default;
 
-  // might use the densification info to densify the gaussians
+  /**
+   * @brief Execute one step of the strategy using rasterization context
+   * @param ctx Rasterization context containing densification info
+   */
   void step(const RasterizeContext& ctx);
 
+  /**
+   * @brief Reset the strategy state
+   */
   virtual void reset() = 0;
 
-  using RemoveCallback = std::function<void(char* /*kept_flag*/, int /*num_kept*/)>;
-  using DuplicateCallback = std::function<void(int* /*indices*/, int* /*new_indices*/, int /* num_duplications */)>;
-  using ResetCallback = std::function<void(int* indices, int num_reset)>;
-  using ResetOpacityCallback = std::function<void()>;
-
+  /**
+   * @brief Implementation-specific strategy step logic
+   * @param ctx Rasterization context for strategy decisions
+   */
   virtual void step_impl(const RasterizeContext& ctx) = 0;
-  void set_remove_callback(RemoveCallback callback) { m_remove_callback = callback; }
-  void set_duplicate_callback(DuplicateCallback callback) { m_duplicate_callback = callback; }
-  void set_reset_callback(ResetCallback callback) { m_reset_callback = callback; }
-  void set_reset_opacity_callback(ResetOpacityCallback callback) { m_reset_opacity_callback = callback; }
 
 protected:
+  /**
+   * @brief Handle removal of gaussians and update optimizer state
+   * @param kept_flag Array indicating which gaussians to keep
+   * @param num_kept Number of gaussians being kept
+   */
   void on_remove(char* kept_flag, int num_kept);
+  
+  /**
+   * @brief Handle duplication of gaussians and update optimizer state
+   * @param indices Original gaussian indices
+   * @param new_indices New gaussian indices after duplication
+   * @param num_duplications Number of gaussians being duplicated
+   */
   void on_duplicate(int* indices, int* new_indices, int num_duplications);
+  
+  /**
+   * @brief Handle reset of specific gaussians in optimizer
+   * @param indices Indices of gaussians to reset
+   * @param num_reset Number of gaussians to reset
+   */
   void on_reset(int* indices, int num_reset);
+  
+  /**
+   * @brief Handle opacity reset for all gaussians
+   */
   void on_reset_opacity();
 
+  /**
+   * @brief Get current step count
+   * @return Current step number
+   */
   int this_step() const noexcept { return m_step_count; }
 
   std::shared_ptr<GPUGaussian3d> m_gaussians;
+  std::shared_ptr<GPUGaussian3d> m_gaussians_grad;
+  std::shared_ptr<OptimizerBase> m_optimizer;
   StrategyParams m_params;
+  
 private:
   int m_step_count = 0;
-
-  RemoveCallback m_remove_callback;        /// use this function to remove some gaussians
-  DuplicateCallback m_duplicate_callback;  /// use this function to duplicate some gaussians
-  ResetCallback m_reset_callback;          /// use this function to reset some gaussians
-  ResetOpacityCallback m_reset_opacity_callback;  /// use this function to reset the opacity of gaussians
 };
 
 

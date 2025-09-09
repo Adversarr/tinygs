@@ -9,6 +9,13 @@
 
 namespace tinygs {
 
+DefaultStrategy::DefaultStrategy(
+    std::shared_ptr<GPUGaussian3d> gaussians,
+    std::shared_ptr<GPUGaussian3d> gaussians_grad,
+    std::shared_ptr<OptimizerBase> optimizer
+) : StrategyBase(gaussians, gaussians_grad, optimizer) {
+}
+
 DefaultStrategy::~DefaultStrategy() = default;
 
 void reset_opacity(
@@ -272,7 +279,6 @@ void DefaultStrategy::prune(const RasterizeContext& ctx, const thrust::device_ve
   log_info("Remove {} dead gaussians (kept {})", num_gaussians - nums_kept, nums_kept);
 }
 
-DefaultStrategy::DefaultStrategy(std::shared_ptr<GPUGaussian3d> gaussians)
-    : StrategyBase(gaussians) {}
+
 
 } // namespace tinygs
