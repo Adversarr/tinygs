@@ -29,7 +29,7 @@ public:
 
 private:
   std::string m_video_file_path;
-  SingleCameraIntrinsics m_camera_loader;
+  SingleCameraLoader m_camera_loader;
 
   ImageShape m_image_shape;
   float* m_data;

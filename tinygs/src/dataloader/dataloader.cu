@@ -1,11 +1,12 @@
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/utils/scope_timer.hpp"
 
 namespace tinygs {
 
 constexpr float CHAR_TO_FLOAT = 1.0f / 255.0f;
 
-__global__ void convert_u8_float(
+__global__ static void convert_u8_float(
   const char* input,
   float* output,
   size_t total
@@ -14,10 +15,10 @@ __global__ void convert_u8_float(
   if (idx >= total) {
     return;
   }
-  output[idx] = CHAR_TO_FLOAT * input[idx];
+  output[idx] = CHAR_TO_FLOAT * (float) input[idx];
 }
 
-__global__ void convert_u8_float_packed4(
+__global__ static void convert_u8_float_packed4(
     const char* input,
     float* output,
     size_t total
@@ -36,6 +37,7 @@ __global__ void convert_u8_float_packed4(
 
 void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
                                   const Image &host_data) {
+  TINYGS_TIMER("DataLoaderBase::transfer_gpu");
   if (gpu_data.data == nullptr) {
     throw std::runtime_error("GPU memory is not allocated.");
   } else if (host_data.data == nullptr) {
@@ -82,10 +84,12 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
 
     // now we convert the raw data to float
     if (total_elements % 4 == 0){
-      convert_u8_float_packed4<<<(total_elements + 255) / 256, 256>>>( //
+      // convert_u8_float_packed4<<<(total_elements + 255) / 256, 256>>>( //
+      //   raw_data, (float *)gpu_data.data, total_elements);
+      convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
         raw_data, (float *)gpu_data.data, total_elements);
     } else {
-      convert_u8_float<<<(total_elements + 255) / 256, 256>>>( //
+      convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
         raw_data, (float *)gpu_data.data, total_elements);
     }
   }
@@ -97,5 +101,6 @@ void DataLoaderBase::transfer_gpu(const Image &gpu_data,
   CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
 }
 
+void DataLoaderBase::reset() {};
 
 } // namespace tinygs

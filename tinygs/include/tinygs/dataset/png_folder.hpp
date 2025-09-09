@@ -30,10 +30,10 @@ public:
 private:
   std::string m_folder_path;
   std::vector<std::string> m_image_paths;
-  SingleCameraIntrinsics m_camera_loader;
+  SingleCameraLoader m_camera_loader;
 
   ImageShape m_image_shape;
-  float* m_data;
+  uint8_t* m_data;
   size_t m_size;
 };
 

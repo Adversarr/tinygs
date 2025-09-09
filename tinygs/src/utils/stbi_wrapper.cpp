@@ -42,4 +42,22 @@ float* load_stbi(int* width, int* height, const char* filename) {
   }
   return data;
 }
+
+
+Image load_stbi_u8(const char* filename) {
+  int n_channels;
+  int width, height;
+  uint8_t* data = stbi_load(filename, &width, &height, &n_channels, 3);
+
+  if (!data) {
+    throw std::runtime_error{std::string{stbi_failure_reason()}};
+  }
+  Image img;
+  img.data = data;
+  img.data_type = ImageDataType::UInt8;
+  img.shape.width = width;
+  img.shape.height = height;
+  img.shape.channel = n_channels;
+  return img;
+}
 }  // namespace tinygs

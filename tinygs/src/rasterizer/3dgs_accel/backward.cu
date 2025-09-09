@@ -27,7 +27,7 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
 	glm::vec3 dir_orig = pos - campos;
 	glm::vec3 dir = dir_orig / glm::length(dir_orig);
 
-	glm::vec3* direct_color = ((glm::vec3*)dc) + idx;
+	// glm::vec3* direct_color = ((glm::vec3*)dc) + idx;
 	glm::vec3* sh = ((glm::vec3*)shs) + idx * max_coeffs;
 
 	// Use PyTorch rule for clamping: if clamping was applied,

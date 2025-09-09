@@ -34,9 +34,8 @@ std::vector<vec3> skybox(
   const PngFolderDataset& ds, size_t count
 ) {
   std::default_random_engine rng;
-  std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+  std::normal_distribution<float> dist(0.0f, 1.0f);
 
-  
   vec3 cam_pos_min = vec3(FLT_MAX);
   vec3 cam_pos_max = vec3(-FLT_MAX);
 
@@ -139,7 +138,7 @@ int main() {
   auto optimizer = std::make_unique<AdamW>(gs3d, grads);
 
   // Loss
-  GPUBuffer<float> loss_buffer = GPUBuffer<float>(shape.width * shape.height * 4);
+  GPUBuffer<float> loss_buffer(shape.width * shape.height * 4);
   GPUMemory<float> out_image_grad(width * height * 3);
   auto l1_loss = std::make_unique<L1Loss>();
   auto ssim_loss = std::make_unique<FusedSSIMLoss>();
@@ -197,10 +196,10 @@ int main() {
     l1_loss->evaluate(loss_ctx);
     loss_ctx.scale = 0.2f;
     ssim_loss->evaluate(loss_ctx);
-    
+
     rasterize_ctx.grad_output.image = loss_ctx.grad;
-    rasterize_ctx.grad_output.alpha = Image(  //
-      shape, ImageFormat::CHW, ImageDataType::Float32,                     //
+    rasterize_ctx.grad_output.alpha = Image(             //
+        shape, ImageFormat::CHW, ImageDataType::Float32, //
         loss_buffer.data() + shape.width * shape.height * 3);
     rasterizer.backward(rasterize_ctx);
 
@@ -221,6 +220,9 @@ int main() {
       std::vector<float> h_img(width * height * 3);
       out_image.copy_to_host(h_img); // CHW format
 
+      // cudaMemcpy(h_img.data(), data.output.image.data,
+      //   width * height * 3 * sizeof(float), cudaMemcpyDeviceToHost);
+
       std::vector<uint8_t> h_img_hwc(width * height * 3);
       for (int h = 0; h < height; h++) {
         for (int w = 0; w < width; w++) {
@@ -236,8 +238,8 @@ int main() {
       }
 
       cv::Mat img(height, width, CV_8UC3, h_img_hwc.data());
-      // cv::imwrite("render.png", img);
-      cv::imshow("render", img);
+      cv::imwrite("render.png", img);
+      // cv::imshow("render", img);
 
       if (char key = cv::waitKey(1); key == 27) {
         should_stop = true;
