@@ -16,21 +16,40 @@ struct AdamWParameters {
 };
 
 /**
- * @brief A baseline version for Gaussian Splatting
- *
+ * @brief AdamW optimizer implementation for Gaussian Splatting with adaptive moment estimation
+ * 
+ * This optimizer maintains first and second moment estimates for each parameter and applies
+ * bias correction. It supports gradient scaling separate from learning rate scaling.
  */
 class AdamW final : public OptimizerBase {
 public:
+  /**
+   * @brief Construct AdamW optimizer with specified parameters
+   * @param gaussians Shared pointer to GPU Gaussian parameters
+   * @param gaussians_grad Shared pointer to GPU Gaussian gradients
+   * @param params AdamW-specific parameters (beta1, beta2, epsilon, etc.)
+   */
   AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad,
         const AdamWParameters& params = {});
 
   ~AdamW() override = default;
 
+  /** @brief Reset all optimizer state (moments and step counts) to zero */
   void reset() override;
+  
+  /** @brief Perform one optimization step with gradient scaling */
   void step(float scale) override;
+  
+  /** @brief Remove optimizer state for flagged gaussians */
   void remove(char* kept_flag, int num_kept) override;
+  
+  /** @brief Duplicate optimizer state for new gaussians */
   void duplicate(int* indices, int* new_indices, int num_duplicate) override;
+  
+  /** @brief Reset optimizer state for specific gaussians */
   void reset(int* indices, int num_reset) override;
+  
+  /** @brief Reset only opacity-related optimizer state */
   void reset_opacity() override;
 
 private:

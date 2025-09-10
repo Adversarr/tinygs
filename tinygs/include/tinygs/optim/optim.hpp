@@ -17,8 +17,8 @@ struct GaussianOptimizationParams {
   float rotations_lr = 1.0e-3f;
 
   // L1 regularization
-  float opacities_l1 = 0.0f; //0.01f;
-  float scales_l1 = 0.0f;    //0.01f;
+  float opacities_l1 = 0.01f; //0.01f;
+  float scales_l1 = 0.01f;    //0.01f;
 };
 
 class OptimizerBase {
@@ -27,6 +27,15 @@ public:
 
   virtual ~OptimizerBase() = default;
 
+  void set_lr(float new_lr);
+
+  float get_lr() const;
+
+  /**
+   * @brief Perform one optimization step.
+   * 
+   * @param scale The gradient scale.
+   */
   virtual void step(float scale) = 0;
 
   virtual void reset(){}
@@ -64,6 +73,7 @@ protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   std::shared_ptr<GPUGaussian3d> m_gaussians_grad;
 
+  float m_global_lr = 1.0f;
   GaussianOptimizationParams m_params;
 };
 

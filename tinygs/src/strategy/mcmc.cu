@@ -78,9 +78,6 @@ __global__ static void relocation_kernel(
     }
     float coeff = (opacities[idx] / denom_sum);
     new_scales[idx] = coeff * scales[idx]; // TODO: This could be much larger than original. we should clamp
-    // printf("Coeff: %f, Scale: %f %f %f, Original: %f %f %f", coeff,
-    //     new_scales[idx].x, new_scales[idx].y, new_scales[idx].z,
-    //     scales[idx].x, scales[idx].y, scales[idx].z);
 }
 
 __global__ void add_noise_kernel(
@@ -103,9 +100,9 @@ __global__ void add_noise_kernel(
       raw_scales[idx_3d + 2]
     );
     mat3x3 S2 = mat3x3(
-      __expf(2.f * raw_scale[0]), 0.f, 0.f,
-      0.f, __expf(2.f * raw_scale[1]), 0.f,
-      0.f, 0.f, __expf(2.f * raw_scale[2])
+      activate_scale(2.f * raw_scale[0]), 0.f, 0.f,
+      0.f, activate_scale(2.f * raw_scale[1]), 0.f,
+      0.f, 0.f, activate_scale(2.f * raw_scale[2])
     );
 
     quat raw_quat = normalize(quat( //

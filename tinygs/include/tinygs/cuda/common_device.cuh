@@ -172,4 +172,37 @@ __device__ __forceinline__ float saturate_deriv(float x) {
   return (x > 0.0f && x < 1.0f) ? 1.0f : 0.0f;
 }
 
+__device__ __forceinline__ float activate_scale(float x) {
+  return ::expf(x);
+}
+
+__device__ __forceinline__ vec3 activate_scale(const vec3& x) {
+  return vec3(activate_scale(x.x), activate_scale(x.y), activate_scale(x.z));
+}
+
+__device__ __forceinline__ float deactivate_scale(float x) {
+  return ::logf(x);
+}
+
+__device__ __forceinline__ vec3 deactivate_scale(const vec3& x) {
+  return vec3(deactivate_scale(x.x), deactivate_scale(x.y), deactivate_scale(x.z));
+}
+
+__device__ __forceinline__ float activate_scale_deriv(float x) {
+  return ::expf(x);
+}
+
+__device__ __forceinline__ float activate_opacity(float x) {
+  return logistic(x);
+}
+
+__device__ __forceinline__ float deactivate_opacity(float x) {
+  return logit(x);
+}
+
+__device__ __forceinline__ float activate_opacity_deriv(float x) {
+  const float actx = activate_opacity(x);
+  return actx * (1 - actx);
+}
+
 } // namespace tinygs

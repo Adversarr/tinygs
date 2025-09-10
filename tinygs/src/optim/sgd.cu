@@ -25,7 +25,8 @@ __global__ void launch_gaussian_sgd_step_SoA(
   // other
   GaussianOptimizationParams general_p,
   uint32_t num_gaussians,
-  const float global_step_size
+  const float gradient_scale,
+  const float global_lr
 ) {
   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_gaussians) return;
@@ -43,44 +44,42 @@ __global__ void launch_gaussian_sgd_step_SoA(
   // actually perform the optimization for this gaussian
   { // means
     vec3& val = means[idx];
-    const vec3& grad = means_grad[idx];
+    const vec3 grad = means_grad[idx] * gradient_scale;
     const vec3 grad_clipped = general_p.max_grad_1 != 0.0f ? 
       copysign(min(abs(grad), vec3(general_p.max_grad_1)), grad) : grad;
-    val -= general_p.means_lr * global_step_size * grad_clipped;
+    val -= general_p.means_lr * global_lr * grad_clipped;
   }
 
   { // opacities
     float& val = opacities[idx];
-    float actual = logistic(val); // 0 < actual < 1 => L1(actual) = actual => dL1/dval = actual * (1 - actual)
-    float grad = opacities_grad[idx] + (general_p.opacities_l1 * actual * (1 - actual)) * inv_n;
+    float grad = opacities_grad[idx] * gradient_scale + (general_p.opacities_l1 * activate_opacity_deriv(val)) * inv_n;
     const float grad_clipped = general_p.max_grad_1 != 0.0f ? 
       copysign(min(abs(grad), general_p.max_grad_1), grad) : grad;
-    val -= general_p.opacities_lr * global_step_size * grad_clipped;
+    val -= general_p.opacities_lr * global_lr * grad_clipped;
   }
 
   { // rotations
     vec4& val = rotations[idx];
-    const vec4& grad = rotations_grad[idx];
+    const vec4 grad = rotations_grad[idx] * gradient_scale;
     const vec4 grad_clipped = general_p.max_grad_1 != 0.0f ? 
       copysign(min(abs(grad), vec4(general_p.max_grad_1)), grad) : grad;
-    val -= general_p.rotations_lr * global_step_size * grad_clipped;
+    val -= general_p.rotations_lr * global_lr * grad_clipped;
   }
 
   { // scales
     vec3& val = scales[idx];
-    // actual > 0 => L1(actual) = actual => dL1/dval = actual
-    vec3 grad = scales_grad[idx] + (general_p.scales_l1 * exp(val)) * inv_n;
+    vec3 grad = scales_grad[idx] * gradient_scale + (general_p.scales_l1 * vec3(activate_scale_deriv(val.x), activate_scale_deriv(val.y), activate_scale_deriv(val.z))) * inv_n;
     const vec3 grad_clipped = general_p.max_grad_1 != 0.0f ? 
       copysign(min(abs(grad), vec3(general_p.max_grad_1)), grad) : grad;
-    val -= general_p.scales_lr * global_step_size * grad_clipped;
+    val -= general_p.scales_lr * global_lr * grad_clipped;
   }
 
   { // spherical harmonics - 0th coefficient
     vec3& val = sh_coefficient_0[idx];
-    const vec3& grad = sh_coefficient_0_grad[idx];
+    const vec3 grad = sh_coefficient_0_grad[idx] * gradient_scale;
     const vec3 grad_clipped = general_p.max_grad_1 != 0.0f ? 
       copysign(min(abs(grad), vec3(general_p.max_grad_1)), grad) : grad;
-    val -= general_p.shs_lr * global_step_size * grad_clipped;
+    val -= general_p.shs_lr * global_lr * grad_clipped;
   }
 
   { // spherical harmonics - rest coefficients
@@ -89,16 +88,16 @@ __global__ void launch_gaussian_sgd_step_SoA(
     int end = start + (kMaxSphericalHarmonicsCoefficients - 1);
     for (int i = start; i < end; i++) {
       vec3& val = sh_coefficients_rest[i];
-      const vec3& grad = sh_coefficients_rest_grad[i];
+      const vec3 grad = sh_coefficients_rest_grad[i] * gradient_scale;
       const vec3 grad_clipped = general_p.max_grad_1 != 0.0f ? 
         copysign(min(abs(grad), vec3(general_p.max_grad_1)), grad) : grad;
-      val -= general_p.shs_lr * 0.05f * global_step_size * grad_clipped;
+      val -= general_p.shs_lr * 0.05f * global_lr * grad_clipped;
     }
   }
 }
 
 void SGD::step(float scale) {
-  const float global_step_size = scale;
+  const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
   const int grid = (m_gaussians->size() + 255) / 256;
 
   launch_gaussian_sgd_step_SoA<<<grid, 256>>>(
@@ -116,7 +115,8 @@ void SGD::step(float scale) {
     thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
     m_params,
     m_gaussians->size(),
-    global_step_size
+    gradient_scale,
+    m_global_lr
   );
   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 }
@@ -146,6 +146,10 @@ void SGD::reset(int* indices, int num_reset) {
   // SGD doesn't have internal state to reset for specific gaussians
   (void)indices;
   (void)num_reset;
+}
+
+void SGD::reset_opacity() {
+  // SGD doesn't have internal state to reset
 }
 
 }  // namespace tinygs

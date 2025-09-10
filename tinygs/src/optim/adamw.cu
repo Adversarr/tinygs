@@ -69,7 +69,8 @@ __global__ void launch_gaussian_adam_step_SoA(
   AdamWParameters adam_p,
   GaussianOptimizationParams general_p,
   uint32_t num_gaussians,
-  const float global_step_size
+  const float gradient_scale,
+  const float global_lr
 ) {
   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_gaussians) return;
@@ -101,12 +102,12 @@ __global__ void launch_gaussian_adam_step_SoA(
 
   { // means
     vec3& val = means[idx];
-    const vec3& grad = means_grad[idx];
+    const vec3 grad = means_grad[idx] * gradient_scale;
     vec3& first_moment = means_first_second[idx * 2];
     vec3& second_moment = means_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.means_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.means_lr * global_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
       lower_lr_bound,
       upper_lr_bound,
@@ -116,13 +117,13 @@ __global__ void launch_gaussian_adam_step_SoA(
 
   { // opacities
     float& val = opacities[idx];
-    float actual = logistic(val); // 0 < actual < 1 => L1(actual) = actual => dL1/dval = actual * (1 - actual)
-    float grad = opacities_grad[idx] + (general_p.opacities_l1 * actual * (1 - actual)) * inv_n;
+    float actual = activate_opacity(val);
+    float grad = opacities_grad[idx] * gradient_scale + (general_p.opacities_l1 * activate_opacity_deriv(val)) * inv_n;
     float& first_moment = opacities_first_second[idx * 2];
     float& second_moment = opacities_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.opacities_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.opacities_lr * global_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
       lower_lr_bound,
       upper_lr_bound,
@@ -132,12 +133,12 @@ __global__ void launch_gaussian_adam_step_SoA(
 
   { // rotations
     vec4& val = rotations[idx];
-    const vec4& grad = rotations_grad[idx];
+    const vec4 grad = rotations_grad[idx] * gradient_scale;
     vec4& first_moment = rotations_first_second[idx * 2];
     vec4& second_moment = rotations_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.rotations_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.rotations_lr * global_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
       lower_lr_bound,
       upper_lr_bound,
@@ -147,13 +148,12 @@ __global__ void launch_gaussian_adam_step_SoA(
 
   { // scales
     vec3& val = scales[idx];
-    // actual > 0 => L1(actual) = actual => dL1/dval = actual
-    vec3 grad = scales_grad[idx] + (general_p.scales_l1 * inv_n) * exp(val);
+    vec3 grad = scales_grad[idx] * gradient_scale + (general_p.scales_l1 * vec3(activate_scale_deriv(val.x), activate_scale_deriv(val.y), activate_scale_deriv(val.z))) * inv_n;
     vec3& first_moment = scales_first_second[idx * 2];
     vec3& second_moment = scales_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.scales_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.scales_lr * global_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
       lower_lr_bound,
       upper_lr_bound,
@@ -163,12 +163,12 @@ __global__ void launch_gaussian_adam_step_SoA(
 
   { // spherical harmonics - 0th coefficient
     vec3& val = sh_coefficient_0[idx];
-    const vec3& grad = sh_coefficient_0_grad[idx];
+    const vec3 grad = sh_coefficient_0_grad[idx] * gradient_scale;
     vec3& first_moment = sh_coefficient_0_first_second[idx * 2];
     vec3& second_moment = sh_coefficient_0_first_second[idx * 2 + 1];
     adam_step_func(
       val, grad, first_moment, second_moment,
-      general_p.shs_lr * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+      general_p.shs_lr * global_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
       general_p.max_grad_1,
       lower_lr_bound,
       upper_lr_bound,
@@ -182,12 +182,12 @@ __global__ void launch_gaussian_adam_step_SoA(
     int end = start + (kMaxSphericalHarmonicsCoefficients - 1);
     for (int i = start; i < end; i++) {
       vec3& val = sh_coefficients_rest[i];
-      const vec3& grad = sh_coefficients_rest_grad[i];
+      const vec3 grad = sh_coefficients_rest_grad[i] * gradient_scale;
       vec3& first_moment = sh_coefficients_rest_first_second[i * 2];
       vec3& second_moment = sh_coefficients_rest_first_second[i * 2 + 1];
       adam_step_func(
         val, grad, first_moment, second_moment,
-        general_p.shs_lr * 0.05 * global_step_size, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
+        general_p.shs_lr * 0.05f * global_lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon,
         general_p.max_grad_1,
         lower_lr_bound,
         upper_lr_bound,
@@ -198,7 +198,7 @@ __global__ void launch_gaussian_adam_step_SoA(
 }
 
 void AdamW::step(float scale) {
-  const float global_step_size = scale;
+  const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
   const int grid = (m_gaussians->size() + 255) / 256;
 
   launch_gaussian_adam_step_SoA<<<grid, 256>>>(
@@ -224,7 +224,8 @@ void AdamW::step(float scale) {
     m_adam_params,
     m_params,
     m_gaussians->size(),
-    global_step_size
+    gradient_scale,
+    m_global_lr
   );
 }
 

@@ -74,33 +74,33 @@ int main() {
 
   
   // Setup dataset and dataloader
-  // std::shared_ptr<PngFolderDataset> dataset = std::make_shared<PngFolderDataset>(
-  //     data_path + "inputs/images_480x640_1",
-  //     camera_extrinsics_path,
-  //     camera_intrinsics_path);
-  std::shared_ptr<VideoDataset> dataset = std::make_shared<VideoDataset>(
-    data_path + "1747834320424_flip.mp4",
-    camera_extrinsics_path,
-    camera_intrinsics_path);
+  std::shared_ptr<PngFolderDataset> dataset = std::make_shared<PngFolderDataset>(
+      data_path + "inputs/images_480x640_1",
+      camera_extrinsics_path,
+      camera_intrinsics_path);
+  // std::shared_ptr<VideoDataset> dataset = std::make_shared<VideoDataset>(
+  //   data_path + "1747834320424_flip.mp4",
+  //   camera_extrinsics_path,
+  //   camera_intrinsics_path);
   auto dataloader = std::make_shared<SimpleDataLoader>(dataset);
 
 
   ImageShape shape = dataset->image_shape();
   int width = shape.width, height = shape.height;
-  dataset->get_camera_loader().resize_sensor(width, height);
+  // dataset->get_camera_loader().resize_sensor(width, height);
 
   // Load and initialize point cloud
   auto pc = load_from_colmap_file(data_path + "inputs/slam/points3D.txt");
   log_info("#points: {}", pc.points.size());
 
   // Extend with skybox points
-  // {
-  //   auto p_sky = skybox(*dataset, 10000);
-  //   for (auto& p : p_sky) {
-  //     pc.points.push_back(p);
-  //     pc.colors.push_back(vec3(0.7f));
-  //   }
-  // }
+  {
+    auto p_sky = skybox(*dataset, 10000);
+    for (auto& p : p_sky) {
+      pc.points.push_back(p);
+      pc.colors.push_back(vec3(0.2f));
+    }
+  }
 
   // Initialize gaussians
   KnnInitialization knn;
@@ -127,12 +127,13 @@ int main() {
   trainer.set_gaussians(gs3d, grads);
   trainer.set_dataloader(dataloader);
   
-  auto rasterizer = std::make_shared<FastGSRasterizer>();
+  auto rasterizer = std::make_shared<DefaultRasterizer>();
   trainer.set_rasterizer(rasterizer);
   
   auto optimizer = std::make_shared<AdamW>(gs3d, grads);
   trainer.set_optimizer(optimizer);
   
+  // auto strategy = std::make_shared<MCMCStrategy>(gs3d, grads, optimizer);
   auto strategy = std::make_shared<DefaultStrategy>(gs3d, grads, optimizer);
   trainer.set_strategy(strategy);
   
@@ -175,7 +176,7 @@ int main() {
         for (int y = 0; y < height; ++y) {
           for (int x = 0; x < width; ++x) {
             // Convert from CHW (RGB) to HWC (BGR)
-            int r_idx = y * width + x;                    // R channel offset
+            int r_idx = y * width + x;                   // R channel offset
             int g_idx = (height * width) + r_idx;        // G channel offset
             int b_idx = (2 * height * width) + r_idx;    // B channel offset
             
@@ -186,7 +187,7 @@ int main() {
         }
         cv::imshow("render", img);
       }
-      
+
       if (char key = cv::waitKey(1); key == 27) {
         trainer.stop_training();
         std::cout << "ESC pressed - stopping training..." << std::endl;

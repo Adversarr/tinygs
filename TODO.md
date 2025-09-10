@@ -13,6 +13,8 @@
 **Dataset**:
 1. Load the dataset from video.
 
+I've change to use "activate_scale" or "activate_opacity" to customize gaussian kernels.
+
 ## Trainer
 
 1. Implement the training loop class.

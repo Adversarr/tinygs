@@ -18,22 +18,15 @@ DefaultStrategy::DefaultStrategy(
 
 DefaultStrategy::~DefaultStrategy() = default;
 
-void reset_opacity(
-  const std::shared_ptr<GPUGaussian3d>& gaussians,
-  float min_opacity_threshold
-) {
+void reset_opacity(const std::shared_ptr<GPUGaussian3d>& gaussians, float min_opacity_threshold) {
   TINYGS_TIMER("DefaultStrategy::reset_opacity");
-  // def reset_opacity(self):
-  //     opacities_new = self.inverse_opacity_activation(torch.min(self.get_opacity, torch.ones_like(self.get_opacity)*0.01))
-  //     optimizable_tensors = self.replace_tensor_to_optimizer(opacities_new, "opacity")
-  //     self._opacity = optimizable_tensors["opacity"]
 
   thrust::for_each(
     thrust::device,
     gaussians->opacities().begin(),
     gaussians->opacities().end(),
     [min_opacity_threshold] __device__ (float& opacity) {
-      opacity = logit(::fminf(logistic(opacity), min_opacity_threshold));
+      opacity = deactivate_opacity(fminf(activate_opacity(opacity), min_opacity_threshold));
     }
   );
 }
@@ -98,7 +91,7 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
         const float grad = d_densification_info[i + num_gaussians] /
                            fmaxf(d_densification_info[i], 1.0f);
         if (grad > grow_grad && d_densification_info[i] > 0) {
-          const float max_scale = expf(max(d_scale[i]));
+          const float max_scale = max(activate_scale(d_scale[i]));
           if (max_scale > grow_scale) { // is_large => split
             d_grow_flags[i] = kSplit;
           } else {
@@ -205,8 +198,8 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
           rotations[src_idx].x, rotations[src_idx].y, //
           rotations[src_idx].z, rotations[src_idx].w  //
         }));
-        const vec3 actual_scale = exp(scales3d[src_idx]);
-        const float new_opacity = 1.0f - sqrtf(1.0f - logistic(opacities[src_idx]));
+        const vec3 actual_scale = activate_scale(scales3d[src_idx]);
+        const float new_opacity = 1.0f - sqrtf(1.0f - activate_opacity(opacities[src_idx]));
         const vec3 rand1 = vec3(device_scales[i * 6 + 0], device_scales[i * 6 + 1], device_scales[i * 6 + 2]);
         const vec3 rand2 = vec3(device_scales[i * 6 + 3], device_scales[i * 6 + 4], device_scales[i * 6 + 5]);
         const vec3 off1 = rot * (actual_scale * rand1);
@@ -214,13 +207,13 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
 
         /// 1. target gs
         means3d[target_idx] = means3d[src_idx] + off1;
-        scales3d[target_idx] = log(actual_scale / 1.6f);
-        opacities[target_idx] = logit(new_opacity);
+        scales3d[target_idx] = deactivate_scale(actual_scale / 1.6f);
+        opacities[target_idx] = deactivate_opacity(new_opacity);
 
         /// 2. src gs
         means3d[src_idx] = means3d[src_idx] + off2;
-        scales3d[src_idx] = log(actual_scale / 1.6f);
-        opacities[src_idx] = logit(new_opacity);
+        scales3d[src_idx] = deactivate_scale(actual_scale / 1.6f);
+        opacities[src_idx] = deactivate_opacity(new_opacity);
       }
     }
   );
@@ -256,8 +249,8 @@ void DefaultStrategy::prune(const RasterizeContext& ctx, const thrust::device_ve
        pruning_scale_threshold = m_params.pruning_scale_threshold,           //
        prune_large = this_step() > m_params.reset_every,                     //
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) { //
-        bool not_large_ws = max(exp(scale[i])) < pruning_scale_threshold * scene_scale;
-        bool not_transparent = logistic(d_opacity[i]) > min_opacity;
+        bool not_large_ws = max(activate_scale(scale[i])) < pruning_scale_threshold * scene_scale;
+        bool not_transparent = activate_opacity(d_opacity[i]) > min_opacity;
 
         if (not_transparent && (not_large_ws || !prune_large)) {
           d_is_alive[i] = 1;
