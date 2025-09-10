@@ -86,8 +86,6 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
     if (total_elements % 4 == 0){
       // convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>( //
       //   raw_data, (float *)gpu_data.data, total_elements / 4);
-            // convert_u8_float_packed4<<<(total_elements + 255) / 256, 256>>>( //
-      //   raw_data, (float *)gpu_data.data, total_elements);
       convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
         (unsigned char*)raw_data, (float *)gpu_data.data, total_elements);
     } else {
@@ -103,6 +101,15 @@ void DataLoaderBase::transfer_gpu(const Image &gpu_data,
   CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
 }
 
-void DataLoaderBase::reset() {};
+std::shared_ptr<DatasetBase> DataLoaderBase::get_dataset() const {
+  if (! m_dataset) {
+    throw std::runtime_error("Dataset not set.");
+  }
+  return m_dataset;
+}
+
+void DataLoaderBase::reset() {
+  // do nothing
+}
 
 } // namespace tinygs

@@ -14,8 +14,8 @@ enum class ImageDataType {
 };
 
 struct ImageShape {
-  uint16_t width, height;
-  uint16_t channel; // 3, 4 is supported.
+  uint32_t width, height;
+  uint32_t channel; // 3, 4 is supported.
 
   TINYGS_HOST_DEVICE bool operator==(const ImageShape& other) const noexcept {
     return width == other.width && height == other.height && channel == other.channel;

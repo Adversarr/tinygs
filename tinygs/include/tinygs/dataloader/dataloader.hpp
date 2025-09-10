@@ -74,6 +74,9 @@ public:
 
   void transfer_gpu(const Image &gpu_data, const Image &host_data);
 
+  /// Get the underlying dataset. It ensures the dataset is not null.
+  std::shared_ptr<DatasetBase> get_dataset() const;
+
 protected:
   std::shared_ptr<DatasetBase> m_dataset;
 
