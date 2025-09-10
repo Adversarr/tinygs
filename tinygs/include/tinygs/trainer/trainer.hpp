@@ -55,8 +55,8 @@ struct TrainingState {
  * @brief Callback function types for training events
  */
 using PreStepCallback = std::function<void(const TrainingState&)>;
-using PostStepCallback = std::function<void(const TrainingState&, float loss, const std::vector<float>& metrics)>;
-using CheckpointCallback = std::function<void(const TrainingState&, std::shared_ptr<GPUGaussian3d>)>;
+using PostStepCallback = std::function<void(const TrainingState&)>;
+using CheckpointCallback = std::function<void(const TrainingState&)>;
 
 /**
  * @brief Main trainer class for 3D Gaussian Splatting
@@ -211,6 +211,12 @@ public:
    */
   const LossContext& get_loss_context() const { return m_loss_ctx; }
 
+  /**
+   * @brief Evaluate all metrics for logging
+   * @return Vector of metric values
+   */
+  std::vector<float> evaluate_metrics();
+
 private:
   // Core training components
   std::shared_ptr<GPUGaussian3d> m_gaussians;
@@ -270,15 +276,8 @@ private:
   /**
    * @brief Evaluate all loss functions and accumulate gradients
    * @param data Current training data batch
-   * @return Total loss value
    */
-  float evaluate_losses(const GPUBatchInputOutput& data);
-
-  /**
-   * @brief Evaluate all metrics for logging
-   * @return Vector of metric values
-   */
-  std::vector<float> evaluate_metrics();
+  void evaluate_losses(const GPUBatchInputOutput& data);
 
   /**
    * @brief Check if early stopping criteria are met

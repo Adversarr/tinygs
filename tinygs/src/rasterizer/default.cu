@@ -162,8 +162,8 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
 
   m_impl->invdepth.resize(ctx.fwd_input.width * ctx.fwd_input.height);
   m_impl->radii.resize(m_gaussians->size());
-  thrust::fill(m_impl->radii.begin(), m_impl->radii.end(), 0);
-  thrust::fill(m_impl->invdepth.begin(), m_impl->invdepth.end(), 0);
+  cudaMemset(thrust::raw_pointer_cast(m_impl->radii.data()), 0, m_impl->radii.size() * sizeof(int));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->invdepth.data()), 0, m_impl->invdepth.size() * sizeof(float));
 
   // For spherical harmonics: 3 colors (RGB) per Gaussian for DC component
   const int D = 1 + m_gaussians->get_sh_degree();
@@ -202,7 +202,7 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
   m_impl->num_buckets = num_buckets;
   m_impl->num_rendered = num_rendered;
 
-  // log_debug("Rendered Gaussians: {} / {}, buckets: {}", num_rendered, num_gaussians, num_buckets);
+  cudaDeviceSynchronize(); //! In actual implementation, this should not be called.
 }
 
 DefaultRasterizer::~DefaultRasterizer() {}

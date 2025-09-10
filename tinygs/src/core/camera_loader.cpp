@@ -1,6 +1,8 @@
 #include "tinygs/core/camera_loader.hpp"
 
 #include <stdexcept>
+#include <algorithm>
+#include <cmath>
 
 #include "tinygs/utils/file.hpp"
 
@@ -34,6 +36,38 @@ void SingleCameraLoader::load_camera_intrinsics(const std::string& intrinsics_fi
 
   m_camera_intrinsics = CameraIntrinsics::parse(lines[0]);
   log_info("Loaded camera intrinsics from file: {}", intrinsics_file_path);
+}
+
+void SingleCameraLoader::resize_sensor(uint32_t width, uint32_t height) {
+  if (width == 0 || height == 0) {
+    throw std::runtime_error("resize_sensor: width and height must be > 0");
+  }
+  auto &intr = m_camera_intrinsics;
+  if (intr.width == 0 || intr.height == 0) {
+    throw std::runtime_error("resize_sensor: intrinsics not initialized");
+  }
+  if (intr.width == static_cast<int>(width) && intr.height == static_cast<int>(height)) {
+    return; // no change
+  }
+
+  float sx = static_cast<float>(width) / static_cast<float>(intr.width);
+  float sy = static_cast<float>(height) / static_cast<float>(intr.height);
+
+  float rel_diff = std::fabs(sx - sy) / std::max(sx, sy);
+  if (rel_diff > 1e-4f) {
+    throw std::runtime_error("resize_sensor: aspect ratio change detected (scales differ)");
+  }
+
+  // Use sx (≈ sy) as scale
+  intr.fx *= sx;
+  intr.fy *= sy;
+  intr.cx *= sx;
+  intr.cy *= sy;
+
+  intr.width  = static_cast<int>(width);
+  intr.height = static_cast<int>(height);
+
+  log_info("Resized camera sensor to {}x{} (scale {:.6f})", width, height, sx);
 }
 
 }  // namespace tinygs

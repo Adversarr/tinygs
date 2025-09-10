@@ -26,6 +26,8 @@ public:
   size_t size() const noexcept override;
   ImageShape image_shape() const override;
 
+  SingleCameraLoader& get_camera_loader() noexcept { return m_camera_loader; }
+
 private:
   std::string m_video_file_path;
   SingleCameraLoader m_camera_loader;

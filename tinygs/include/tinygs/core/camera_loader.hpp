@@ -68,6 +68,13 @@ public:
    */
   const CameraIntrinsics& get_camera_intrinsics() const { return m_camera_intrinsics; }
 
+  /**
+   * @brief Resize the camera sensor to new image dimensions. The ratio should remain the same.
+   * @param width new width
+   * @param height new height
+   */
+  void resize_sensor(uint32_t width, uint32_t height);
+
 private:
   std::vector<CameraExtrinsics> m_camera_extrinsics;
   CameraIntrinsics m_camera_intrinsics;

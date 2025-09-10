@@ -100,8 +100,7 @@ void Trainer::step() {
   m_rasterizer->forward(m_rasterize_ctx);
   
   // Evaluate losses and accumulate gradients
-  float total_loss = evaluate_losses(data);
-  m_state.current_loss = total_loss;
+  evaluate_losses(data);
   
   // Setup gradient output for backward pass
   m_rasterize_ctx.grad_output.image = m_loss_ctx.grad;
@@ -132,17 +131,14 @@ void Trainer::step() {
   // Update spherical harmonics degree
   update_sh_degree();
   
-  // Evaluate metrics
-  std::vector<float> metric_values = evaluate_metrics();
-  
   // Post-step callback (for logging, visualization, etc.)
   if (m_post_step_callback) {
-    m_post_step_callback(m_state, total_loss, metric_values);
+    m_post_step_callback(m_state);
   }
   
   // Checkpoint callback
   if (m_checkpoint_callback && m_state.current_step % m_config.checkpoint_interval == 0) {
-    m_checkpoint_callback(m_state, m_gaussians);
+    m_checkpoint_callback(m_state);
   }
   
   m_state.current_step++;
@@ -152,7 +148,7 @@ float Trainer::accumulate_loss() {
   if (!m_loss_buffer) {
     return 0.0f;
   }
-  
+
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
   return gpu_sum(m_loss_buffer->data(), shape.width * shape.height * 3);
 }
@@ -242,26 +238,13 @@ void Trainer::update_sh_degree() {
   }
 }
 
-float Trainer::evaluate_losses(const GPUBatchInputOutput& data) {
+void Trainer::evaluate_losses(const GPUBatchInputOutput& data) {
   m_loss_ctx.target = data.output.image;
   m_loss_ctx.pred = m_rasterize_ctx.fwd_output.image;
-  
-  float total_loss = 0.0f;
-  
   for (const auto& loss_component : m_losses) {
     m_loss_ctx.scale = loss_component.weight;
     loss_component.loss->evaluate(m_loss_ctx);
-    
-    // Accumulate weighted loss
-    ImageShape shape = m_loss_ctx.loss.shape;
-    float component_loss = gpu_sum(
-      static_cast<float*>(m_loss_ctx.loss.data), 
-      shape.width * shape.height * shape.channel
-    );
-    total_loss += component_loss * loss_component.weight;
   }
-  
-  return total_loss;
 }
 
 std::vector<float> Trainer::evaluate_metrics() {

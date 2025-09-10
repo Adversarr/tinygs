@@ -87,19 +87,20 @@ int main() {
 
   ImageShape shape = dataset->image_shape();
   int width = shape.width, height = shape.height;
+  dataset->get_camera_loader().resize_sensor(width, height);
 
   // Load and initialize point cloud
   auto pc = load_from_colmap_file(data_path + "inputs/slam/points3D.txt");
   log_info("#points: {}", pc.points.size());
 
   // Extend with skybox points
-  {
-    auto p_sky = skybox(*dataset, 10000);
-    for (auto& p : p_sky) {
-      pc.points.push_back(p);
-      pc.colors.push_back(vec3(0.7f));
-    }
-  }
+  // {
+  //   auto p_sky = skybox(*dataset, 10000);
+  //   for (auto& p : p_sky) {
+  //     pc.points.push_back(p);
+  //     pc.colors.push_back(vec3(0.7f));
+  //   }
+  // }
 
   // Initialize gaussians
   KnnInitialization knn;
@@ -126,7 +127,7 @@ int main() {
   trainer.set_gaussians(gs3d, grads);
   trainer.set_dataloader(dataloader);
   
-  auto rasterizer = std::make_shared<DefaultRasterizer>();
+  auto rasterizer = std::make_shared<FastGSRasterizer>();
   trainer.set_rasterizer(rasterizer);
   
   auto optimizer = std::make_shared<AdamW>(gs3d, grads);
@@ -147,16 +148,19 @@ int main() {
   
   // Setup visualization callback
   GPUMemory<float> out_image(width * height * 3);
-  auto visualization_callback = [&](const TrainingState& state, float loss, const std::vector<float>& metrics) {
+  auto visualization_callback = [&](const TrainingState& state) {
     if (state.current_step % 100 == 0) {
       auto now = std::chrono::steady_clock::now();
       auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - state.last_log_time);
-      
+      auto loss = trainer.accumulate_loss();
+      auto psnr = trainer.evaluate_metrics()[0];
+
       log_info(
-          "step {} loss: {:.6f} time: {}ms/100step",
+          "step {} loss: {:.3e} psnr: {:.3f} time: {}ms/100step",
           state.current_step,
           loss,
-          duration.count());
+          psnr,
+          duration.count() / (state.current_step / 100.0));
       
       // Visualize RGB - copy rendered image from trainer's internal buffers
       const auto& rasterize_ctx = trainer.get_rasterize_context();
