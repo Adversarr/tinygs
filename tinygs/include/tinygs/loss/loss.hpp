@@ -46,4 +46,20 @@ public:
   virtual float evaluate(Image pred, Image target) = 0;
 };
 
+/**
+ * @brief Create a loss object
+ *
+ * @param loss_type The type of loss to create ("l1", "fused_ssim", etc.)
+ * @return std::unique_ptr<LossBase> The created loss
+ */
+std::unique_ptr<LossBase> create_loss(const std::string& loss_type);
+
+/**
+ * @brief Create a metric object
+ *
+ * @param metric_type The type of metric to create ("psnr", "ssim", etc.)
+ * @return std::unique_ptr<MetricBase> The created metric
+ */
+std::unique_ptr<MetricBase> create_metric(const std::string& metric_type);
+
 } // namespace tinygs

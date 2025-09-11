@@ -20,4 +20,12 @@ protected:
   Gaussian3d m_gaussians;
 };
 
+/**
+ * @brief Create an initialization object
+ *
+ * @param initialization_type The type of initialization to create ("knn", "random", etc.)
+ * @return std::unique_ptr<InitializationBase> The created initialization
+ */
+std::unique_ptr<InitializationBase> create_initialization(const std::string& initialization_type);
+
 } // namespace tinygs

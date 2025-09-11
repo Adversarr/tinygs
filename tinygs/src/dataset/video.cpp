@@ -13,20 +13,29 @@
 
 namespace tinygs {
 
-
+VideoDataset::VideoDataset() 
+    : m_data(nullptr), m_size(0) {
+}
 
 VideoDataset::VideoDataset(const std::string &video_file_path,
                            const std::string &extrinsics_file_path,
                            const std::string &intrinsics_file_path)
-    : m_video_file_path(video_file_path),
-      m_camera_loader(extrinsics_file_path, intrinsics_file_path) {
-  TINYGS_TIMER("VideoDataset::VideoDataset");
+    : m_video_file_path(video_file_path), m_extrinsics_file_path(extrinsics_file_path),
+      m_intrinsics_file_path(intrinsics_file_path), m_data(nullptr), m_size(0) {
+  VideoDataset::load();
+}
+
+void VideoDataset::load() {
+  TINYGS_TIMER("VideoDataset::load");
   auto start = std::chrono::steady_clock::now();
   
+  // Initialize camera loader with stored paths
+  m_camera_loader = SingleCameraLoader(m_extrinsics_file_path, m_intrinsics_file_path);
+  
   // Open video file
-  cv::VideoCapture cap(video_file_path);
+  cv::VideoCapture cap(m_video_file_path);
   if (!cap.isOpened()) {
-    throw std::runtime_error("Failed to open video file: " + video_file_path);
+    throw std::runtime_error("Failed to open video file: " + m_video_file_path);
   }
 
   // Get video properties
@@ -41,7 +50,7 @@ VideoDataset::VideoDataset(const std::string &video_file_path,
   
   m_size = std::min(static_cast<size_t>(total_frames), m_camera_loader.get_camera_extrinsics().size());
   if (m_size == 0) {
-    throw std::runtime_error("No frames found in video: " + video_file_path);
+    throw std::runtime_error("No frames found in video: " + m_video_file_path);
   }
 
   if (m_size != m_camera_loader.get_camera_extrinsics().size()) {
@@ -121,6 +130,9 @@ VideoDataset::VideoDataset(const std::string &video_file_path,
 }
 
 ImageShape VideoDataset::image_shape() const {
+  if (!m_data) {
+    throw std::runtime_error("Dataset not loaded. Call load() first.");
+  }
   return m_image_shape;
 }
 
@@ -128,7 +140,15 @@ size_t VideoDataset::size() const noexcept {
   return m_size;
 }
 
+SingleCameraLoader &VideoDataset::get_camera_loader() noexcept {
+  return m_camera_loader;
+}
+
 Data VideoDataset::operator[](size_t index) const {
+  if (!m_data) {
+    throw std::runtime_error("Dataset not loaded. Call load() first.");
+  }
+  
   if (index >= m_size) {
     throw std::out_of_range("Index " + std::to_string(index) + " out of range for dataset of size "
                             + std::to_string(m_size));
@@ -145,6 +165,8 @@ Data VideoDataset::operator[](size_t index) const {
 
   // Set camera matrices from camera loader
   data.w2c = m_camera_loader.get_camera_extrinsics()[index].get_w2c();
+  data.frame_uid = m_camera_loader.get_camera_extrinsics()[index].frame_uid;
+  data.cam_uid = 0; //! assuming single camera
   data.K = m_camera_loader.get_camera_intrinsics().to_mat3();
   return data;
 }
@@ -156,13 +178,16 @@ VideoDataset::~VideoDataset() {
   }
 }
 
-VideoDataset::VideoDataset(VideoDataset&& other) noexcept {
-  m_video_file_path = std::move(other.m_video_file_path);
-  m_camera_loader = std::move(other.m_camera_loader);
-  m_image_shape = other.m_image_shape;
-  m_data = other.m_data;
-  m_size = other.m_size;
+VideoDataset::VideoDataset(VideoDataset&& other) noexcept 
+    : m_video_file_path(std::move(other.m_video_file_path)),
+      m_extrinsics_file_path(std::move(other.m_extrinsics_file_path)),
+      m_intrinsics_file_path(std::move(other.m_intrinsics_file_path)),
+      m_camera_loader(std::move(other.m_camera_loader)),
+      m_image_shape(other.m_image_shape),
+      m_data(other.m_data),
+      m_size(other.m_size) {
   other.m_data = nullptr;
+  other.m_size = 0;
 }
 
 VideoDataset& VideoDataset::operator=(VideoDataset&& other) noexcept {
@@ -172,13 +197,18 @@ VideoDataset& VideoDataset::operator=(VideoDataset&& other) noexcept {
       CUDA_CHECK_PRINT(cudaFreeHost(m_data));
     }
 
-    // Move from other
+    // Move data from other
     m_video_file_path = std::move(other.m_video_file_path);
+    m_extrinsics_file_path = std::move(other.m_extrinsics_file_path);
+    m_intrinsics_file_path = std::move(other.m_intrinsics_file_path);
     m_camera_loader = std::move(other.m_camera_loader);
     m_image_shape = other.m_image_shape;
     m_data = other.m_data;
     m_size = other.m_size;
+    
+    // Reset other
     other.m_data = nullptr;
+    other.m_size = 0;
   }
   return *this;
 }

@@ -12,6 +12,8 @@ namespace tinygs {
  */
 class PngFolderDataset final : public DatasetBase {
 public:
+  PngFolderDataset();
+
   /**
    * @brief Constructor that infers image shape from the first image in the folder
    * @param folder_path Path to the folder containing PNG images
@@ -28,17 +30,22 @@ public:
   PngFolderDataset(PngFolderDataset&&) noexcept;
   PngFolderDataset& operator=(PngFolderDataset&&) noexcept;
 
+  void load() override;
   Data operator[](size_t index) const override;
   size_t size() const noexcept override;
   ImageShape image_shape() const override;
 
-  SingleCameraLoader& get_camera_loader() noexcept { return m_camera_loader; }
+  SingleCameraLoader &get_camera_loader() noexcept override;
 
 private:
+  /// Configurables
   std::string m_folder_path;
+  std::string m_extrinsics_file_path;
+  std::string m_intrinsics_file_path;
+
+  /// Loaded data
   std::vector<std::string> m_image_paths;
   SingleCameraLoader m_camera_loader;
-
   ImageShape m_image_shape;
   uint8_t* m_data;
   size_t m_size;

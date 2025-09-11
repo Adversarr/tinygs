@@ -1,6 +1,8 @@
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/utils/scope_timer.hpp"
+#include "tinygs/dataloader/simple.hpp"
+#include <algorithm>
 
 namespace tinygs {
 
@@ -110,6 +112,18 @@ std::shared_ptr<DatasetBase> DataLoaderBase::get_dataset() const {
 
 void DataLoaderBase::reset() {
   // do nothing
+}
+
+std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_type,
+                                                  std::shared_ptr<DatasetBase> dataset) {
+  std::string lower_dataloader_type = dataloader_type;
+  std::transform(lower_dataloader_type.begin(), lower_dataloader_type.end(), lower_dataloader_type.begin(), ::tolower);
+  
+  if (lower_dataloader_type == "simple") {
+    return std::make_unique<SimpleDataLoader>(dataset);
+  } else {
+    throw std::runtime_error("Unknown dataloader type: " + dataloader_type);
+  }
 }
 
 } // namespace tinygs

@@ -80,16 +80,31 @@ static void load_single_image(size_t index, const std::string& image_path, uint8
   free(img_data);
 }
 
+PngFolderDataset::PngFolderDataset() 
+    : m_data(nullptr), m_size(0) {
+}
+
 PngFolderDataset::PngFolderDataset(const std::string &folder_path,
                                    const std::string &extrinsics_file_path,
                                    const std::string &intrinsics_file_path)
-    : m_image_paths(list_png_files(folder_path)), m_folder_path(folder_path),
-    m_camera_loader(extrinsics_file_path, intrinsics_file_path) {
-  TINYGS_TIMER("PngFolderDataset::PngFolderDataset");
+    : m_folder_path(folder_path), m_extrinsics_file_path(extrinsics_file_path),
+      m_intrinsics_file_path(intrinsics_file_path), m_data(nullptr), m_size(0) {
+  PngFolderDataset::load();
+}
+
+void PngFolderDataset::load() {
+  TINYGS_TIMER("PngFolderDataset::load");
   auto start = std::chrono::steady_clock::now();
+  
+  // Initialize camera loader with stored paths
+  m_camera_loader = SingleCameraLoader(m_extrinsics_file_path, m_intrinsics_file_path);
+  
+  // Get image paths from folder
+  m_image_paths = list_png_files(m_folder_path);
+  
   m_size = std::min(m_image_paths.size(), m_camera_loader.get_camera_extrinsics().size());
   if (m_size == 0) {
-    throw std::runtime_error("No PNG files found in folder: " + folder_path);
+    throw std::runtime_error("No PNG files found in folder: " + m_folder_path);
   }
 
   // Infer image shape from the first image
@@ -128,6 +143,9 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
 }
 
 ImageShape PngFolderDataset::image_shape() const {
+  if (!m_data) {
+    throw std::runtime_error("Dataset not loaded. Call load() first.");
+  }
   return m_image_shape;
 }
 
@@ -135,7 +153,15 @@ size_t PngFolderDataset::size() const noexcept {
   return m_size;
 }
 
+SingleCameraLoader &PngFolderDataset::get_camera_loader() noexcept {
+  return m_camera_loader;
+}
+
 Data PngFolderDataset::operator[](size_t index) const {
+  if (!m_data) {
+    throw std::runtime_error("Dataset not loaded. Call load() first.");
+  }
+  
   if (index >= m_size) {
     throw std::out_of_range(fmt::format("Index {} out of range for dataset of size {}", index, m_size));
   }
@@ -165,14 +191,40 @@ PngFolderDataset::~PngFolderDataset() {
   }
 }
 
-PngFolderDataset::PngFolderDataset(PngFolderDataset&& other) noexcept {
-  m_data = other.m_data;
+PngFolderDataset::PngFolderDataset(PngFolderDataset&& other) noexcept 
+    : m_folder_path(std::move(other.m_folder_path)),
+      m_extrinsics_file_path(std::move(other.m_extrinsics_file_path)),
+      m_intrinsics_file_path(std::move(other.m_intrinsics_file_path)),
+      m_image_paths(std::move(other.m_image_paths)),
+      m_camera_loader(std::move(other.m_camera_loader)),
+      m_image_shape(other.m_image_shape),
+      m_data(other.m_data),
+      m_size(other.m_size) {
   other.m_data = nullptr;
+  other.m_size = 0;
 }
 
 PngFolderDataset& PngFolderDataset::operator=(PngFolderDataset&& other) noexcept {
-  m_data = other.m_data;
-  other.m_data = nullptr;
+  if (this != &other) {
+    // Clean up existing resources
+    if (m_data) {
+      CUDA_CHECK_PRINT(cudaFreeHost(m_data));
+    }
+    
+    // Move data from other
+    m_folder_path = std::move(other.m_folder_path);
+    m_extrinsics_file_path = std::move(other.m_extrinsics_file_path);
+    m_intrinsics_file_path = std::move(other.m_intrinsics_file_path);
+    m_image_paths = std::move(other.m_image_paths);
+    m_camera_loader = std::move(other.m_camera_loader);
+    m_image_shape = other.m_image_shape;
+    m_data = other.m_data;
+    m_size = other.m_size;
+    
+    // Reset other
+    other.m_data = nullptr;
+    other.m_size = 0;
+  }
   return *this;
 }
 

@@ -25,6 +25,17 @@ public:
   DatasetBase(DatasetBase&&) = default;
   DatasetBase& operator=(DatasetBase&&) = default;
 
+  /// @brief Load the dataset from disk.
+  virtual void load() = 0;
+
+  /// @brief Set the parameters of the dataset.
+  /// @param params The parameters of the dataset.
+  virtual void set_params(const json& params) {}
+
+  /// @brief Get the parameters of the dataset.
+  /// @return The parameters of the dataset.
+  virtual json get_params() const { return json::object(); }
+
   virtual SingleCameraLoader& get_camera_loader() = 0;
 
   virtual ~DatasetBase() = default;
@@ -41,5 +52,11 @@ public:
   /// @return The data at the given index.
   virtual Data operator[](size_t idx) const = 0;
 };
+
+
+/// @brief Create a dataset object.
+/// @param dataset_type The type of dataset to create.
+/// @return The created dataset.
+std::unique_ptr<DatasetBase> create_dataset(const std::string& dataset_type);
 
 } // namespace tinygs

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cmath>
 #include <memory>
 #include "optim.hpp"
 
@@ -21,12 +20,7 @@ public:
    * @param optimizer Shared pointer to optimizer whose learning rate will be controlled
    * @param initial_lr Initial learning rate value
    */
-  LrSchedulerBase(const std::shared_ptr<OptimizerBase> &optimizer, float initial_lr)
-    : m_optimizer(optimizer), m_current_lr(initial_lr) {
-    if (m_optimizer) {
-      m_optimizer->set_lr(initial_lr);
-    }
-  }
+  LrSchedulerBase(const std::shared_ptr<OptimizerBase> &optimizer, float initial_lr);
 
   virtual ~LrSchedulerBase() = default;
 
@@ -45,21 +39,14 @@ public:
    * @brief Get current learning rate
    * @return Current learning rate value
    */
-  float get_lr() const { return m_current_lr; }
+  float get_lr() const;
 
 protected:
   /**
    * @brief Update both internal state and optimizer's learning rate
    * @param new_lr New learning rate to set
    */
-  void update_lr(float new_lr) {
-    m_current_lr = new_lr;
-    if (m_optimizer) {
-      m_optimizer->set_lr(new_lr);
-    } else {
-      log_warning("No optimizer set.");
-    }
-  }
+  void update_lr(float new_lr);
 
   std::shared_ptr<OptimizerBase> m_optimizer; ///< Optimizer whose learning rate is controlled
   float m_current_lr; ///< Current learning rate value
@@ -78,25 +65,18 @@ public:
    * @param optimizer Shared pointer to optimizer whose learning rate will be controlled
    * @param lr Learning rate to maintain constant
    */
-  explicit ConstantLR(const std::shared_ptr<OptimizerBase> &optimizer, float lr=1.0f)
-    : LrSchedulerBase(optimizer, lr) {}
+  explicit ConstantLR(const std::shared_ptr<OptimizerBase> &optimizer, float lr=1.0f);
 
   /**
    * @brief Return the constant learning rate
    * @return Unchanged learning rate
    */
-  float step() override {
-    // No change needed for constant LR, but ensure optimizer is updated
-    update_lr(m_current_lr);
-    return m_current_lr;
-  }
+  float step() override;
 
   /**
    * @brief Reset scheduler (no-op for constant scheduler)
    */
-  void reset() override {
-    // No state to reset for constant scheduler
-  }
+  void reset() override;
 };
 
 /**
@@ -114,33 +94,33 @@ public:
    * @param decay_rate Decay factor applied each step (typically 0.9-0.99)
    */
   explicit ExponentialLR(const std::shared_ptr<OptimizerBase> &optimizer,
-                         float initial_lr = 1.0, float decay_rate = 0.999769f)
-    : LrSchedulerBase(optimizer, initial_lr), m_initial_lr(initial_lr),
-      m_decay_rate(decay_rate), m_step_count(0) {}
+                         float initial_lr = 1.0, float decay_rate = 0.999769f);
 
   /**
    * @brief Apply exponential decay and return new learning rate
    * @return Learning rate after exponential decay
    */
-  float step() override {
-    float new_lr = m_initial_lr * std::pow(m_decay_rate, m_step_count);
-    m_step_count++;
-    update_lr(new_lr);
-    return new_lr;
-  }
+  float step() override;
 
   /**
    * @brief Reset scheduler to initial state
    */
-  void reset() override {
-    m_step_count = 0;
-    update_lr(m_initial_lr);
-  }
+  void reset() override;
 
 private:
   float m_initial_lr;   ///< Initial learning rate value
   float m_decay_rate;   ///< Decay factor applied each step
   int m_step_count;     ///< Current step count for decay calculation
 };
+
+/**
+ * @brief Create a learning rate scheduler object
+ * 
+ * @param scheduler_type The type of scheduler to create ("constant", "exponential", etc.)
+ * @param optimizer Shared pointer to optimizer whose learning rate will be controlled
+ * @return std::unique_ptr<LrSchedulerBase> The created scheduler
+ */
+std::unique_ptr<LrSchedulerBase> create_lr_scheduler(const std::string& scheduler_type,
+                                                     const std::shared_ptr<OptimizerBase>& optimizer);
 
 } // namespace tinygs

@@ -85,4 +85,14 @@ private:
 };
 
 
+/**
+ * @brief Create a dataloader object
+ *
+ * @param dataloader_type The type of dataloader to create ("simple", etc.)
+ * @param dataset The dataset to use with the dataloader
+ * @return std::unique_ptr<DataLoaderBase> The created dataloader
+ */
+std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_type,
+                                                  std::shared_ptr<DatasetBase> dataset);
+
 }  // namespace tinygs
