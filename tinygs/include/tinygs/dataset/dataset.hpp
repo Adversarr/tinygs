@@ -1,4 +1,5 @@
 #pragma once
+#include "tinygs/core/camera_loader.hpp"
 #include "tinygs/core/image.hpp"
 namespace tinygs {
 
@@ -23,6 +24,8 @@ public:
   DatasetBase& operator=(const DatasetBase&) = delete;
   DatasetBase(DatasetBase&&) = default;
   DatasetBase& operator=(DatasetBase&&) = default;
+
+  virtual SingleCameraLoader& get_camera_loader() = 0;
 
   virtual ~DatasetBase() = default;
 

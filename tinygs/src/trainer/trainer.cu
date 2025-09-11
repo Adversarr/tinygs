@@ -2,11 +2,43 @@
 
 #include <stdexcept>
 #include <spdlog/spdlog.h>
+#include <thrust/execution_policy.h>
+#include <thrust/transform_reduce.h>
 
 #include "tinygs/cuda/reduce.hpp"
 #include "tinygs/cuda/gpu_memory.hpp"
 
 namespace tinygs {
+
+void mean(const vec3* data, size_t size, vec3& out) {
+  out = thrust::transform_reduce(
+    thrust::device,
+    data,
+    data + size,
+    [inv_s = 1.0f / static_cast<float>(size)] __device__(const vec3& p) -> vec3 { return p * inv_s; },
+    vec3{0.0f, 0.0f, 0.0f},
+    thrust::plus<vec3>()
+  );
+}
+
+
+void Trainer::recompute_scene_scale() {
+  auto ds = m_dataloader->get_dataset();
+  auto pc = m_gaussians->means();
+
+  // avg_pc_mean
+  vec3 avg_pc_mean;
+  mean(thrust::raw_pointer_cast(pc.data()), pc.size(), avg_pc_mean);
+
+  float scale = 0;
+  for (auto c: ds->get_camera_loader().get_camera_extrinsics()) {
+    auto c2w = c.get_c2w();
+    vec3 cam_pos = c2w[3];
+    scale = std::max(scale, glm::distance(cam_pos, avg_pc_mean));
+  }
+  m_gaussians->set_scene_scale(scale);
+  log_info("Recompute scene scale: {}", scale);
+}
 
 Trainer::Trainer(const TrainerConfig& config) : m_config(config) {
   m_state.start_time = std::chrono::steady_clock::now();
@@ -61,6 +93,7 @@ void Trainer::set_checkpoint_callback(CheckpointCallback callback) {
 TrainingState Trainer::train() {
   validate_setup();
   initialize_buffers();
+  recompute_scene_scale();
 
   m_state.start_time = std::chrono::steady_clock::now();
   m_state.last_log_time = m_state.start_time;
@@ -84,63 +117,67 @@ void Trainer::step() {
   if (m_pre_step_callback) {
     m_pre_step_callback(m_state);
   }
-  
+
   // Clear gradients and buffers
   m_gradients->memset(0);
   m_loss_buffer->memset(0);
   m_image_grad_buffer->memset(0);
-  
+
   // Get next batch of data
   auto data = m_dataloader->next();
-  
+
   // Update rasterization context with current data
   m_rasterize_ctx.fwd_input = data.input;
-  
+
   // Forward pass
   m_rasterizer->forward(m_rasterize_ctx);
-  
+
   // Evaluate losses and accumulate gradients
   evaluate_losses(data);
-  
+
   // Setup gradient output for backward pass
   m_rasterize_ctx.grad_output.image = m_loss_ctx.grad;
-  
+
   // Create alpha gradient image
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
-  m_rasterize_ctx.grad_output.alpha = Image(
-    {shape.width, shape.height, 1}, 
-    ImageFormat::CHW, 
-    ImageDataType::Float32,
-    m_loss_buffer->data() + shape.width * shape.height * 3
-  );
-  
+  m_rasterize_ctx.grad_output.alpha = Image({shape.width, shape.height, 1}, ImageFormat::CHW, ImageDataType::Float32,
+                                            m_loss_buffer->data() + shape.width * shape.height * 3);
+
   // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
-  
-  // Update learning rate
-  m_state.current_learning_rate = compute_learning_rate();
-  
-  // Optimizer step
-  m_optimizer->step(m_state.current_learning_rate);
-  
+
+  // Step the learning rate scheduler if available
+  if (m_lr_scheduler) {
+    m_lr_scheduler->step();
+  }
+
+  // Learning rate is now managed by the scheduler-optimizer system
+
+  // Optimizer step (learning rate already set by scheduler)
+  //? the gradient scaler, since we are not supporting AMP, 1.0f is the default value.
+  m_optimizer->step(1.0f);
+
   // Strategy step (densification)
   if (m_strategy) {
     m_strategy->step(m_rasterize_ctx);
+    if (m_state.current_step % 1000 == 0) {
+      recompute_scene_scale();
+    }
   }
-  
+
   // Update spherical harmonics degree
   update_sh_degree();
-  
+
   // Post-step callback (for logging, visualization, etc.)
   if (m_post_step_callback) {
     m_post_step_callback(m_state);
   }
-  
+
   // Checkpoint callback
   if (m_checkpoint_callback && m_state.current_step % m_config.checkpoint_interval == 0) {
     m_checkpoint_callback(m_state);
   }
-  
+
   m_state.current_step++;
 }
 
@@ -160,7 +197,7 @@ void Trainer::stop_training() {
 void Trainer::reset() {
   m_state.current_step = 0;
   m_state.current_loss = 0.0f;
-  m_state.current_learning_rate = m_config.initial_learning_rate;
+
   m_state.should_stop = false;
   m_state.start_time = std::chrono::steady_clock::now();
   m_state.last_log_time = m_state.start_time;
@@ -172,6 +209,12 @@ void Trainer::reset() {
   if (m_strategy) {
     m_strategy->reset();
   }
+  
+  if (m_lr_scheduler) {
+    m_lr_scheduler->reset();
+  }
+  
+  // Learning rate is now managed by the scheduler-optimizer system
 }
 
 void Trainer::update_config(const TrainerConfig& config) {
@@ -224,8 +267,26 @@ void Trainer::initialize_buffers() {
 }
 
 float Trainer::compute_learning_rate() const {
-  float progress = static_cast<float>(m_state.current_step) / static_cast<float>(m_config.max_steps);
-  return std::pow(m_config.final_learning_rate / m_config.initial_learning_rate, progress) * m_config.initial_learning_rate;
+  // Learning rate is now controlled by the scheduler through the optimizer
+  if (m_optimizer) {
+    return m_optimizer->get_lr();
+  }
+  return 0.0f;
+}
+
+void Trainer::set_lr_scheduler(std::shared_ptr<LrSchedulerBase> scheduler) {
+  m_lr_scheduler = scheduler;
+  if (m_lr_scheduler) {
+    m_lr_scheduler->reset();
+  }
+}
+
+std::shared_ptr<LrSchedulerBase> Trainer::get_lr_scheduler() const {
+  return m_lr_scheduler;
+}
+
+std::shared_ptr<OptimizerBase> Trainer::get_optimizer() const {
+  return m_optimizer;
 }
 
 void Trainer::update_sh_degree() {

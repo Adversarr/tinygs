@@ -10,9 +10,10 @@ namespace tinygs {
 struct KnnParameters {
   int num_neighbors = 4;           // Number of neighbors to consider for distance calculation
   float min_distance = 1e-7f;      // Minimum distance threshold
+  float max_distance = 1e-2f;      // Maximum distance threshold
   float default_distance = 0.001f; // Default distance for edge cases
   float init_scaling = 1.0f;       // Initial scaling factor
-  float init_opacity = 0.5f;       // Initial opacity value
+  float init_opacity = 0.1f;       // Initial opacity value
   int sh_degree = 3;               // Spherical harmonics degree
 };
 
@@ -23,7 +24,7 @@ private:
 
   // Core KNN functionality
   std::vector<float> compute_mean_neighbor_distances(const std::vector<vec3>& points) const;
-  float calculate_scene_scale(const std::vector<vec3>& points, const vec3& center) const;
+  float calculate_scene_scale(const std::vector<float>& distances) const;
   vec3 rgb_to_sh(const vec3& rgb) const;
 
 public:

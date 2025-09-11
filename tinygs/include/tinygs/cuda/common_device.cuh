@@ -192,6 +192,10 @@ __device__ __forceinline__ float activate_scale_deriv(float x) {
   return ::expf(x);
 }
 
+__device__ __forceinline__ vec3 activate_scale_deriv(const vec3& x) {
+  return vec3(activate_scale_deriv(x.x), activate_scale_deriv(x.y), activate_scale_deriv(x.z));
+}
+
 __device__ __forceinline__ float activate_opacity(float x) {
   return logistic(x);
 }

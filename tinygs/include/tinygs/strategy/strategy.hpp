@@ -16,7 +16,7 @@ struct StrategyParams {
   // grow if gradient is large (Default Strategy)
   float duplicate_grad_threshold = 0.0002f;
   // split if large gaussian is found (Default Strategy)
-  float duplicate_scale_threshold = 0.005f;
+  float duplicate_scale_threshold = 0.01f;
 
   int refine_every = 100;
   int start_refine = 1000;

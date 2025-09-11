@@ -17,7 +17,7 @@
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 
-std::string DATA_PATH = "/data/accgs/1747834320424/";
+std::string DATA_PATH = "/data/accgs/1751090600427/";
 
 int main() {
   spdlog::set_level(spdlog::level::debug);
@@ -45,7 +45,7 @@ int main() {
     shape.channel = 3;
     std::shared_ptr<tinygs::PngFolderDataset> dataset = std::make_shared<tinygs::PngFolderDataset>(
         DATA_PATH + "inputs/images_480x640_1", camera_extrinsics_path,
-        camera_intrinsics_path, shape);
+        camera_intrinsics_path);
 
     tinygs::SimpleDataLoader loader(dataset);
 

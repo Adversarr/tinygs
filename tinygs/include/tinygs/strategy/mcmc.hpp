@@ -1,5 +1,6 @@
 #pragma once
 
+#include "tinygs/optim/lr_scheduler.hpp"
 #include "tinygs/strategy/strategy.hpp"
 namespace tinygs {
 
@@ -16,13 +17,18 @@ public:
                std::shared_ptr<OptimizerBase> optimizer);
   virtual ~MCMCStrategy();
 
+  /**
+   * @brief Reset the strategy, excluding optimizer and gaussians
+   */
   void reset() override;
 
-  void set_noise_lr(float noise_lr);
-
   void step_impl(const RasterizeContext& ctx) override;
+
 protected:
-  float m_noise_lr = 1;
+  float m_noise_lr_init = 1.0e5f;
+  float m_noise_lr_decay = 1.0f - 2.0e-4f; // after 5'000 step, decay to about 1/e~=0.36
+  float m_noise_lr = m_noise_lr_init;
+  float m_grow_ratio = 1.05f;
 
 public:
   // NOTE: MCMC use relocate instead of pruning.

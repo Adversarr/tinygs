@@ -45,9 +45,9 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   if (step % m_params.refine_every == 0 &&
       step >= m_params.start_refine &&
       step <= m_params.end_refine) {
-    const auto dup_flag = duplicate(ctx);
+    duplicate(ctx);
     // res contains marks the duplication gaussians, disable the pruning for them.
-    prune(ctx, dup_flag);
+    prune(ctx);
     // after pruning, we need to reset the densification info since the indices have changed.
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<float>>(num_gaussians * 2);
@@ -64,7 +64,7 @@ void DefaultStrategy::reset() {
   // TODO: implement reset
 }
 
-thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& ctx) {
+void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   // TODO: implement the split and duplicate (grow_gs)
 
   auto num_gaussians = m_gaussians->size();
@@ -73,7 +73,7 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
   auto *d_grow_flags = thrust::raw_pointer_cast(duplication_flags.data());
   if (! ctx.densification_info || ctx.densification_info->size() != num_gaussians * 2) {
     log_warning("Densification info is not provided or has wrong size, skip duplication.");
-    return thrust::device_vector<bool>(num_gaussians, false); // no duplication happened
+    return; // no duplication happened
   }
 
   auto *d_densification_info = ctx.densification_info->data();
@@ -92,7 +92,7 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
                            fmaxf(d_densification_info[i], 1.0f);
         if (grad > grow_grad && d_densification_info[i] > 0) {
           const float max_scale = max(activate_scale(d_scale[i]));
-          if (max_scale > grow_scale) { // is_large => split
+          if (max_scale > grow_scale || true) { // is_large => split
             d_grow_flags[i] = kSplit;
           } else {
             d_grow_flags[i] = kDuplicate;
@@ -217,25 +217,9 @@ thrust::device_vector<bool> DefaultStrategy::duplicate(const RasterizeContext& c
       }
     }
   );
-
-  thrust::device_vector<bool> last_duplications(m_gaussians->size());
-  thrust::transform(
-    thrust::device,
-    duplication_flags.begin(),
-    duplication_flags.end(),
-    last_duplications.begin(),
-    [] __device__ (char f) {return f != 0; }
-  );
-
-  thrust::copy(
-    thrust::make_counting_iterator<int>(num_gaussians),
-    thrust::make_counting_iterator<int>(num_grows + num_gaussians),
-    last_duplications.begin() + num_gaussians);
-
-  return last_duplications;
 }
 
-void DefaultStrategy::prune(const RasterizeContext& ctx, const thrust::device_vector<bool> & disable_prune) {
+void DefaultStrategy::prune(const RasterizeContext& /* ctx */) {
   // Remove dead gaussians
   const auto num_gaussians = m_gaussians->size();
   thrust::device_vector<char> is_alive(num_gaussians);

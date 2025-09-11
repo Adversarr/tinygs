@@ -154,11 +154,11 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
   thrust::transform(
     thrust::device, opacities.begin(), opacities.end(),
     m_impl->opacities_normalized.begin(),
-    [] __device__(const float& opacity) { return sigmoid(opacity); });
+    [] __device__(const float& opacity) { return activate_opacity(opacity); });
   thrust::transform(
     thrust::device, scales.begin(), scales.end(),
     m_impl->exp_scales.begin(),
-    [] __device__(const vec3& scale) { return glm::exp(scale); });
+    [] __device__(const vec3& scale) { return activate_scale(scale); });
 
   m_impl->invdepth.resize(ctx.fwd_input.width * ctx.fwd_input.height);
   m_impl->radii.resize(m_gaussians->size());
@@ -312,7 +312,7 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
       opacities = thrust::raw_pointer_cast(m_gaussians->opacities().data()),
       grad_opacities = thrust::raw_pointer_cast(grad_opacities.data()),
       grad_exp_scales = thrust::raw_pointer_cast(grad_exp_scales.data()),
-      exp_scales = thrust::raw_pointer_cast(scales.data()),
+      scales = thrust::raw_pointer_cast(m_gaussians->scales().data()),
       grad_scales = thrust::raw_pointer_cast(grad_scales.data())
     ] __device__(uint32_t i) {
       // transform rotation gradients
@@ -320,14 +320,12 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
       grad_rotations[i] = bwd_normalize(rotations[i], grad_rotation);
       
       // transform opacity gradients
-      const float grad_sigmoid_opacity = grad_opacities_normalized[i];
-      const float sigmoid_opacity = sigmoid(opacities[i]);
-      grad_opacities[i] = grad_sigmoid_opacity * sigmoid_opacity * (1.f - sigmoid_opacity);
+      const float grad_sigmoid_opacity = grad_opacities_normalized[i];;
+      grad_opacities[i] = grad_sigmoid_opacity * activate_scale_deriv(opacities[i]);
       
       // transform scale gradients
       const vec3 grad_scale = grad_exp_scales[i];
-      const vec3 exp_scale = exp_scales[i];
-      grad_scales[i] = grad_scale * exp_scale;
+      grad_scales[i] = grad_scale * activate_scale_deriv(scales[i]);
     }
   );
 
@@ -350,6 +348,9 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
         data[i] += 1;
       }
     });
+
+
+  // log_info("Max Radii: {}", thrust::reduce(m_impl->radii.begin(), m_impl->radii.end(), 0, thrust::maximum<int>()));
 }
 
 

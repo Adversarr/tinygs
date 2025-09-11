@@ -151,16 +151,14 @@ void MCMCStrategy::step_impl(const RasterizeContext& ctx) {
 }
 
 void MCMCStrategy::reset() {
-  // TODO: reset internal states
+  m_noise_lr = m_noise_lr_init;
 }
 
 static thrust::default_random_engine rng;
-void MCMCStrategy::set_noise_lr(float noise_lr) { m_noise_lr = noise_lr; }
 
-void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
+void MCMCStrategy::add_noise(const RasterizeContext& /* ctx */) {
   // TODO: this is simpler than expected.
   TINYGS_TIMER("MCMCStrategy::add_noise");
-  m_noise_lr *= 1 - 1e-5;
   size_t num_gaussians = m_gaussians->size();
   if (num_gaussians == 0) return;
   thrust::host_vector<float> h_noise(3 * num_gaussians);
@@ -176,14 +174,18 @@ void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
     reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
     m_noise_lr
   );
+
+  m_noise_lr *= m_noise_lr_decay;
 }
 
-void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
+void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
   TINYGS_TIMER("MCMCStrategy::add_new_gs");
   // Expand exponentially.
-  int num_gaussians = m_gaussians->size();
-  int target_size = std::min(static_cast<int>(round(1.05 * num_gaussians)), m_params.max_num_gaussians);
-  int num_to_add = target_size - num_gaussians;
+  const int num_gaussians = m_gaussians->size();
+  const int target_size = std::min(
+      static_cast<int>(round(m_grow_ratio * num_gaussians)),
+      m_params.max_num_gaussians);
+  const int num_to_add = target_size - num_gaussians;
   if (num_to_add <= 0) {
     assert(num_to_add == 0);
     return;
@@ -196,7 +198,6 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
     opacities.begin(),
     [] __device__ (float opacity) { return logistic(opacity); }
   ); // actual opacity = sigmoid(opacity)
-
 
   // Sample from alive Gaussians based on opacity
   const auto& probs = opacities;
@@ -247,11 +248,6 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
         /* dst_indices */ thrust::raw_pointer_cast(new_indices.data()),
         /* num_indices */ num_to_add
     );
-
-  // now gaussians should have more space for us to store the duplications
-  if (m_gaussians->size() != target_size) {
-    throw std::runtime_error("MCMCStrategy::add_new_gs failed to expand the number of gaussians");
-  }
 
   // copy the parameters
   thrust::for_each(

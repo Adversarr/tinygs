@@ -84,10 +84,10 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
 
     // now we convert the raw data to float
     if (total_elements % 4 == 0){
-      // convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>( //
-      //   raw_data, (float *)gpu_data.data, total_elements / 4);
-      convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
-        (unsigned char*)raw_data, (float *)gpu_data.data, total_elements);
+      convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>( //
+        (const unsigned char*)raw_data, (float *)gpu_data.data, total_elements / 4);
+      // convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
+      //   (unsigned char*)raw_data, (float *)gpu_data.data, total_elements);
     } else {
       convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>( //
         (unsigned char*)raw_data, (float *)gpu_data.data, total_elements);

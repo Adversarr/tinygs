@@ -11,6 +11,7 @@
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/cuda/reduce.hpp"
+#include "tinygs/cuda/stat.hpp"
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/dataset/png_folder.hpp"
 #include "tinygs/dataset/video.hpp"
@@ -49,7 +50,7 @@ std::vector<vec3> skybox(
   }
 
   vec3 center = (cam_pos_min + cam_pos_max) * 0.5f;
-  float radius = max(cam_pos_max - cam_pos_min) * 5.f;
+  float radius = max(cam_pos_max - cam_pos_min) * 15.f;
   auto rand_on_sphere = [&]() {
     vec3 p = vec3(dist(rng), dist(rng), dist(rng));
     p = glm::normalize(p);
@@ -68,39 +69,38 @@ std::vector<vec3> skybox(
 
 int main() {
   spdlog::set_level(spdlog::level::debug);
-  std::string data_path = "/data/accgs/1747834320424/";
+  std::string data_path = "/data/accgs/1748422612463/";
   std::string camera_intrinsics_path = data_path + "inputs/slam/cameras.txt";
   std::string camera_extrinsics_path = data_path + "inputs/traj_full.txt.bak";
 
   
   // Setup dataset and dataloader
-  std::shared_ptr<PngFolderDataset> dataset = std::make_shared<PngFolderDataset>(
-      data_path + "inputs/images_480x640_1",
-      camera_extrinsics_path,
-      camera_intrinsics_path);
-  // std::shared_ptr<VideoDataset> dataset = std::make_shared<VideoDataset>(
-  //   data_path + "1747834320424_flip.mp4",
-  //   camera_extrinsics_path,
-  //   camera_intrinsics_path);
+  // std::shared_ptr<PngFolderDataset> dataset = std::make_shared<PngFolderDataset>(
+  //     data_path + "inputs/images_480x640_1",
+  //     camera_extrinsics_path,
+  //     camera_intrinsics_path);
+  std::shared_ptr<VideoDataset> dataset = std::make_shared<VideoDataset>(
+    data_path + "1748422612463_flip.mp4",
+    camera_extrinsics_path,
+    camera_intrinsics_path);
   auto dataloader = std::make_shared<SimpleDataLoader>(dataset);
-
 
   ImageShape shape = dataset->image_shape();
   int width = shape.width, height = shape.height;
-  // dataset->get_camera_loader().resize_sensor(width, height);
+  dataset->get_camera_loader().resize_sensor(width, height);
 
   // Load and initialize point cloud
   auto pc = load_from_colmap_file(data_path + "inputs/slam/points3D.txt");
   log_info("#points: {}", pc.points.size());
 
   // Extend with skybox points
-  {
-    auto p_sky = skybox(*dataset, 10000);
-    for (auto& p : p_sky) {
-      pc.points.push_back(p);
-      pc.colors.push_back(vec3(0.2f));
-    }
-  }
+  // {
+  //   auto p_sky = skybox(*dataset, 10000);
+  //   for (auto& p : p_sky) {
+  //     pc.points.push_back(p);
+  //     pc.colors.push_back(vec3(0.2f));
+  //   }
+  // }
 
   // Initialize gaussians
   KnnInitialization knn;
@@ -115,8 +115,6 @@ int main() {
   // Setup trainer configuration
   TrainerConfig config;
   config.max_steps = 30000;
-  config.initial_learning_rate = 1.0f;
-  config.final_learning_rate = 0.01f;
   config.log_interval = 100;
   config.sh_degree_interval = 1000;
   config.max_sh_degree = 3;
@@ -141,12 +139,14 @@ int main() {
   auto l1_loss = std::make_shared<L1Loss>();
   auto ssim_loss = std::make_shared<FusedSSIMLoss>();
   trainer.add_loss(l1_loss, 0.8f);
-  trainer.add_loss(ssim_loss, 0.2f);
+  // trainer.add_loss(ssim_loss, 0.2f);
   
   // Add metrics
   auto psnr_metric = std::make_shared<PsnrMetric>();
   trainer.add_metric(psnr_metric, "PSNR");
-  
+
+  trainer.set_lr_scheduler(std::make_shared<ExponentialLR>(trainer.get_optimizer()));
+
   // Setup visualization callback
   GPUMemory<float> out_image(width * height * 3);
   auto visualization_callback = [&](const TrainingState& state) {
@@ -155,14 +155,16 @@ int main() {
       auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - state.last_log_time);
       auto loss = trainer.accumulate_loss();
       auto psnr = trainer.evaluate_metrics()[0];
+      auto lr = trainer.get_optimizer()->get_lr();
 
       log_info(
-          "step {} loss: {:.3e} psnr: {:.3f} time: {}ms/100step",
+          "step {} loss: {:.3e} psnr: {:.3f} time: {:.1f}ms/100step current_lr: {:.3e}",
           state.current_step,
           loss,
           psnr,
-          duration.count() / (state.current_step / 100.0));
-      
+          duration.count() / (state.current_step / 100.0),
+          lr);
+
       // Visualize RGB - copy rendered image from trainer's internal buffers
       const auto& rasterize_ctx = trainer.get_rasterize_context();
       if (rasterize_ctx.fwd_output.image.data != nullptr) {
@@ -185,13 +187,32 @@ int main() {
             img.at<cv::Vec3b>(y, x)[2] = static_cast<uint8_t>(std::clamp(cpu_image[r_idx] * 255.0f, 0.0f, 255.0f));  // R
           }
         }
-        cv::imshow("render", img);
+        cv::imwrite(fmt::format("render_{}.jpg", state.current_step), img);
       }
 
+      // const auto& d_means = gs3d->means();
+      // std::vector<vec3> h_means(d_means.size());
+      // cudaMemcpy(h_means.data(), thrust::raw_pointer_cast(d_means.data()), d_means.size() * sizeof(vec3),
+      //            cudaMemcpyDeviceToHost);
+
+      // // save to file
+      // std::ofstream out("means.txt");
+      // for (const auto& m : h_means) {
+      //   out << m.x << " " << m.y << " " << m.z << "\n";
+      // }
       if (char key = cv::waitKey(1); key == 27) {
         trainer.stop_training();
         std::cout << "ESC pressed - stopping training..." << std::endl;
       }
+
+      auto means_stat = compute_buffer_stat_gpu(thrust::raw_pointer_cast(gs3d->means().data()), gs3d->means().size());
+      log_info("means stat: {}", to_string(means_stat));
+      auto opacity_stat = compute_buffer_stat_gpu(thrust::raw_pointer_cast(gs3d->opacities().data()), gs3d->opacities().size());
+      log_info("opacity stat: {}", to_string(opacity_stat));
+      auto scales_stat = compute_buffer_stat_gpu(thrust::raw_pointer_cast(gs3d->scales().data()), gs3d->scales().size());
+      log_info("scales stat: {}", to_string(scales_stat));
+      auto rot_stat = compute_buffer_stat_gpu(thrust::raw_pointer_cast(gs3d->rotations().data()), gs3d->rotations().size());
+      log_info("rot stat: {}", to_string(rot_stat));
     }
   };
   

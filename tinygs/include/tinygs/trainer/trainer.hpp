@@ -11,6 +11,7 @@
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/loss/loss.hpp"
 #include "tinygs/optim/optim.hpp"
+#include "tinygs/optim/lr_scheduler.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/strategy/strategy.hpp"
 
@@ -22,8 +23,6 @@ namespace tinygs {
 struct TrainerConfig {
   // Training parameters
   size_t max_steps = 30000;
-  float initial_learning_rate = 1.0f;
-  float final_learning_rate = 0.01f;
 
   // Logging and visualization
   size_t log_interval = 100;
@@ -45,7 +44,7 @@ struct TrainerConfig {
 struct TrainingState {
   size_t current_step = 0;
   float current_loss = 0.0f;
-  float current_learning_rate = 0.0f;
+
   std::chrono::steady_clock::time_point start_time;
   std::chrono::steady_clock::time_point last_log_time;
   bool should_stop = false;
@@ -107,6 +106,24 @@ public:
    * @param strategy Shared pointer to densification strategy
    */
   void set_strategy(std::shared_ptr<StrategyBase> strategy);
+
+  /**
+   * @brief Set the learning rate scheduler for automatic learning rate updates
+   * @param scheduler Shared pointer to the learning rate scheduler
+   */
+  void set_lr_scheduler(std::shared_ptr<LrSchedulerBase> scheduler);
+
+  /**
+   * @brief Get the current learning rate scheduler
+   * @return Shared pointer to the current scheduler, or nullptr if none set
+   */
+  std::shared_ptr<LrSchedulerBase> get_lr_scheduler() const;
+
+  /**
+   * @brief Get the current optimizer
+   * @return
+   */
+  std::shared_ptr<OptimizerBase> get_optimizer() const;
 
   // Loss and metrics management
 
@@ -225,6 +242,7 @@ private:
   std::shared_ptr<DataLoaderBase> m_dataloader;
   std::shared_ptr<OptimizerBase> m_optimizer;
   std::shared_ptr<StrategyBase> m_strategy;
+  std::shared_ptr<LrSchedulerBase> m_lr_scheduler; ///< Learning rate scheduler
 
   // Loss functions and metrics
   struct LossComponent {
@@ -290,6 +308,11 @@ private:
    * @throws std::runtime_error if any required component is missing
    */
   void validate_setup() const;
+
+  /**
+   * @brief Recompute the scene scale
+   */
+  void recompute_scene_scale();
 };
 
 }  // namespace tinygs
