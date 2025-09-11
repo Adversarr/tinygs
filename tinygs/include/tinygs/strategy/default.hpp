@@ -19,5 +19,19 @@ public:
   void step_impl(const RasterizeContext& ctx) override;
   void duplicate(const RasterizeContext& ctx);
   void prune(const RasterizeContext& ctx);
+
+  /**
+   * @brief Set strategy parameters from JSON configuration
+   *
+   * @param config JSON configuration containing strategy parameters
+   */
+  void set_params(const json& config) override;
+
+  /**
+   * @brief Get current strategy parameters as JSON
+   *
+   * @return JSON object containing current strategy parameters
+   */
+  json get_params() const override;
 };
 }  // namespace tinygs

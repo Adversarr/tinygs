@@ -4,6 +4,24 @@
 #include "tinygs/strategy/strategy.hpp"
 namespace tinygs {
 
+struct MCMCParams {
+  float noise_lr_init = 1.6f; // 1e5 * 1.6e-4
+  float noise_lr_decay = 1.0f - 2.0e-4f; // after 5'000 step, decay to about 1/e~=0.36
+  float grow_ratio = 1.05f;
+
+  /** @brief Default constructor with default values */
+  MCMCParams() = default;
+
+  /** @brief Construct from JSON configuration */
+  explicit MCMCParams(const json& config);
+
+  /** @brief Convert parameters to JSON */
+  json to_json() const;
+
+  /** @brief Load parameters from JSON */
+  void from_json(const json& config);
+};
+
 class MCMCStrategy : public StrategyBase {
 public:
   /**
@@ -24,11 +42,23 @@ public:
 
   void step_impl(const RasterizeContext& ctx) override;
 
+  /**
+   * @brief Set strategy parameters from JSON configuration
+   *
+   * @param config JSON configuration containing strategy parameters
+   */
+  void set_params(const json& config) override;
+
+  /**
+   * @brief Get current strategy parameters as JSON
+   *
+   * @return JSON object containing current strategy parameters
+   */
+  json get_params() const override;
+
 protected:
-  float m_noise_lr_init = 1.6f; // 1e5 * 1.6e-4
-  float m_noise_lr_decay = 1.0f - 2.0e-4f; // after 5'000 step, decay to about 1/e~=0.36
-  float m_noise_lr = m_noise_lr_init;
-  float m_grow_ratio = 1.05f;
+  MCMCParams m_mcmc_params;
+  float m_noise_lr;
 
 public:
   // NOTE: MCMC use relocate instead of pruning.
@@ -37,6 +67,7 @@ public:
   void add_noise(const RasterizeContext& ctx);
   void add_new_gs(const RasterizeContext& ctx);
   void relocate(const RasterizeContext& ctx);
+
 };
 
 }  // namespace tinygs

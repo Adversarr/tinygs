@@ -23,6 +23,18 @@ struct StrategyParams {
   int end_refine = 15'000;
   int max_num_gaussians = 10'000'000;
   int reset_every = 3'000;
+
+  /** @brief Default constructor with default values */
+  StrategyParams() = default;
+
+  /** @brief Construct from JSON configuration */
+  explicit StrategyParams(const json& config);
+
+  /** @brief Convert parameters to JSON */
+  json to_json() const;
+
+  /** @brief Load parameters from JSON */
+  void from_json(const json& config);
 };
 
 class StrategyBase {
@@ -35,8 +47,8 @@ public:
    */
   explicit StrategyBase(std::shared_ptr<GPUGaussian3d> gaussians, 
                        std::shared_ptr<GPUGaussian3d> gaussians_grad,
-                       std::shared_ptr<OptimizerBase> optimizer) 
-    : m_gaussians(gaussians), m_gaussians_grad(gaussians_grad), m_optimizer(optimizer) {}
+                       std::shared_ptr<OptimizerBase> optimizer);
+
   virtual ~StrategyBase() = default;
 
   /**
@@ -55,6 +67,20 @@ public:
    * @param ctx Rasterization context for strategy decisions
    */
   virtual void step_impl(const RasterizeContext& ctx) = 0;
+
+  /**
+   * @brief Set strategy parameters from JSON configuration
+   *
+   * @param config JSON configuration containing strategy parameters
+   */
+  virtual void set_params(const json& config);
+
+  /**
+   * @brief Get current strategy parameters as JSON
+   *
+   * @return JSON object containing current strategy parameters
+   */
+  virtual json get_params() const;
 
 protected:
   /**
@@ -99,5 +125,18 @@ private:
   int m_step_count = 0;
 };
 
+/**
+ * @brief Create a strategy object
+ *
+ * @param strategy_type The type of strategy to create ("default", "mcmc", etc.)
+ * @param gaussians The gaussians to optimize
+ * @param gaussians_grad The gradient of gaussians
+ * @param optimizer The optimizer to use
+ * @return std::unique_ptr<StrategyBase> The created strategy
+ */
+std::unique_ptr<StrategyBase> create_strategy(const std::string& strategy_type,
+                                            std::shared_ptr<GPUGaussian3d> gaussians,
+                                            std::shared_ptr<GPUGaussian3d> gaussians_grad,
+                                            std::shared_ptr<OptimizerBase> optimizer);
 
 }  // namespace tinygs

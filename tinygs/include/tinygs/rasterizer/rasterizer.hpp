@@ -47,4 +47,8 @@ protected:
   std::shared_ptr<GPUMemoryArena> m_memory_arena;
 };
 
+// Factory function for creating rasterizers
+std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type);
+std::unique_ptr<RasterizerBase> create_rasterizer();
+
 }

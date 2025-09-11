@@ -258,4 +258,12 @@ void DefaultStrategy::prune(const RasterizeContext& /* ctx */) {
 
 
 
+void DefaultStrategy::set_params(const json& config) {
+  StrategyBase::set_params(config);
+}
+
+json DefaultStrategy::get_params() const {
+  return StrategyBase::get_params();
+}
+
 } // namespace tinygs

@@ -137,6 +137,7 @@ MCMCStrategy::MCMCStrategy(
     std::shared_ptr<OptimizerBase> optimizer
 ) : StrategyBase(gaussians, gaussians_grad, optimizer) {
   init_binom();
+  m_noise_lr = m_mcmc_params.noise_lr_init;
 }
 
 
@@ -151,7 +152,7 @@ void MCMCStrategy::step_impl(const RasterizeContext& ctx) {
 }
 
 void MCMCStrategy::reset() {
-  m_noise_lr = m_noise_lr_init;
+  m_noise_lr = m_mcmc_params.noise_lr_init;
 }
 
 static thrust::default_random_engine rng;
@@ -175,7 +176,7 @@ void MCMCStrategy::add_noise(const RasterizeContext& /* ctx */) {
     m_noise_lr
   );
 
-  m_noise_lr *= m_noise_lr_decay;
+  m_noise_lr *= m_mcmc_params.noise_lr_decay;
 }
 
 void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
@@ -183,7 +184,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
   // Expand exponentially.
   const int num_gaussians = m_gaussians->size();
   const int target_size = std::min(
-      static_cast<int>(round(m_grow_ratio * num_gaussians)),
+      static_cast<int>(round(m_mcmc_params.grow_ratio * num_gaussians)),
       m_params.max_num_gaussians);
   const int num_to_add = target_size - num_gaussians;
   if (num_to_add <= 0) {
@@ -472,6 +473,59 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   StrategyBase::on_reset(
     /* indices */ thrust::raw_pointer_cast(dead_indices.data()),
     /* num_indices */ num_dead);
+}
+
+void MCMCStrategy::set_params(const json& config) {
+  // Update base strategy parameters
+  StrategyBase::set_params(config);
+  
+  // Update MCMC-specific parameters
+  m_mcmc_params.from_json(config);
+  
+  // Update current noise lr with the new initial value
+  m_noise_lr = m_mcmc_params.noise_lr_init;
+}
+
+json MCMCStrategy::get_params() const {
+  // Get base strategy parameters
+  json params = StrategyBase::get_params();
+  
+  // Add MCMC-specific parameters
+  json mcmc_params = m_mcmc_params.to_json();
+  
+  // Merge the two JSON objects, warn on key collision
+  for (const auto& [key, value] : mcmc_params.items()) {
+    if (params.contains(key)) {
+      log_warning("Key collision in MCMCStrategy parameters: {}", key);
+    }
+    params[key] = value;
+  }
+  
+  return params;
+}
+
+json MCMCParams::to_json() const {
+  json j;
+  j["noise_lr_init"] = noise_lr_init;
+  j["noise_lr_decay"] = noise_lr_decay;
+  j["grow_ratio"] = grow_ratio;
+  return j;
+}
+
+void MCMCParams::from_json(const json& config) {
+  if (config.contains("noise_lr_init")) {
+    noise_lr_init = config["noise_lr_init"].get<float>();
+  }
+  if (config.contains("noise_lr_decay")) {
+    noise_lr_decay = config["noise_lr_decay"].get<float>();
+  }
+  if (config.contains("grow_ratio")) {
+    grow_ratio = config["grow_ratio"].get<float>();
+  }
+}
+
+MCMCParams::MCMCParams(const json& config) {
+  from_json(config);
 }
 
 } // namespace tinygs
