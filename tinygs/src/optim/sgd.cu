@@ -121,9 +121,9 @@ void SGD::step(float scale) {
   CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 }
 
-SGD::SGD(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad,
-      const SGDParameters& params):
-  OptimizerBase(gaussians, gaussians_grad), m_sgd_params(params) {
+SGD::SGD(std::shared_ptr<GPUGaussian3d> gaussians,
+         std::shared_ptr<GPUGaussian3d> gaussians_grad)
+    : OptimizerBase(gaussians, gaussians_grad) {
   // SGD doesn't need internal buffers like AdamW
 }
 
@@ -150,6 +150,32 @@ void SGD::reset(int* indices, int num_reset) {
 
 void SGD::reset_opacity() {
   // SGD doesn't have internal state to reset
+}
+
+void SGD::set_params(const json& config) {
+  // Update base optimizer parameters
+  OptimizerBase::set_params(config);
+  
+  // Update SGD-specific parameters if present
+  if (config.contains("sgd")) {
+    m_sgd_params.from_json(config["sgd"]);
+  }
+}
+
+json SGD::get_params() const {
+  json result = OptimizerBase::get_params();
+  result["sgd"] = m_sgd_params.to_json();
+  return result;
+}
+
+json SGDParameters::to_json() const {
+  // SGDParameters has no member variables, so return empty JSON object
+  return json::object();
+}
+
+void SGDParameters::from_json(const json& config) {
+  // SGDParameters has no member variables, so nothing to do
+  (void)config;
 }
 
 }  // namespace tinygs

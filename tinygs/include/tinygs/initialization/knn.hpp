@@ -47,8 +47,8 @@ public:
   float get_scene_scale() const { return m_scene_scale; }
 
   // JSON interface overrides
-  void set_parameters(const json& params) override;
-  json get_parameters() const override;
+  void set_params(const json& params) override;
+  json get_params() const override;
 
 protected:
   float m_scene_scale = 1.0f;

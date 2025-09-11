@@ -1,6 +1,7 @@
 #pragma once
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/optim/optim.hpp"
+#include "tinygs/common.hpp"
 
 namespace tinygs {
 
@@ -13,6 +14,18 @@ struct AdamWParameters {
   /// NOTE: from tiny-cuda-nn Adam implementation
   // AdaBound paper: https://openreview.net/pdf?id=Bkg3g2R9FX
   bool enable_adabound = false;
+
+  /** @brief Default constructor with default values */
+  AdamWParameters() = default;
+
+  /** @brief Construct from JSON configuration */
+  explicit AdamWParameters(const json& config);
+
+  /** @brief Convert parameters to JSON */
+  json to_json() const;
+
+  /** @brief Load parameters from JSON */
+  void from_json(const json& config);
 };
 
 /**
@@ -29,8 +42,7 @@ public:
    * @param gaussians_grad Shared pointer to GPU Gaussian gradients
    * @param params AdamW-specific parameters (beta1, beta2, epsilon, etc.)
    */
-  AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad,
-        const AdamWParameters& params = {});
+  AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
   ~AdamW() override = default;
 
@@ -51,6 +63,12 @@ public:
   
   /** @brief Reset only opacity-related optimizer state */
   void reset_opacity() override;
+  
+  /** @brief Set optimizer parameters from JSON configuration */
+  void set_params(const json& config) override;
+  
+  /** @brief Get optimizer parameters as JSON configuration */
+  json get_params() const override;
 
 private:
   AdamWParameters m_adam_params;

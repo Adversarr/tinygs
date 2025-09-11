@@ -40,8 +40,8 @@ public:
   const RandomParameters& get_random_parameters() const { return m_params; }
 
   // JSON interface overrides
-  void set_parameters(const json& params) override;
-  json get_parameters() const override;
+  void set_params(const json& params) override;
+  json get_params() const override;
 };
 
 }  // namespace tinygs

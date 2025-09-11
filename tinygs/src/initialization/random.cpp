@@ -125,7 +125,7 @@ void RandomInitialization::initialize(const PointCloud&  /*pointcloud*/) {
   log_info("Uniform scale: {}", m_params.use_uniform_scale);
 }
 
-void RandomInitialization::set_parameters(const json& params) {
+void RandomInitialization::set_params(const json& params) {
   if (params.contains("num_points")) {
     m_params.num_points = params["num_points"].get<int>();
   }
@@ -155,7 +155,7 @@ void RandomInitialization::set_parameters(const json& params) {
   }
 }
 
-json RandomInitialization::get_parameters() const {
+json RandomInitialization::get_params() const {
   json params;
   params["num_points"] = m_params.num_points;
   params["extent"] = m_params.extent;

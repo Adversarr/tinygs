@@ -1,11 +1,24 @@
 #pragma once
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/optim/optim.hpp"
+#include "tinygs/common.hpp"
 
 namespace tinygs {
 
 struct SGDParameters {
   // No momentum parameters needed for basic SGD
+
+  /** @brief Default constructor with default values */
+  SGDParameters() = default;
+
+  /** @brief Construct from JSON configuration */
+  explicit SGDParameters(const json& config);
+
+  /** @brief Convert parameters to JSON */
+  json to_json() const;
+
+  /** @brief Load parameters from JSON */
+  void from_json(const json& config);
 };
 
 /**
@@ -20,10 +33,8 @@ public:
    * @brief Construct SGD optimizer with specified parameters
    * @param gaussians Shared pointer to GPU Gaussian parameters
    * @param gaussians_grad Shared pointer to GPU Gaussian gradients
-   * @param params SGD-specific parameters (currently none)
    */
-  SGD(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad,
-        const SGDParameters& params = {});
+  SGD(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
   ~SGD() override = default;
 
@@ -44,6 +55,20 @@ public:
   
   /** @brief Reset opacity-related optimizer state (no-op for SGD) */
   void reset_opacity() override;
+
+  /**
+   * @brief Set optimizer parameters from JSON configuration
+   * 
+   * @param config JSON configuration containing optimizer parameters
+   */
+  void set_params(const json& config) override;
+
+  /**
+   * @brief Get current optimizer parameters as JSON
+   * 
+   * @return JSON object containing current optimizer parameters
+   */
+  json get_params() const override;
 
 private:
   SGDParameters m_sgd_params;

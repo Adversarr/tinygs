@@ -41,7 +41,7 @@
 #include <cstdint>
 #include <memory>
 #include <type_traits>
-#include <nlohmann/json_fwd.hpp>
+#include <nlohmann/json.hpp>
 
 #if defined(__CUDACC__)
 #include <cuda_fp16.h>

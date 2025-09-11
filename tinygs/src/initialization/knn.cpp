@@ -222,7 +222,7 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   log_info("SH degree: {}", m_params.sh_degree);
 }
 
-void KnnInitialization::set_parameters(const json& params) {
+void KnnInitialization::set_params(const json& params) {
   if (params.contains("num_neighbors")) {
     m_params.num_neighbors = params["num_neighbors"].get<int>();
   }
@@ -252,7 +252,7 @@ void KnnInitialization::set_parameters(const json& params) {
   }
 }
 
-json KnnInitialization::get_parameters() const {
+json KnnInitialization::get_params() const {
   json params;
   params["num_neighbors"] = m_params.num_neighbors;
   params["min_distance"] = m_params.min_distance;

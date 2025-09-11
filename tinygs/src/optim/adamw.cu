@@ -2,6 +2,7 @@
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/optim/adamw.hpp"
 
+
 namespace tinygs {
 
 template <typename Elem>
@@ -201,6 +202,12 @@ void AdamW::step(float scale) {
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
   const int grid = (m_gaussians->size() + 255) / 256;
 
+  if (!m_gaussians || !m_gaussians_grad) {
+    throw std::runtime_error("AdamW::step: gaussians or gaussians_grad is null");
+  } else if (m_gaussians->size() != m_gaussians_grad->size()) {
+    throw std::runtime_error("AdamW::step: gaussians and gaussians_grad must have same size");
+  }
+
   launch_gaussian_adam_step_SoA<<<grid, 256>>>(
     thrust::raw_pointer_cast(m_gaussians->means().data()),
     thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
@@ -229,9 +236,8 @@ void AdamW::step(float scale) {
   );
 }
 
-AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad,
-      const AdamWParameters& params):
-  OptimizerBase(gaussians, gaussians_grad), m_adam_params(params) {
+AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad) :
+  OptimizerBase(gaussians, gaussians_grad) {
   // Resize and reset all internal buffers
   AdamW::reset();
 }
@@ -479,4 +485,51 @@ void AdamW::reset_opacity() {
   thrust::fill(m_opacities_first_second.begin(), m_opacities_first_second.end(), 0.f);
 }
 
+void AdamW::set_params(const json& config) {
+  // Update base optimizer parameters
+  OptimizerBase::set_params(config);
+  
+  // Update AdamW-specific parameters
+  m_adam_params.from_json(config);
 }
+
+json AdamW::get_params() const {
+  // Get base optimizer parameters
+  json params = OptimizerBase::get_params();
+  
+  // Add AdamW-specific parameters
+  json adamw_params = m_adam_params.to_json();
+  
+  // Merge the two JSON objects
+  for (auto& [key, value] : adamw_params.items()) {
+    params[key] = value;
+  }
+  
+  return params;
+}
+
+json AdamWParameters::to_json() const {
+  json j;
+  j["beta1"] = beta1;
+  j["beta2"] = beta2;
+  j["epsilon"] = epsilon;
+  j["enable_adabound"] = enable_adabound;
+  return j;
+}
+
+void AdamWParameters::from_json(const json& config) {
+  if (config.contains("beta1")) {
+    beta1 = config["beta1"];
+  }
+  if (config.contains("beta2")) {
+    beta2 = config["beta2"];
+  }
+  if (config.contains("epsilon")) {
+    epsilon = config["epsilon"];
+  }
+  if (config.contains("enable_adabound")) {
+    enable_adabound = config["enable_adabound"];
+  }
+}
+
+} // namespace tinygs
