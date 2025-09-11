@@ -15,6 +15,11 @@ struct KnnParameters {
   float init_scaling = 1.0f;       // Initial scaling factor
   float init_opacity = 0.1f;       // Initial opacity value
   int sh_degree = 3;               // Spherical harmonics degree
+  
+  // Radius outlier removal parameters
+  bool enable_radius_outlier_removal = true; // Enable/disable radius outlier removal
+  int nb_points = 16;              // Minimum number of neighbors within radius
+  float radius = 0.05f;            // Radius for neighbor search
 };
 
 // Initialize the GS size to be the average dist of the K nearest neighbors
@@ -26,6 +31,9 @@ private:
   std::vector<float> compute_mean_neighbor_distances(const std::vector<vec3>& points) const;
   float calculate_scene_scale(const std::vector<float>& distances) const;
   vec3 rgb_to_sh(const vec3& rgb) const;
+  
+  // Radius outlier removal functionality
+  std::vector<size_t> radius_outlier_removal(const std::vector<vec3>& points) const;
 
 public:
   explicit KnnInitialization(const KnnParameters& params = KnnParameters{});

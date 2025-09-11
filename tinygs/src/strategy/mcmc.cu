@@ -99,10 +99,10 @@ __global__ void add_noise_kernel(
       raw_scales[idx_3d + 1],
       raw_scales[idx_3d + 2]
     );
-    mat3x3 S2 = mat3x3(
-      activate_scale(2.f * raw_scale[0]), 0.f, 0.f,
-      0.f, activate_scale(2.f * raw_scale[1]), 0.f,
-      0.f, 0.f, activate_scale(2.f * raw_scale[2])
+    mat3x3 S = mat3x3(
+      activate_scale(raw_scale[0]), 0.f, 0.f,
+      0.f, activate_scale(raw_scale[1]), 0.f,
+      0.f, 0.f, activate_scale(raw_scale[2])
     );
 
     quat raw_quat = normalize(quat( //
@@ -113,7 +113,7 @@ __global__ void add_noise_kernel(
         ));
     mat3x3 R = quat_to_mat3(raw_quat);
 
-    mat3x3 covariance = R * S2 * transpose(R);
+    mat3x3 covariance = R * S;
 
     vec3 transformed_noise = covariance * vec3(
       noise[idx_3d + 0],
@@ -121,9 +121,9 @@ __global__ void add_noise_kernel(
       noise[idx_3d + 2]
     );
 
-    float opacity = logistic(-raw_opacities[idx]); // convert to [0, 1]
-    float op_sigmoid = __frcp_rn(1.f + __expf(100.f * opacity - 0.5f));
-    // float op_sigmoid = 1.0f / (1 + expf(-100.0f * ((1 - opacity) - 0.995f)));
+    float opacity = deactivate_opacity(-raw_opacities[idx]); // convert to [0, 1]
+    // float op_sigmoid = __frcp_rn(1.f + __expf(100.f * opacity - 0.5f));
+    float op_sigmoid = 1.0f / (1 + expf(-100.0f * ((1 - opacity) - 0.995f)));
     float noise_factor = current_lr * op_sigmoid;
 
     means[idx_3d] += noise_factor * transformed_noise.x;
@@ -196,7 +196,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
     m_gaussians->opacities().begin(),
     m_gaussians->opacities().end(),
     opacities.begin(),
-    [] __device__ (float opacity) { return logistic(opacity); }
+    [] __device__ (float opacity) { return activate_opacity(opacity); }
   ); // actual opacity = sigmoid(opacity)
 
   // Sample from alive Gaussians based on opacity
@@ -270,7 +270,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
       int dst = new_indices[idx];  // Get the destination index.
       assert(dst >= num_gaussians);
       means[dst] = means[src];
-      opacities[src] = opacities[dst] = logit(sampled_opacities[idx]);
+      opacities[src] = opacities[dst] = deactivate_opacity(sampled_opacities[idx]);
       scales[src] = scales[dst] = log(sampled_scales[idx]);
       rotations[dst] = rotations[src];
       sh_coefficient_0[dst] = sh_coefficient_0[src];
@@ -457,8 +457,8 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
       int src = sampled_idxs[idx]; // Get the source index.
       int dst = dead_idxs[idx];    // Get the destination index.
       means[dst] = means[src];
-      opacities[src] = opacities[dst] = logit(new_opacities[idx]);
-      scales[src] = scales[dst] = log(new_scales[idx]);
+      opacities[src] = opacities[dst] = deactivate_opacity(new_opacities[idx]);
+      scales[src] = scales[dst] = deactivate_scale(new_scales[idx]);
       rotations[dst] = rotations[src];
       sh_coefficient_0[dst] = sh_coefficient_0[src];
       auto sh_coef_src = sh_coefficients_rest + src * (kMaxSphericalHarmonicsCoefficients - 1);

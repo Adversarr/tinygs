@@ -19,7 +19,7 @@ struct StrategyParams {
   float duplicate_scale_threshold = 0.01f;
 
   int refine_every = 100;
-  int start_refine = 1000;
+  int start_refine = 500;
   int end_refine = 15'000;
   int max_num_gaussians = 10'000'000;
   int reset_every = 3'000;

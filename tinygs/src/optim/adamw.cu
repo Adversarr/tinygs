@@ -413,20 +413,20 @@ void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
   m_gaussian_steps.resize(m_gaussians->size(), 0);
 
   // TODO: This design does not provide better result. Why?
-  const int grid = (num_duplicate + 255) / 256;
-  duplicate_optimizer_state_kernel<<<grid, 256>>>(
-    thrust::raw_pointer_cast(m_means_first_second.data()),
-    thrust::raw_pointer_cast(m_opacities_first_second.data()),
-    thrust::raw_pointer_cast(m_rotations_first_second.data()),
-    thrust::raw_pointer_cast(m_scales_first_second.data()),
-    thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
-    thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
-    thrust::raw_pointer_cast(m_gaussian_steps.data()),
-    indices,
-    new_indices,
-    num_duplicate,
-    num_sh_rest_per_gaussian
-  );
+  // const int grid = (num_duplicate + 255) / 256;
+  // duplicate_optimizer_state_kernel<<<grid, 256>>>(
+  //   thrust::raw_pointer_cast(m_means_first_second.data()),
+  //   thrust::raw_pointer_cast(m_opacities_first_second.data()),
+  //   thrust::raw_pointer_cast(m_rotations_first_second.data()),
+  //   thrust::raw_pointer_cast(m_scales_first_second.data()),
+  //   thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
+  //   thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
+  //   thrust::raw_pointer_cast(m_gaussian_steps.data()),
+  //   indices,
+  //   new_indices,
+  //   num_duplicate,
+  //   num_sh_rest_per_gaussian
+  // );
 }
 
 void AdamW::reset() {

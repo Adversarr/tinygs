@@ -25,7 +25,7 @@ public:
   void step_impl(const RasterizeContext& ctx) override;
 
 protected:
-  float m_noise_lr_init = 1.0e5f;
+  float m_noise_lr_init = 1.6f; // 1e5 * 1.6e-4
   float m_noise_lr_decay = 1.0f - 2.0e-4f; // after 5'000 step, decay to about 1/e~=0.36
   float m_noise_lr = m_noise_lr_init;
   float m_grow_ratio = 1.05f;

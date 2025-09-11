@@ -39,4 +39,46 @@ mat4x4 normalize_scene(
   float ext_scale = 1.0f
 );
 
+
+
+TINYGS_HOST_DEVICE inline float activate_scale(float x) {
+  return ::expf(x);
+  // return log(1 + exp(x));
+}
+
+TINYGS_HOST_DEVICE inline float deactivate_scale(float x) {
+  return ::logf(x);
+  // return log(exp(x) - 1);
+}
+
+TINYGS_HOST_DEVICE inline float activate_scale_deriv(float x) {
+  return ::expf(x);
+  // return logistic(x);
+}
+
+TINYGS_HOST_DEVICE inline vec3 activate_scale(const vec3& x) {
+  return vec3(activate_scale(x.x), activate_scale(x.y), activate_scale(x.z));
+}
+
+TINYGS_HOST_DEVICE inline vec3 deactivate_scale(const vec3& x) {
+  return vec3(deactivate_scale(x.x), deactivate_scale(x.y), deactivate_scale(x.z));
+}
+
+TINYGS_HOST_DEVICE inline vec3 activate_scale_deriv(const vec3& x) {
+  return vec3(activate_scale_deriv(x.x), activate_scale_deriv(x.y), activate_scale_deriv(x.z));
+}
+
+TINYGS_HOST_DEVICE inline float activate_opacity(float x) {
+  return logistic(x);
+}
+
+TINYGS_HOST_DEVICE inline float deactivate_opacity(float x) {
+  return logit(x);
+}
+
+TINYGS_HOST_DEVICE inline float activate_opacity_deriv(float x) {
+  const float actx = activate_opacity(x);
+  return actx * (1 - actx);
+}
+
 }  // namespace tinygs

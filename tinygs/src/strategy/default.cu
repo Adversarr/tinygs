@@ -202,8 +202,8 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
         const float new_opacity = 1.0f - sqrtf(1.0f - activate_opacity(opacities[src_idx]));
         const vec3 rand1 = vec3(device_scales[i * 6 + 0], device_scales[i * 6 + 1], device_scales[i * 6 + 2]);
         const vec3 rand2 = vec3(device_scales[i * 6 + 3], device_scales[i * 6 + 4], device_scales[i * 6 + 5]);
-        const vec3 off1 = rot * (actual_scale * rand1);
-        const vec3 off2 = rot * (actual_scale * rand2);
+        const vec3 off1 = rot * (rand1 * (actual_scale + 1e-5f));
+        const vec3 off2 = rot * (rand2 * (actual_scale + 1e-5f));
 
         /// 1. target gs
         means3d[target_idx] = means3d[src_idx] + off1;

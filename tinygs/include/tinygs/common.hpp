@@ -349,4 +349,16 @@ constexpr uint32_t kMaxImageWidth = 2048;
 constexpr uint32_t kMaxImageHeight = 2048;
 constexpr uint32_t kMaxImageChannels = 4;
 
+
+static constexpr float SQRT2 = 1.41421356237309504880f;
+
+TINYGS_HOST_DEVICE inline float logistic(const float x) {
+  return 1.0f / (1.0f + expf(-x));
+}
+
+TINYGS_HOST_DEVICE inline float logit(const float x) {
+  return -logf(1.0f / (fminf(fmaxf(x, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
+}
+
+
 } // namespace tinygs

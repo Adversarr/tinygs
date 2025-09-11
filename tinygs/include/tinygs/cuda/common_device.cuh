@@ -38,22 +38,12 @@
 
 namespace tinygs {
 
+
 __forceinline__ __device__ unsigned lane_id() {
   unsigned ret;
   asm volatile("mov.u32 %0, %laneid;" : "=r"(ret));
   return ret;
 }
-
-static constexpr float SQRT2 = 1.41421356237309504880f;
-
-__host__ __device__ inline float logistic(const float x) {
-  return 1.0f / (1.0f + expf(-x));
-}
-
-__host__ __device__ inline float logit(const float x) {
-  return -logf(1.0f / (fminf(fmaxf(x, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
-}
-
 
 #define IQ_DEFAULT_STATE 0x853c49e6748fea9bULL
 
@@ -170,43 +160,6 @@ __device__ __forceinline__ float saturate(float x) {
 __device__ __forceinline__ float saturate_deriv(float x) {
   // Derivative of saturate: 1 inside (0,1), 0 otherwise
   return (x > 0.0f && x < 1.0f) ? 1.0f : 0.0f;
-}
-
-__device__ __forceinline__ float activate_scale(float x) {
-  return ::expf(x);
-}
-
-__device__ __forceinline__ vec3 activate_scale(const vec3& x) {
-  return vec3(activate_scale(x.x), activate_scale(x.y), activate_scale(x.z));
-}
-
-__device__ __forceinline__ float deactivate_scale(float x) {
-  return ::logf(x);
-}
-
-__device__ __forceinline__ vec3 deactivate_scale(const vec3& x) {
-  return vec3(deactivate_scale(x.x), deactivate_scale(x.y), deactivate_scale(x.z));
-}
-
-__device__ __forceinline__ float activate_scale_deriv(float x) {
-  return ::expf(x);
-}
-
-__device__ __forceinline__ vec3 activate_scale_deriv(const vec3& x) {
-  return vec3(activate_scale_deriv(x.x), activate_scale_deriv(x.y), activate_scale_deriv(x.z));
-}
-
-__device__ __forceinline__ float activate_opacity(float x) {
-  return logistic(x);
-}
-
-__device__ __forceinline__ float deactivate_opacity(float x) {
-  return logit(x);
-}
-
-__device__ __forceinline__ float activate_opacity_deriv(float x) {
-  const float actx = activate_opacity(x);
-  return actx * (1 - actx);
 }
 
 } // namespace tinygs

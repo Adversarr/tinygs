@@ -50,7 +50,7 @@ std::vector<vec3> skybox(
   }
 
   vec3 center = (cam_pos_min + cam_pos_max) * 0.5f;
-  float radius = max(cam_pos_max - cam_pos_min) * 15.f;
+  float radius = max(cam_pos_max - cam_pos_min) * 5.f;
   auto rand_on_sphere = [&]() {
     vec3 p = vec3(dist(rng), dist(rng), dist(rng));
     p = glm::normalize(p);
@@ -94,13 +94,13 @@ int main() {
   log_info("#points: {}", pc.points.size());
 
   // Extend with skybox points
-  // {
-  //   auto p_sky = skybox(*dataset, 10000);
-  //   for (auto& p : p_sky) {
-  //     pc.points.push_back(p);
-  //     pc.colors.push_back(vec3(0.2f));
-  //   }
-  // }
+  {
+    auto p_sky = skybox(*dataset, 10000);
+    for (auto& p : p_sky) {
+      pc.points.push_back(p);
+      pc.colors.push_back(vec3(0.2f));
+    }
+  }
 
   // Initialize gaussians
   KnnInitialization knn;
@@ -131,15 +131,15 @@ int main() {
   auto optimizer = std::make_shared<AdamW>(gs3d, grads);
   trainer.set_optimizer(optimizer);
   
-  // auto strategy = std::make_shared<MCMCStrategy>(gs3d, grads, optimizer);
-  auto strategy = std::make_shared<DefaultStrategy>(gs3d, grads, optimizer);
+  auto strategy = std::make_shared<MCMCStrategy>(gs3d, grads, optimizer);
+  // auto strategy = std::make_shared<DefaultStrategy>(gs3d, grads, optimizer);
   trainer.set_strategy(strategy);
   
   // Add loss functions
   auto l1_loss = std::make_shared<L1Loss>();
   auto ssim_loss = std::make_shared<FusedSSIMLoss>();
   trainer.add_loss(l1_loss, 0.8f);
-  // trainer.add_loss(ssim_loss, 0.2f);
+  trainer.add_loss(ssim_loss, 0.2f);
   
   // Add metrics
   auto psnr_metric = std::make_shared<PsnrMetric>();
@@ -187,19 +187,20 @@ int main() {
             img.at<cv::Vec3b>(y, x)[2] = static_cast<uint8_t>(std::clamp(cpu_image[r_idx] * 255.0f, 0.0f, 255.0f));  // R
           }
         }
-        cv::imwrite(fmt::format("render_{}.jpg", state.current_step), img);
+        cv::imshow(fmt::format("render", state.current_step), img);
+        // cv::imwrite(fmt::format("render_{}.jpg", state.current_step), img);
       }
 
-      // const auto& d_means = gs3d->means();
-      // std::vector<vec3> h_means(d_means.size());
-      // cudaMemcpy(h_means.data(), thrust::raw_pointer_cast(d_means.data()), d_means.size() * sizeof(vec3),
-      //            cudaMemcpyDeviceToHost);
+      const auto& d_means = gs3d->means();
+      std::vector<vec3> h_means(d_means.size());
+      cudaMemcpy(h_means.data(), thrust::raw_pointer_cast(d_means.data()), d_means.size() * sizeof(vec3),
+                 cudaMemcpyDeviceToHost);
 
-      // // save to file
-      // std::ofstream out("means.txt");
-      // for (const auto& m : h_means) {
-      //   out << m.x << " " << m.y << " " << m.z << "\n";
-      // }
+      // save to file
+      std::ofstream out("means.txt");
+      for (const auto& m : h_means) {
+        out << m.x << " " << m.y << " " << m.z << "\n";
+      }
       if (char key = cv::waitKey(1); key == 27) {
         trainer.stop_training();
         std::cout << "ESC pressed - stopping training..." << std::endl;
@@ -214,6 +215,7 @@ int main() {
       auto rot_stat = compute_buffer_stat_gpu(thrust::raw_pointer_cast(gs3d->rotations().data()), gs3d->rotations().size());
       log_info("rot stat: {}", to_string(rot_stat));
     }
+    // exit(1);
   };
   
   trainer.set_post_step_callback(visualization_callback);
