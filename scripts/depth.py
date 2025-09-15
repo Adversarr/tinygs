@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
-MODEL_NAME = "depth-anything/Depth-Anything-V2-Small-hf"
+MODEL_NAME = "depth-anything/Depth-Anything-V2-Large-hf"
 
 class DepthEstimator:
     """
@@ -16,6 +16,7 @@ class DepthEstimator:
     _instance = None
     _model = None
     _image_processor = None
+    _device = None
 
     def __new__(cls):
         if cls._instance is None:
@@ -28,8 +29,10 @@ class DepthEstimator:
 
     def _initialize_model(self):
         """Initialize the depth estimation model and processor."""
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
         self._image_processor = AutoImageProcessor.from_pretrained(MODEL_NAME)
         self._model = AutoModelForDepthEstimation.from_pretrained(MODEL_NAME)
+        self._model.to(self._device)
         self._model.eval()  # Set to evaluation mode
 
     def _numpy_to_pil(self, img_array: np.ndarray) -> Image.Image:
@@ -75,7 +78,7 @@ class DepthEstimator:
         target_sizes = [(img.height, img.width) for img in pil_images]
 
         # Process images
-        inputs = self._image_processor(images=pil_images, return_tensors="pt")
+        inputs = self._image_processor(images=pil_images, return_tensors="pt").to(self._device)
 
         with torch.no_grad():
             outputs = self._model(**inputs)

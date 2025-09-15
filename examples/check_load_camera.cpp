@@ -40,7 +40,7 @@ int main() {
     auto start = std::chrono::system_clock::now();
     std::shared_ptr<tinygs::PngFolderDataset> dataset = std::make_shared<tinygs::PngFolderDataset>(
         DATA_PATH + "inputs/images_480x640_1", camera_extrinsics_path,
-        camera_intrinsics_path, shape);
+        camera_intrinsics_path);
     auto end = std::chrono::system_clock::now();
     std::cout << "Load image cost: " << (end - start).count() << std::endl;
     

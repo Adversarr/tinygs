@@ -63,9 +63,8 @@ target_link_libraries(tinygs
         ${OpenCV_LIBS}
 )
 
-target_compile_definitions(
-        tinygs
-        PUBLIC
+target_compile_definitions(tinygs
+    PUBLIC
         SPDLOG_ACTIVE_LEVEL=0
 )
 
@@ -100,9 +99,30 @@ target_compile_definitions(tinygs
         $<$<COMPILE_LANGUAGE:CUDA>:__CUDA_NO_BFLOAT16_CONVERSIONS__>
 )
 
-# CUDA-specific compile options
-if(TINYGS_CUDA_SOURCES)
-    set_source_files_properties(${TINYGS_CUDA_SOURCES} PROPERTIES
-        COMPILE_FLAGS "${CMAKE_CUDA_FLAGS}"
+# Compiler-specific flags (enhanced following tiny-cuda-nn patterns)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(tinygs PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:$<$<CONFIG:Release>:-O3;-DNDEBUG;-march=native;-mtune=native>>
+        $<$<COMPILE_LANGUAGE:CXX>:$<$<CONFIG:Debug>:-O0;-g;-Wall;-Wextra;-Wpedantic>>
     )
 endif()
+
+# CUDA compiler flags (following tiny-cuda-nn patterns)
+if(MSVC)
+    target_compile_options(tinygs PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/bigobj>
+    )
+else()
+    target_compile_options(tinygs PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-float-conversion>
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fno-strict-aliasing>
+        $<$<COMPILE_LANGUAGE:CUDA>:-Xcudafe=--diag_suppress=unrecognized_gcc_pragma>
+        $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>
+    )
+endif()
+
+# Essential CUDA flags for modern C++ and performance
+target_compile_options(tinygs PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
+    $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
+)

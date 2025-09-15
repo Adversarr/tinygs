@@ -33,31 +33,6 @@ list(GET CMAKE_CUDA_ARCHITECTURES 0 MIN_GPU_ARCH)
 add_compile_definitions(TINYGS_MIN_GPU_ARCH=${MIN_GPU_ARCH})
 
 
-# Compiler-specific flags (enhanced following tiny-cuda-nn patterns)
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native -mtune=native")
-    set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -Wall -Wextra -Wpedantic")
-endif()
-
-# CUDA compiler flags (following tiny-cuda-nn patterns)
-if(MSVC)
-    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler=/bigobj")
-else()
-    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler=-Wno-float-conversion")
-    list(APPEND CUDA_NVCC_FLAGS "-Xcompiler=-fno-strict-aliasing")
-    list(APPEND CUDA_NVCC_FLAGS "-Xcudafe=--diag_suppress=unrecognized_gcc_pragma")
-    list(APPEND CUDA_NVCC_FLAGS "--use_fast_math")
-endif()
-
-# Essential CUDA flags for modern C++ and performance
-list(APPEND CUDA_NVCC_FLAGS "--extended-lambda")
-list(APPEND CUDA_NVCC_FLAGS "--expt-relaxed-constexpr")
-
-# Apply CUDA flags globally
-string(REPLACE ";" " " CUDA_NVCC_FLAGS_STR "${CUDA_NVCC_FLAGS}")
-set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} ${CUDA_NVCC_FLAGS_STR}")
-
-
 # Project configuration
 project(tinygs
         VERSION 1.0.0
