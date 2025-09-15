@@ -155,16 +155,22 @@ void MCMCStrategy::reset() {
   m_noise_lr = m_mcmc_params.noise_lr_init;
 }
 
-static thrust::default_random_engine rng;
-
 void MCMCStrategy::add_noise(const RasterizeContext& /* ctx */) {
   // TODO: this is simpler than expected.
   TINYGS_TIMER("MCMCStrategy::add_noise");
   size_t num_gaussians = m_gaussians->size();
   if (num_gaussians == 0) return;
   thrust::host_vector<float> h_noise(3 * num_gaussians);
-  thrust::uniform_real_distribution<float> dist(0, 1);
-  thrust::generate(h_noise.begin(), h_noise.end(), [&]() { return m_noise_lr * dist(rng); });
+  thrust::generate(h_noise.begin(), h_noise.end(), [&]() { 
+    float u1 = 1 - m_rng.next_float();
+    float u2 = m_rng.next_float();
+    // Box-Muller transform with safety checks
+    const float epsilon = 1e-7f;
+    u1 = std::max(epsilon, std::min(1.0f - epsilon, u1)); // Ensure u1 is in (0,1)
+    const float noise = m_noise_lr * std::sqrt(-2.0f * std::log(u1)) * std::cos(2.0f * M_PI * u2);
+    return std::isfinite(noise) ? noise : 0.0f; // Return 0 if result is invalid
+  });
+
   thrust::device_vector<float> noise = h_noise;
   add_noise_kernel<<<(num_gaussians + 255) / 256, 256>>>(
     num_gaussians,
@@ -206,7 +212,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
     thrust::raw_pointer_cast(probs.data()),
     num_gaussians,
     num_to_add,
-    time(nullptr) // TODO: replace with real seed.
+    m_rng.next_uint()
   );
   thrust::device_vector<int> sampled_idxs(num_to_add);
   thrust::copy(
@@ -484,6 +490,7 @@ void MCMCStrategy::set_params(const json& config) {
   
   // Update current noise lr with the new initial value
   m_noise_lr = m_mcmc_params.noise_lr_init;
+  m_rng.seed(m_params.seed);
 }
 
 json MCMCStrategy::get_params() const {

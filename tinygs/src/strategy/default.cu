@@ -31,8 +31,6 @@ void reset_opacity(const std::shared_ptr<GPUGaussian3d>& gaussians, float min_op
   );
 }
 
-thrust::default_random_engine rng(42);
-
 void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   TINYGS_TIMER("DefaultStrategy::step");
   if (!ctx.densification_info) {
@@ -160,10 +158,18 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   }
 
 
-  // TODO: replace the seed with global defined.
   thrust::normal_distribution<float> dist(0.f, 1.f);
   thrust::host_vector<float> host_scales(num_grows * 6);
-  thrust::generate(host_scales.begin(), host_scales.end(), [&] { return dist(rng); });
+  thrust::generate(host_scales.begin(), host_scales.end(), [&] {
+    float u1 = 1 - m_rng.next_float();
+    float u2 = m_rng.next_float();
+    // Box-Muller transform with safety checks
+    const float epsilon = 1e-7f;
+    u1 = std::max(epsilon, std::min(1.0f - epsilon, u1)); // Ensure u1 is in (0,1)
+    const float noise = std::sqrt(-2.0f * std::log(u1)) * std::cos(2.0f * M_PI * u2);
+    return std::isfinite(noise) ? noise : 0.0f; // Return 0 if result is invalid
+  });
+
   thrust::device_vector<float> device_scales = host_scales;
 
   // Do the duplicate and split.
@@ -260,6 +266,7 @@ void DefaultStrategy::prune(const RasterizeContext& /* ctx */) {
 
 void DefaultStrategy::set_params(const json& config) {
   StrategyBase::set_params(config);
+  m_rng.seed(m_params.seed);
 }
 
 json DefaultStrategy::get_params() const {

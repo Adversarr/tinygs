@@ -21,6 +21,12 @@ public:
   GPUBatchInputOutput next(cudaStream_t stream) override;
   GPUBatchInputOutput next() override;
 
+  /// Set the parameters for the dataloader.
+  void set_params(const json &params) override;
+
+  /// Get the parameters for the dataloader.
+  json get_params() const override;
+
 private:
   // It always use this buffer to store the data on GPU.
   GPUMemory<float> m_gpu_memory;

@@ -78,6 +78,7 @@ json StrategyParams::to_json() const {
   j["end_refine"] = end_refine;
   j["max_num_gaussians"] = max_num_gaussians;
   j["reset_every"] = reset_every;
+  j["seed"] = seed;
   return j;
 }
 
@@ -111,6 +112,9 @@ void StrategyParams::from_json(const json& config) {
   }
   if (config.contains("reset_every")) {
     reset_every = config["reset_every"].get<int>();
+  }
+  if (config.contains("seed")) {
+    seed = config["seed"].get<uint64_t>();
   }
 }
 

@@ -141,15 +141,6 @@ vec3 KnnInitialization::rgb_to_sh(const vec3& rgb) const {
   return (rgb - vec3(0.5f)) / kInvSH;
 }
 
-inline vec4 randn4() {
-  static pcg32 rng(0);
-  float u1 = rng.next_float();
-  float u2 = rng.next_float();
-  float u3 = rng.next_float();
-  float u4 = rng.next_float();
-  return vec4(u1, u2, u3, u4);
-}
-
 void KnnInitialization::initialize(const PointCloud& pointcloud) {
   TINYGS_TIMER("KnnInitialization::initialize");
   const auto& positions = pointcloud.points;

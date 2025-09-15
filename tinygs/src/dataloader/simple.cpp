@@ -4,7 +4,7 @@
 namespace tinygs {
 
 SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataLoaderBase(dataset) {
-  m_rng.seed(0); // TODO: make it configurable
+  m_rng.seed(0);
 }
 
 GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
@@ -60,6 +60,16 @@ GPUBatchInputOutput SimpleDataLoader::next() {
   auto r = next(cudaStreamDefault);
   CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
   return std::move(r);
+}
+
+void SimpleDataLoader::set_params(const json &params) {
+  if (params.contains("seed")) {
+    m_rng.seed(params["seed"].get<uint64_t>());
+  }
+}
+
+json SimpleDataLoader::get_params() const {
+  return json::object();
 }
 
 } // namespace tinygs

@@ -123,7 +123,7 @@ std::vector<int> multinomial_cpu_with_replacement(
   }
 
   // Initialize random number generator
-  pcg32 rng(seed, 0);
+  pcg32 rng(seed);
 
   // Sample indices
   std::vector<int> out_indices(num_samples);

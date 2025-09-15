@@ -77,6 +77,12 @@ public:
   /// Get the underlying dataset. It ensures the dataset is not null.
   std::shared_ptr<DatasetBase> get_dataset() const;
 
+  /// Set the parameters for the dataloader.
+  virtual void set_params(const json &params);
+
+  /// Get the parameters for the dataloader.
+  virtual json get_params() const;
+
 protected:
   std::shared_ptr<DatasetBase> m_dataset;
 

@@ -23,6 +23,7 @@ struct StrategyParams {
   int end_refine = 15'000;
   int max_num_gaussians = 10'000'000;
   int reset_every = 3'000;
+  uint64_t seed = 42;
 
   /** @brief Default constructor with default values */
   StrategyParams() = default;

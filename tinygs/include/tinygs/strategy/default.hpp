@@ -1,4 +1,5 @@
 #pragma once
+#include "tinygs/random/pcg32.hpp"
 #include "tinygs/strategy/strategy.hpp"
 
 namespace tinygs {
@@ -33,5 +34,7 @@ public:
    * @return JSON object containing current strategy parameters
    */
   json get_params() const override;
+
+  pcg32 m_rng;
 };
 }  // namespace tinygs

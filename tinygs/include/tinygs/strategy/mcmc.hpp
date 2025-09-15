@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tinygs/optim/lr_scheduler.hpp"
+#include "tinygs/random/pcg32.hpp"
 #include "tinygs/strategy/strategy.hpp"
 namespace tinygs {
 
@@ -59,6 +60,8 @@ public:
 protected:
   MCMCParams m_mcmc_params;
   float m_noise_lr;
+
+  pcg32 m_rng;
 
 public:
   // NOTE: MCMC use relocate instead of pruning.

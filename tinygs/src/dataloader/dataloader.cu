@@ -126,4 +126,10 @@ std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_
   }
 }
 
+void DataLoaderBase::set_params(const json &params) {
+  (void) params;
+}
+json DataLoaderBase::get_params() const { 
+  return json::object();
+}
 } // namespace tinygs
