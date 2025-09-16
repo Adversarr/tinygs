@@ -157,6 +157,7 @@ void RandomInitialization::set_params(const json& params) {
 
 json RandomInitialization::get_params() const {
   json params;
+  params["type"] = "random";
   params["num_points"] = m_params.num_points;
   params["extent"] = m_params.extent;
   params["init_scaling"] = m_params.init_scaling;

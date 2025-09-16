@@ -164,6 +164,7 @@ void SGD::set_params(const json& config) {
 
 json SGD::get_params() const {
   json result = OptimizerBase::get_params();
+  result["type"] = "sgd";
   result["sgd"] = m_sgd_params.to_json();
   return result;
 }

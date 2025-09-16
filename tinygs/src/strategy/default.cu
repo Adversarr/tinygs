@@ -270,7 +270,9 @@ void DefaultStrategy::set_params(const json& config) {
 }
 
 json DefaultStrategy::get_params() const {
-  return StrategyBase::get_params();
+  json params = StrategyBase::get_params();
+  params["type"] = "default";
+  return params;
 }
 
 } // namespace tinygs

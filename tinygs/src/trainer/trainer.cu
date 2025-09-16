@@ -10,6 +10,35 @@
 
 namespace tinygs {
 
+// TrainerConfig serialization methods
+json TrainerConfig::to_json() const {
+  json j;
+  j["max_steps"] = max_steps;
+  j["log_interval"] = log_interval;
+  j["checkpoint_interval"] = checkpoint_interval;
+  j["sh_degree_interval"] = sh_degree_interval;
+  j["max_sh_degree"] = max_sh_degree;
+  j["enable_early_stopping"] = enable_early_stopping;
+  j["early_stopping_threshold"] = early_stopping_threshold;
+  j["early_stopping_patience"] = early_stopping_patience;
+  j["near_plane"] = near_plane;
+  j["far_plane"] = far_plane;
+  return j;
+}
+
+void TrainerConfig::from_json(const json& j) {
+  if (j.contains("max_steps")) max_steps = j["max_steps"].get<int>();
+  if (j.contains("log_interval")) log_interval = j["log_interval"].get<int>();
+  if (j.contains("checkpoint_interval")) checkpoint_interval = j["checkpoint_interval"].get<int>();
+  if (j.contains("sh_degree_interval")) sh_degree_interval = j["sh_degree_interval"].get<int>();
+  if (j.contains("max_sh_degree")) max_sh_degree = j["max_sh_degree"].get<int>();
+  if (j.contains("enable_early_stopping")) enable_early_stopping = j["enable_early_stopping"].get<bool>();
+  if (j.contains("early_stopping_threshold")) early_stopping_threshold = j["early_stopping_threshold"].get<float>();
+  if (j.contains("early_stopping_patience")) early_stopping_patience = j["early_stopping_patience"].get<int>();
+  if (j.contains("near_plane")) near_plane = j["near_plane"].get<float>();
+  if (j.contains("far_plane")) far_plane = j["far_plane"].get<float>();
+}
+
 void mean(const vec3* data, size_t size, vec3& out) {
   out = thrust::transform_reduce(
     thrust::device,
@@ -245,9 +274,8 @@ void Trainer::initialize_buffers() {
   m_rasterize_ctx.inference = false; // Training mode
   m_rasterize_ctx.fwd_input.width = width;
   m_rasterize_ctx.fwd_input.height = height;
-  // TODO: near and far should be configurable.
-  m_rasterize_ctx.fwd_input.near = 0.01f;
-  m_rasterize_ctx.fwd_input.far = 100.0f;
+  m_rasterize_ctx.fwd_input.near = m_config.near_plane;
+  m_rasterize_ctx.fwd_input.far = m_config.far_plane;
   
   // Setup output images
   m_rasterize_ctx.fwd_output.image = render_rgb;
@@ -327,6 +355,14 @@ bool Trainer::should_early_stop() const {
   // Simple early stopping based on loss threshold
   // More sophisticated implementations could track loss history
   return m_state.current_loss < m_config.early_stopping_threshold;
+}
+
+void Trainer::set_params(const json& j) {
+  m_config.from_json(j);
+}
+
+json Trainer::get_params() const {
+  return m_config.to_json();
 }
 
 void Trainer::validate_setup() const {

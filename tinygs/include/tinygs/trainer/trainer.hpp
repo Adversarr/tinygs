@@ -36,6 +36,13 @@ struct TrainerConfig {
   bool enable_early_stopping = false;
   float early_stopping_threshold = 1e-6f;
   size_t early_stopping_patience = 1000;
+
+  // Rasterization parameters
+  float near_plane = 0.01f;
+  float far_plane = 100.0f;
+
+  json to_json() const;
+  void from_json(const json& j);
 };
 
 /**
@@ -233,6 +240,9 @@ public:
    * @return Vector of metric values
    */
   std::vector<float> evaluate_metrics();
+
+  void set_params(const json& j);
+  json get_params() const;
 
 private:
   // Core training components

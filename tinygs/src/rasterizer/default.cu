@@ -360,4 +360,10 @@ void DefaultRasterizer::set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians) 
   m_impl->num_gaussians = n_gaussians;
 }
 
+void DefaultRasterizer::set_params(const json& /*j*/) {}
+
+json DefaultRasterizer::get_params() const {
+  return json::object({{"type", "default"}});
+}
+
 }  // namespace tinygs

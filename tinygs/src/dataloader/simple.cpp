@@ -69,7 +69,9 @@ void SimpleDataLoader::set_params(const json &params) {
 }
 
 json SimpleDataLoader::get_params() const {
-  return json::object();
+  json params = json::object();
+  params["type"] = "simple";
+  return params;
 }
 
 } // namespace tinygs

@@ -497,6 +497,9 @@ json AdamW::get_params() const {
   // Get base optimizer parameters
   json params = OptimizerBase::get_params();
   
+  // Add type for reflection
+  params["type"] = "adam";
+  
   // Add AdamW-specific parameters
   json adamw_params = m_adam_params.to_json();
   

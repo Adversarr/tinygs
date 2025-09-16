@@ -37,11 +37,14 @@ public:
 
   SingleCameraLoader& get_camera_loader() noexcept override;
 
+  void set_params(const json& j) override;
+  json get_params() const override;
+
 private:
   /// Configurables
-  std::string m_video_file_path;
-  std::string m_extrinsics_file_path;
-  std::string m_intrinsics_file_path;
+  std::string m_video_file_path{"YOUR_VIDEO_FILE_PATH"};
+  std::string m_extrinsics_file_path{"YOUR_EXTRINSICS_FILE_PATH"};
+  std::string m_intrinsics_file_path{"YOUR_INTRINSICS_FILE_PATH"};
 
   /// Loaded data
   SingleCameraLoader m_camera_loader;

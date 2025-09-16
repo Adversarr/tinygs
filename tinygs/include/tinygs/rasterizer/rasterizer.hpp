@@ -42,6 +42,9 @@ public:
   /// Called when the gaussians are changed. (especially the number of gaussians)
   virtual void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians);
 
+  virtual json get_params() const = 0;
+  virtual void set_params(const json& j) = 0;
+
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   std::shared_ptr<GPUMemoryArena> m_memory_arena;
@@ -49,6 +52,5 @@ protected:
 
 // Factory function for creating rasterizers
 std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type);
-std::unique_ptr<RasterizerBase> create_rasterizer();
 
 }

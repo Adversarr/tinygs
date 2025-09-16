@@ -131,8 +131,8 @@ int main() {
   auto optimizer = std::make_shared<AdamW>(gs3d, grads);
   trainer.set_optimizer(optimizer);
   
-  auto strategy = std::make_shared<MCMCStrategy>(gs3d, grads, optimizer);
-  // auto strategy = std::make_shared<DefaultStrategy>(gs3d, grads, optimizer);
+  // auto strategy = std::make_shared<MCMCStrategy>(gs3d, grads, optimizer);
+  auto strategy = std::make_shared<DefaultStrategy>(gs3d, grads, optimizer);
   trainer.set_strategy(strategy);
   
   // Add loss functions

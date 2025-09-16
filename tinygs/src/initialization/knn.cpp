@@ -245,6 +245,7 @@ void KnnInitialization::set_params(const json& params) {
 
 json KnnInitialization::get_params() const {
   json params;
+  params["type"] = "knn";
   params["num_neighbors"] = m_params.num_neighbors;
   params["min_distance"] = m_params.min_distance;
   params["default_distance"] = m_params.default_distance;

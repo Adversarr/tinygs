@@ -497,6 +497,9 @@ json MCMCStrategy::get_params() const {
   // Get base strategy parameters
   json params = StrategyBase::get_params();
   
+  // Add type for reflection
+  params["type"] = "mcmc";
+  
   // Add MCMC-specific parameters
   json mcmc_params = m_mcmc_params.to_json();
   

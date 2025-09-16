@@ -213,4 +213,19 @@ VideoDataset& VideoDataset::operator=(VideoDataset&& other) noexcept {
   return *this;
 }
 
+void VideoDataset::set_params(const json& j) {
+  m_video_file_path = j["video_file_path"].get<std::string>();
+  m_extrinsics_file_path = j["extrinsics_file_path"].get<std::string>();
+  m_intrinsics_file_path = j["intrinsics_file_path"].get<std::string>();
+}
+
+json VideoDataset::get_params() const {
+  json params;
+  params["type"] = "video";
+  params["video_file_path"] = m_video_file_path;
+  params["extrinsics_file_path"] = m_extrinsics_file_path;
+  params["intrinsics_file_path"] = m_intrinsics_file_path;
+  return params;
+}
+
 }  // namespace tinygs

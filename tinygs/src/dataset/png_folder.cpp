@@ -228,4 +228,25 @@ PngFolderDataset& PngFolderDataset::operator=(PngFolderDataset&& other) noexcept
   return *this;
 }
 
+void PngFolderDataset::set_params(const json& j) {
+  if (j.contains("folder_path")) {
+    m_folder_path = j["folder_path"].get<std::string>();
+  }
+  if (j.contains("extrinsics_file_path")) {
+    m_extrinsics_file_path = j["extrinsics_file_path"].get<std::string>();
+  }
+  if (j.contains("intrinsics_file_path")) {
+    m_intrinsics_file_path = j["intrinsics_file_path"].get<std::string>();
+  }
+}
+
+json PngFolderDataset::get_params() const {
+  json params;
+  params["type"] = "png_folder";
+  params["folder_path"] = m_folder_path;
+  params["extrinsics_file_path"] = m_extrinsics_file_path;
+  params["intrinsics_file_path"] = m_intrinsics_file_path;
+  return params;
+}
+
 }  // namespace tinygs

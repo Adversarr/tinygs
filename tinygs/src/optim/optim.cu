@@ -76,9 +76,10 @@ void GaussianOptimizationParams::from_json(const json& config) {
 std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_type,
                                                 std::shared_ptr<GPUGaussian3d> gaussians,
                                                 std::shared_ptr<GPUGaussian3d> gaussians_grad) {
-  if (to_lower(optimizer_type) == "adam") {
+  std::string lower_optimizer_type = to_lower(optimizer_type);
+  if (lower_optimizer_type == "adam") {
     return std::make_unique<AdamW>(gaussians, gaussians_grad);
-  } else if (to_lower(optimizer_type) == "sgd") {
+  } else if (lower_optimizer_type == "sgd") {
     return std::make_unique<SGD>(gaussians, gaussians_grad);
   } else {
     throw std::runtime_error("Unknown optimizer type: " + optimizer_type);

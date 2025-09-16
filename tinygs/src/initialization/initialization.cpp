@@ -7,8 +7,7 @@
 namespace tinygs {
 
 std::unique_ptr<InitializationBase> create_initialization(const std::string& initialization_type) {
-  std::string lower_initialization_type = initialization_type;
-  std::transform(lower_initialization_type.begin(), lower_initialization_type.end(), lower_initialization_type.begin(), ::tolower);
+  std::string lower_initialization_type = to_lower(initialization_type);
   
   if (lower_initialization_type == "knn") {
     return std::make_unique<KnnInitialization>();

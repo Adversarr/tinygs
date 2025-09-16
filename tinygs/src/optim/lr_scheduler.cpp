@@ -42,6 +42,20 @@ void ConstantLR::reset() {
   // No state to reset for constant scheduler
 }
 
+nlohmann::json ConstantLR::get_params() const {
+  nlohmann::json params;
+  params["type"] = "constant";
+  params["lr"] = m_current_lr;
+  return params;
+}
+
+void ConstantLR::set_params(const nlohmann::json& params) {
+  if (params.contains("lr")) {
+    float new_lr = params["lr"].get<float>();
+    update_lr(new_lr);
+  }
+}
+
 // ExponentialLR implementation
 ExponentialLR::ExponentialLR(const std::shared_ptr<OptimizerBase> &optimizer,
                              float initial_lr, float decay_rate)
@@ -60,12 +74,38 @@ void ExponentialLR::reset() {
   update_lr(m_initial_lr);
 }
 
+nlohmann::json ExponentialLR::get_params() const {
+  nlohmann::json params;
+  params["type"] = "exponential";
+  params["initial_lr"] = m_initial_lr;
+  params["decay_rate"] = m_decay_rate;
+  params["step_count"] = m_step_count;
+  return params;
+}
+
+void ExponentialLR::set_params(const nlohmann::json& params) {
+  if (params.contains("initial_lr")) {
+    m_initial_lr = params["initial_lr"].get<float>();
+  }
+  if (params.contains("decay_rate")) {
+    m_decay_rate = params["decay_rate"].get<float>();
+  }
+  if (params.contains("step_count")) {
+    m_step_count = params["step_count"].get<int>();
+  }
+  
+  // Recalculate current learning rate based on updated parameters
+  float new_lr = m_initial_lr * std::pow(m_decay_rate, m_step_count);
+  update_lr(new_lr);
+}
+
 // Factory function implementation
 std::unique_ptr<LrSchedulerBase> create_lr_scheduler(const std::string& scheduler_type,
                                                      const std::shared_ptr<OptimizerBase>& optimizer) {
-  if (scheduler_type == "constant") {
+  std::string lower_scheduler_type = to_lower(scheduler_type);
+  if (lower_scheduler_type == "constant") {
     return std::make_unique<ConstantLR>(optimizer);
-  } else if (scheduler_type == "exponential") {
+  } else if (lower_scheduler_type == "exponential") {
     return std::make_unique<ExponentialLR>(optimizer);
   } else {
     throw std::invalid_argument("Unknown scheduler type: " + scheduler_type);

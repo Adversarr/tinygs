@@ -110,12 +110,10 @@ protected:
  * @param optimizer_type The type of optimizer to create.
  * @param gaussians The gaussians to optimize.
  * @param gaussians_grad The gradient of gaussians.
- * @param config The configuration of optimizer.
  * @return std::unique_ptr<OptimizerBase> The created optimizer.
  */
 std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_type,
                                                 std::shared_ptr<GPUGaussian3d> gaussians,
-                                                std::shared_ptr<GPUGaussian3d> gaussians_grad,
-                                                const json& config);
+                                                std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
 }  // namespace tinygs

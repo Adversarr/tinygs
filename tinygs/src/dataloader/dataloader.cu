@@ -116,9 +116,8 @@ void DataLoaderBase::reset() {
 
 std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_type,
                                                   std::shared_ptr<DatasetBase> dataset) {
-  std::string lower_dataloader_type = dataloader_type;
-  std::transform(lower_dataloader_type.begin(), lower_dataloader_type.end(), lower_dataloader_type.begin(), ::tolower);
-  
+  std::string lower_dataloader_type = to_lower(dataloader_type);
+
   if (lower_dataloader_type == "simple") {
     return std::make_unique<SimpleDataLoader>(dataset);
   } else {

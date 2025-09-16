@@ -9,8 +9,7 @@
 namespace tinygs {
 
 std::unique_ptr<LossBase> create_loss(const std::string& loss_type) {
-  std::string lower_loss_type = loss_type;
-  std::transform(lower_loss_type.begin(), lower_loss_type.end(), lower_loss_type.begin(), ::tolower);
+  std::string lower_loss_type = to_lower(loss_type);
   
   if (lower_loss_type == "l1") {
     return std::make_unique<L1Loss>();
@@ -22,8 +21,7 @@ std::unique_ptr<LossBase> create_loss(const std::string& loss_type) {
 }
 
 std::unique_ptr<MetricBase> create_metric(const std::string& metric_type) {
-  std::string lower_metric_type = metric_type;
-  std::transform(lower_metric_type.begin(), lower_metric_type.end(), lower_metric_type.begin(), ::tolower);
+  std::string lower_metric_type = to_lower(metric_type);
   
   if (lower_metric_type == "psnr") {
     return std::make_unique<PsnrMetric>();

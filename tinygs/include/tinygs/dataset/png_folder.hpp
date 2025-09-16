@@ -37,11 +37,16 @@ public:
 
   SingleCameraLoader &get_camera_loader() noexcept override;
 
+  /// Set dataset parameters from JSON (folder_path, extrinsics_file_path, intrinsics_file_path)
+  void set_params(const json& j) override;
+  /// Get current dataset parameters as JSON object
+  json get_params() const override;
+
 private:
   /// Configurables
-  std::string m_folder_path;
-  std::string m_extrinsics_file_path;
-  std::string m_intrinsics_file_path;
+  std::string m_folder_path{"YOUR_FOLDER_PATH"};
+  std::string m_extrinsics_file_path{"YOUR_EXTRINSICS_FILE_PATH"};
+  std::string m_intrinsics_file_path{"YOUR_INTRINSICS_FILE_PATH"};
 
   /// Loaded data
   std::vector<std::string> m_image_paths;

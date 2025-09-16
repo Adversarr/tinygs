@@ -214,4 +214,10 @@ void FastGSRasterizer::set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians) {
   m_impl->num_gaussians = n_gaussians;
 }
 
+json FastGSRasterizer::get_params() const {
+  return json::object({{"type", "fastgs"}});
+}
+
+void FastGSRasterizer::set_params(const json& /*j*/) {}
+
 } // namespace tinygs

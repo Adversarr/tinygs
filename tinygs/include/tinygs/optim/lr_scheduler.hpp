@@ -1,7 +1,7 @@
 #pragma once
 
 #include <memory>
-#include "optim.hpp"
+#include "tinygs/optim/optim.hpp"
 
 namespace tinygs {
 
@@ -41,6 +41,18 @@ public:
    */
   float get_lr() const;
 
+  /**
+   * @brief Get scheduler parameters as JSON
+   * @return JSON object containing scheduler configuration
+   */
+  virtual json get_params() const = 0;
+
+  /**
+   * @brief Set scheduler parameters from JSON
+   * @param params JSON object containing scheduler configuration
+   */
+  virtual void set_params(const json& params) = 0;
+
 protected:
   /**
    * @brief Update both internal state and optimizer's learning rate
@@ -77,6 +89,18 @@ public:
    * @brief Reset scheduler (no-op for constant scheduler)
    */
   void reset() override;
+
+  /**
+   * @brief Get scheduler parameters as JSON
+   * @return JSON object containing constant scheduler configuration
+   */
+  json get_params() const override;
+
+  /**
+   * @brief Set scheduler parameters from JSON
+   * @param params JSON object containing constant scheduler configuration
+   */
+  void set_params(const json& params) override;
 };
 
 /**
@@ -106,6 +130,18 @@ public:
    * @brief Reset scheduler to initial state
    */
   void reset() override;
+
+  /**
+   * @brief Get scheduler parameters as JSON
+   * @return JSON object containing exponential scheduler configuration
+   */
+  json get_params() const override;
+
+  /**
+   * @brief Set scheduler parameters from JSON
+   * @param params JSON object containing exponential scheduler configuration
+   */
+  void set_params(const json& params) override;
 
 private:
   float m_initial_lr;   ///< Initial learning rate value
