@@ -90,7 +90,7 @@ int main() {
   dataset->get_camera_loader().resize_sensor(width, height);
 
   // Load and initialize point cloud
-  auto pc = load_from_colmap_file(data_path + "inputs/slam/points3D.txt");
+  auto pc = load_from_colmap(data_path + "inputs/slam/points3D.txt");
   log_info("#points: {}", pc.points.size());
 
   // Extend with skybox points

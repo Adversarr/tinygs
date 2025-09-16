@@ -29,6 +29,12 @@ void OptimizerBase::reset() {
   // nothing to do
 }
 
+void OptimizerBase::set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians,
+                                  std::shared_ptr<GPUGaussian3d> gaussians_grad) {
+  m_gaussians = gaussians;
+  m_gaussians_grad = gaussians_grad;
+}
+
 json GaussianOptimizationParams::to_json() const {
   json j;
   j["max_grad_1"] = max_grad_1;

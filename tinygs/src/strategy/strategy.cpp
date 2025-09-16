@@ -18,7 +18,7 @@ void StrategyBase::step(const RasterizeContext& ctx) {
 
 void StrategyBase::on_remove(char* kept_flag, int num_kept) {
   if (num_kept <= 0) return;
-  
+
   if (m_gaussians) {
     m_gaussians->remove(kept_flag, num_kept);
   }

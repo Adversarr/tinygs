@@ -13,9 +13,12 @@ struct PointCloud {
 };
 
 /// @brief Load point cloud from COLMAP pointcloud file.
-PointCloud load_from_colmap_file(const std::string &filename);
+PointCloud load_from_colmap(const std::string &filename);
 
 /// @brief Load point cloud from PLY file.
 PointCloud load_ply(const std::string& filename);
+
+/// @brief Load point cloud from file, supports COLMAP and PLY formats based on file extension.
+PointCloud load_point_cloud(const std::string& filename);
 
 }  // namespace tinygs

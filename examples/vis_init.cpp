@@ -28,7 +28,7 @@ int main() {
     std::vector<std::string> camera_extrinsics_lines = tinygs::readlines(camera_extrinsics_path);
 
     // Example usage of PointCloud
-    auto pc = tinygs::load_from_colmap_file(DATA_PATH + "inputs/slam/points3D.txt");
+    auto pc = tinygs::load_from_colmap(DATA_PATH + "inputs/slam/points3D.txt");
     log_info("#points: {}", pc.points.size());
 
     tinygs::KnnInitialization knn;

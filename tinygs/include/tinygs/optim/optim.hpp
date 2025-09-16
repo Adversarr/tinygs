@@ -53,6 +53,7 @@ public:
   /// @brief Perform one optimization step
   virtual void step(float scale) = 0;
 
+  /// @brief Reset optimizer state
   virtual void reset();
 
   /// @brief Pre-remove flagged gaussians and their momentum buffers
@@ -64,8 +65,14 @@ public:
   /// @brief Reset momentum buffers for specified gaussians
   virtual void reset(int* indices, int num_reset) = 0;
 
-  /// Reset opacity implementation
+  /// @brief Reset opacity implementation
   virtual void reset_opacity() = 0;
+
+  /// @brief set the gaussians, and reset
+  void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
+
+  std::shared_ptr<GPUGaussian3d> get_gaussians() const { return m_gaussians; }
+  std::shared_ptr<GPUGaussian3d> get_gaussians_grad() const { return m_gaussians_grad; }
 
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;

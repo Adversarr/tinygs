@@ -13,7 +13,7 @@ namespace tinygs {
 // RGB normalization factor to convert from [0,255] to [0,1]
 static constexpr float RGB_NORMALIZATION_FACTOR = 255.0f;
 
-PointCloud load_from_colmap_file(const std::string &filename) {
+PointCloud load_from_colmap(const std::string &filename) {
   TINYGS_TIMER("load_from_colmap_file");
   PointCloud pointcloud;
   std::ifstream file(filename);
@@ -69,8 +69,7 @@ PointCloud load_from_colmap_file(const std::string &filename) {
   return pointcloud;
 }
 
-
-PointCloud load_ply(std::string filename) {
+PointCloud load_ply(const std::string& filename) {
   happly::PLYData ply_in(filename);
   auto points = ply_in.getVertexPositions();
   auto colors = ply_in.getVertexColors();
@@ -89,5 +88,21 @@ PointCloud load_ply(std::string filename) {
   return pc;
 }
 
+PointCloud load_point_cloud(const std::string& filename) {
+  if (filename.size() >= 4) {
+    std::string ext = filename.substr(filename.size() - 4);
+    if (ext == ".ply" || ext == ".PLY") {
+      return load_ply(filename);
+    } else if (ext == ".txt" || ext == ".TXT") {
+      return load_from_colmap(filename);
+    } else {
+      log_error("Unsupported point cloud file format: {}", ext);
+      return PointCloud();
+    }
+  } else {
+    log_error("Filename too short to determine format: {}", filename);
+    return PointCloud();
+  }
+}
 
 }  // namespace tinygs

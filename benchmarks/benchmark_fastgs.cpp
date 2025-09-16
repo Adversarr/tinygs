@@ -38,7 +38,7 @@ private:
   
   void setup() {
     // Load and initialize point cloud
-    auto pc = tinygs::load_from_colmap_file(DATA_PATH + "inputs/slam/points3D.txt");
+    auto pc = tinygs::load_from_colmap(DATA_PATH + "inputs/slam/points3D.txt");
     tinygs::KnnInitialization knn;
     knn.initialize(pc);
     auto init_result = knn.gaussians();
