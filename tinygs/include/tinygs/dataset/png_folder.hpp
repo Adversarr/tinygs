@@ -27,15 +27,11 @@ public:
 
   PngFolderDataset(const PngFolderDataset&) = delete;
   PngFolderDataset& operator=(const PngFolderDataset&) = delete;
-  PngFolderDataset(PngFolderDataset&&) noexcept;
-  PngFolderDataset& operator=(PngFolderDataset&&) noexcept;
 
   void load() override;
   Data operator[](size_t index) const override;
   size_t size() const noexcept override;
   ImageShape image_shape() const override;
-
-  SingleCameraLoader &get_camera_loader() noexcept override;
 
   /// Set dataset parameters from JSON (folder_path, extrinsics_file_path, intrinsics_file_path)
   void set_params(const json& j) override;
@@ -50,7 +46,6 @@ private:
 
   /// Loaded data
   std::vector<std::string> m_image_paths;
-  SingleCameraLoader m_camera_loader;
   ImageShape m_image_shape;
   uint8_t* m_data;
   size_t m_size;

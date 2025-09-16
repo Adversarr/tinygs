@@ -36,7 +36,8 @@ public:
   /// @return The parameters of the dataset.
   virtual json get_params() const { return json::object(); }
 
-  virtual SingleCameraLoader& get_camera_loader() = 0;
+  SingleCameraLoader& get_camera_loader() { return m_camera_loader; }
+  const SingleCameraLoader& get_camera_loader() const { return m_camera_loader; }
 
   virtual ~DatasetBase() = default;
 
@@ -51,6 +52,10 @@ public:
   /// @param idx The index of the data.
   /// @return The data at the given index.
   virtual Data operator[](size_t idx) const = 0;
+
+protected:
+  SingleCameraLoader m_camera_loader;
+
 };
 
 

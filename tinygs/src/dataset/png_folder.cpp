@@ -153,10 +153,6 @@ size_t PngFolderDataset::size() const noexcept {
   return m_size;
 }
 
-SingleCameraLoader &PngFolderDataset::get_camera_loader() noexcept {
-  return m_camera_loader;
-}
-
 Data PngFolderDataset::operator[](size_t index) const {
   if (!m_data) {
     throw std::runtime_error("Dataset not loaded. Call load() first.");
@@ -189,43 +185,6 @@ PngFolderDataset::~PngFolderDataset() {
     CUDA_CHECK_PRINT(cudaFreeHost(m_data));
     m_data = nullptr;
   }
-}
-
-PngFolderDataset::PngFolderDataset(PngFolderDataset&& other) noexcept 
-    : m_folder_path(std::move(other.m_folder_path)),
-      m_extrinsics_file_path(std::move(other.m_extrinsics_file_path)),
-      m_intrinsics_file_path(std::move(other.m_intrinsics_file_path)),
-      m_image_paths(std::move(other.m_image_paths)),
-      m_camera_loader(std::move(other.m_camera_loader)),
-      m_image_shape(other.m_image_shape),
-      m_data(other.m_data),
-      m_size(other.m_size) {
-  other.m_data = nullptr;
-  other.m_size = 0;
-}
-
-PngFolderDataset& PngFolderDataset::operator=(PngFolderDataset&& other) noexcept {
-  if (this != &other) {
-    // Clean up existing resources
-    if (m_data) {
-      CUDA_CHECK_PRINT(cudaFreeHost(m_data));
-    }
-    
-    // Move data from other
-    m_folder_path = std::move(other.m_folder_path);
-    m_extrinsics_file_path = std::move(other.m_extrinsics_file_path);
-    m_intrinsics_file_path = std::move(other.m_intrinsics_file_path);
-    m_image_paths = std::move(other.m_image_paths);
-    m_camera_loader = std::move(other.m_camera_loader);
-    m_image_shape = other.m_image_shape;
-    m_data = other.m_data;
-    m_size = other.m_size;
-    
-    // Reset other
-    other.m_data = nullptr;
-    other.m_size = 0;
-  }
-  return *this;
 }
 
 void PngFolderDataset::set_params(const json& j) {

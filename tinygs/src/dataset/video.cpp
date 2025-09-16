@@ -140,10 +140,6 @@ size_t VideoDataset::size() const noexcept {
   return m_size;
 }
 
-SingleCameraLoader &VideoDataset::get_camera_loader() noexcept {
-  return m_camera_loader;
-}
-
 Data VideoDataset::operator[](size_t index) const {
   if (!m_data) {
     throw std::runtime_error("Dataset not loaded. Call load() first.");
@@ -176,41 +172,6 @@ VideoDataset::~VideoDataset() {
     CUDA_CHECK_PRINT(cudaFreeHost(m_data));
     m_data = nullptr;
   }
-}
-
-VideoDataset::VideoDataset(VideoDataset&& other) noexcept 
-    : m_video_file_path(std::move(other.m_video_file_path)),
-      m_extrinsics_file_path(std::move(other.m_extrinsics_file_path)),
-      m_intrinsics_file_path(std::move(other.m_intrinsics_file_path)),
-      m_camera_loader(std::move(other.m_camera_loader)),
-      m_image_shape(other.m_image_shape),
-      m_data(other.m_data),
-      m_size(other.m_size) {
-  other.m_data = nullptr;
-  other.m_size = 0;
-}
-
-VideoDataset& VideoDataset::operator=(VideoDataset&& other) noexcept {
-  if (this != &other) {
-    // Clean up existing resources
-    if (m_data) {
-      CUDA_CHECK_PRINT(cudaFreeHost(m_data));
-    }
-
-    // Move data from other
-    m_video_file_path = std::move(other.m_video_file_path);
-    m_extrinsics_file_path = std::move(other.m_extrinsics_file_path);
-    m_intrinsics_file_path = std::move(other.m_intrinsics_file_path);
-    m_camera_loader = std::move(other.m_camera_loader);
-    m_image_shape = other.m_image_shape;
-    m_data = other.m_data;
-    m_size = other.m_size;
-    
-    // Reset other
-    other.m_data = nullptr;
-    other.m_size = 0;
-  }
-  return *this;
 }
 
 void VideoDataset::set_params(const json& j) {

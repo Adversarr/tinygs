@@ -27,15 +27,11 @@ public:
 
   VideoDataset(const VideoDataset&) = delete;
   VideoDataset& operator=(const VideoDataset&) = delete;
-  VideoDataset(VideoDataset&&) noexcept;
-  VideoDataset& operator=(VideoDataset&&) noexcept;
 
   void load() override;
   Data operator[](size_t index) const override;
   size_t size() const noexcept override;
   ImageShape image_shape() const override;
-
-  SingleCameraLoader& get_camera_loader() noexcept override;
 
   void set_params(const json& j) override;
   json get_params() const override;
