@@ -15,49 +15,28 @@ namespace tinygs {
  */
 class LrSchedulerBase {
 public:
-  /**
-   * @brief Construct scheduler with optimizer and initial learning rate
-   * @param optimizer Shared pointer to optimizer whose learning rate will be controlled
-   * @param initial_lr Initial learning rate value
-   */
+  /// @brief Construct scheduler with optimizer and initial learning rate
   LrSchedulerBase(const std::shared_ptr<OptimizerBase> &optimizer, float initial_lr);
 
   virtual ~LrSchedulerBase() = default;
 
-  /**
-   * @brief Perform one scheduler step and update optimizer's learning rate
-   * @return Updated learning rate for the current step
-   */
+  /// @brief Perform one scheduler step and update optimizer's learning rate
   virtual float step() = 0;
 
-  /**
-   * @brief Reset scheduler to initial state
-   */
+  /// @brief Reset scheduler to initial state
   virtual void reset() = 0;
 
-  /**
-   * @brief Get current learning rate
-   * @return Current learning rate value
-   */
+  /// @brief Get current learning rate
   float get_lr() const;
 
-  /**
-   * @brief Get scheduler parameters as JSON
-   * @return JSON object containing scheduler configuration
-   */
+  /// @brief Get scheduler parameters as JSON
   virtual json get_params() const = 0;
 
-  /**
-   * @brief Set scheduler parameters from JSON
-   * @param params JSON object containing scheduler configuration
-   */
+  /// @brief Set scheduler parameters from JSON
   virtual void set_params(const json& params) = 0;
 
 protected:
-  /**
-   * @brief Update both internal state and optimizer's learning rate
-   * @param new_lr New learning rate to set
-   */
+  /// @brief Update both internal state and optimizer's learning rate
   void update_lr(float new_lr);
 
   std::shared_ptr<OptimizerBase> m_optimizer; ///< Optimizer whose learning rate is controlled
@@ -72,34 +51,19 @@ protected:
  */
 class ConstantLR : public LrSchedulerBase {
 public:
-  /**
-   * @brief Construct constant learning rate scheduler
-   * @param optimizer Shared pointer to optimizer whose learning rate will be controlled
-   * @param lr Learning rate to maintain constant
-   */
+  /// @brief Construct constant learning rate scheduler
   explicit ConstantLR(const std::shared_ptr<OptimizerBase> &optimizer, float lr=1.0f);
 
-  /**
-   * @brief Return the constant learning rate
-   * @return Unchanged learning rate
-   */
+  /// @brief Return the constant learning rate
   float step() override;
 
-  /**
-   * @brief Reset scheduler (no-op for constant scheduler)
-   */
+  /// @brief Reset scheduler (no-op for constant scheduler)
   void reset() override;
 
-  /**
-   * @brief Get scheduler parameters as JSON
-   * @return JSON object containing constant scheduler configuration
-   */
+  /// @brief Get scheduler parameters as JSON
   json get_params() const override;
 
-  /**
-   * @brief Set scheduler parameters from JSON
-   * @param params JSON object containing constant scheduler configuration
-   */
+  /// @brief Set scheduler parameters from JSON
   void set_params(const json& params) override;
 };
 
@@ -111,36 +75,20 @@ public:
  */
 class ExponentialLR : public LrSchedulerBase {
 public:
-  /**
-   * @brief Construct exponential decay scheduler
-   * @param optimizer Shared pointer to optimizer whose learning rate will be controlled
-   * @param initial_lr Initial learning rate
-   * @param decay_rate Decay factor applied each step (typically 0.9-0.99)
-   */
+  /// @brief Construct exponential decay scheduler
   explicit ExponentialLR(const std::shared_ptr<OptimizerBase> &optimizer,
                          float initial_lr = 1.0, float decay_rate = 0.999769f);
 
-  /**
-   * @brief Apply exponential decay and return new learning rate
-   * @return Learning rate after exponential decay
-   */
+  /// @brief Apply exponential decay and return new learning rate
   float step() override;
 
-  /**
-   * @brief Reset scheduler to initial state
-   */
+  /// @brief Reset scheduler to initial state
   void reset() override;
 
-  /**
-   * @brief Get scheduler parameters as JSON
-   * @return JSON object containing exponential scheduler configuration
-   */
+  /// @brief Get scheduler parameters as JSON
   json get_params() const override;
 
-  /**
-   * @brief Set scheduler parameters from JSON
-   * @param params JSON object containing exponential scheduler configuration
-   */
+  /// @brief Set scheduler parameters from JSON
   void set_params(const json& params) override;
 
 private:
@@ -149,13 +97,9 @@ private:
   int m_step_count;     ///< Current step count for decay calculation
 };
 
-/**
- * @brief Create a learning rate scheduler object
- * 
- * @param scheduler_type The type of scheduler to create ("constant", "exponential", etc.)
- * @param optimizer Shared pointer to optimizer whose learning rate will be controlled
- * @return std::unique_ptr<LrSchedulerBase> The created scheduler
- */
+/// @brief Create learning rate scheduler object
+/// @param scheduler_type Type of scheduler to create
+/// @param optimizer Optimizer whose learning rate will be controlled
 std::unique_ptr<LrSchedulerBase> create_lr_scheduler(const std::string& scheduler_type,
                                                      const std::shared_ptr<OptimizerBase>& optimizer);
 

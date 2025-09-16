@@ -6,19 +6,16 @@
 
 namespace tinygs {
 
-/**
- * @brief Dataset for loading png images from a folder. With in-memory and 
- *        pinned memory optimization.
- */
+/// @brief PNG folder dataset with in-memory and pinned memory optimization
 class PngFolderDataset final : public DatasetBase {
 public:
   PngFolderDataset();
 
   /**
-   * @brief Constructor that infers image shape from the first image in the folder
-   * @param folder_path Path to the folder containing PNG images
-   * @param extrinsics_file_path Path to camera extrinsics file
-   * @param intrinsics_file_path Path to camera intrinsics file
+   * @brief Constructor with automatic image shape inference
+   * @param folder_path Path to PNG images folder
+   * @param extrinsics_file_path Camera extrinsics file path
+   * @param intrinsics_file_path Camera intrinsics file path
    */
   explicit PngFolderDataset(const std::string &folder_path,
                             const std::string &extrinsics_file_path,
@@ -33,9 +30,9 @@ public:
   size_t size() const noexcept override;
   ImageShape image_shape() const override;
 
-  /// Set dataset parameters from JSON (folder_path, extrinsics_file_path, intrinsics_file_path)
+  /// @brief Set parameters from JSON
   void set_params(const json& j) override;
-  /// Get current dataset parameters as JSON object
+  /// @brief Get parameters as JSON
   json get_params() const override;
 
 private:

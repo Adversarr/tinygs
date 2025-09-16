@@ -111,8 +111,10 @@ void PngFolderDataset::load() {
   auto first_img = load_stbi_u8(m_image_paths[0].c_str());
   m_image_shape.width = first_img.shape.width;
   m_image_shape.height = first_img.shape.height;
-  m_image_shape.channel = 3; // Always use 3 channels (RGB) for consistency
-  free(first_img.data); // Free the temporary image data
+  m_image_shape.channel = 3;  // Always use 3 channels (RGB) for consistency
+  free(first_img.data);       // Free the temporary image data
+  // scale the camera to fit the dataset width and height.
+  m_camera_loader.resize_sensor(m_image_shape.width, m_image_shape.height);
 
   if (m_image_shape.channel != 3 && m_image_shape.channel != 4) {
     throw std::runtime_error("Only 3 (RGB) or 4 (RGBA) channels are supported now.");

@@ -14,19 +14,18 @@ enum class CameraModel: int {
   MaxCameraModel,
 };
 
-// Camera intrinsic parameters (corresponds to Python Camera dataclass)
+/// @brief Camera intrinsic parameters
 struct CameraIntrinsics {
-  /// @brief The camera id. (0-based)
-  int uid;
+  int uid; ///< Camera ID (0-based)
   CameraModel model;
   int width;
   int height;
-  float fx, fy;  // focal lengths
-  float cx, cy;  // principal point
-  float k1, k2, k3;  // radial distortion coefficients
-  float p1, p2;      // tangential distortion coefficients
+  float fx, fy;  ///< Focal lengths
+  float cx, cy;  ///< Principal point
+  float k1, k2, k3;  ///< Radial distortion coefficients
+  float p1, p2;      ///< Tangential distortion coefficients
   
-  // Get 3x3 intrinsics matrix K
+  /// @brief Get 3x3 intrinsics matrix K
   TINYGS_HOST_DEVICE mat3x3 to_mat3() const {
     return mat3x3{
       fx, 0.0f, 0.f,
@@ -35,32 +34,30 @@ struct CameraIntrinsics {
     };
   }
   
-  // Parse camera intrinsics from COLMAP format string
-  // Format: "CAMERA_ID MODEL WIDTH HEIGHT FX FY CX CY K1 K2 K3 P1 P2"
+  /// @brief Parse camera intrinsics from COLMAP format string
   static CameraIntrinsics parse(const std::string& line);
   
-  // Convert camera intrinsics to string representation
+  /// @brief Convert camera intrinsics to string representation
   std::string to_string() const;
 };
 
-// Global to_string function for CameraIntrinsics
+/// @brief Global to_string function for CameraIntrinsics
 std::string to_string(const CameraIntrinsics &intrinsics);
 
-// Camera extrinsic parameters (pose)
+/// @brief Camera extrinsic parameters (pose)
 struct CameraExtrinsics {
-  quat m_q;  // quaternion (qw, qx, qy, qz)
-  vec3 m_t;  // translation (tx, ty, tz)
-  /// @brief The frame id of the data. (1-based)
-  uint32_t frame_uid;
+  quat m_q;  ///< Quaternion (qw, qx, qy, qz)
+  vec3 m_t;  ///< Translation (tx, ty, tz)
+  uint32_t frame_uid; ///< Frame ID (1-based)
 
-  // Constructor from quaternion and translation
+  /// @brief Constructor from quaternion and translation
   TINYGS_HOST_DEVICE CameraExtrinsics(const quat& quaternion, const vec3& translation, uint32_t frame_uid) 
     : m_q(quaternion), m_t(translation), frame_uid(frame_uid) {}
 
-  // Default constructor
+  /// @brief Default constructor
   CameraExtrinsics() = default;
 
-  // Get world-to-camera transformation matrix
+  /// @brief Get world-to-camera transformation matrix
   TINYGS_HOST_DEVICE mat4x4 get_w2c() const {
     mat4x4 w2c{quat_to_mat3(m_q)};
     w2c[3][0] = m_t[0];
@@ -69,13 +66,12 @@ struct CameraExtrinsics {
     return w2c;
   }
 
-  // Get camera-to-world transformation matrix
+  /// @brief Get camera-to-world transformation matrix
   TINYGS_HOST_DEVICE mat4x4 get_c2w() const {
     return inverse(get_w2c());
   }
   
-  // Parse camera extrinsics from trajectory format string
-  // Format: "id qw qx qy qz tx ty tz ... (ignore the rest)"
+  /// @brief Parse camera extrinsics from trajectory format string
   static CameraExtrinsics parse(const std::string& line);
 };
 
@@ -84,32 +80,32 @@ public:
   CameraIntrinsics intrinsics;
   CameraExtrinsics extrinsics;
   
-  // Constructor
+  /// @brief Constructor
   TINYGS_HOST_DEVICE Camera(const CameraIntrinsics& intr, const CameraExtrinsics& extr)
     : intrinsics(intr), extrinsics(extr) {}
   
-  // Default constructor
+  /// @brief Default constructor
   Camera() = default;
 
-  // Get camera position in world coordinates
+  /// @brief Get camera position in world coordinates
   TINYGS_HOST_DEVICE vec3 get_position() const {
     mat4x4 c2w = extrinsics.get_c2w();
     return vec3{c2w[0][3], c2w[1][3], c2w[2][3]};
   }
   
-  // Get camera forward direction in world coordinates
+  /// @brief Get camera forward direction in world coordinates
   TINYGS_HOST_DEVICE vec3 get_forward() const {
     mat4x4 c2w = extrinsics.get_c2w();
     return -vec3{c2w[0][2], c2w[1][2], c2w[2][2]};
   }
   
-  // Get camera up direction in world coordinates
+  /// @brief Get camera up direction in world coordinates
   TINYGS_HOST_DEVICE vec3 get_up() const {
     mat4x4 c2w = extrinsics.get_c2w();
     return vec3{c2w[0][1], c2w[1][1], c2w[2][1]};
   }
   
-  // Get camera right direction in world coordinates
+  /// @brief Get camera right direction in world coordinates
   TINYGS_HOST_DEVICE vec3 get_right() const {
     mat4x4 c2w = extrinsics.get_c2w();
     return vec3{c2w[0][0], c2w[1][0], c2w[2][0]};

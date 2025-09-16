@@ -1,0 +1,61 @@
+{
+  "dataloader": {
+    "type": "simple"
+  },
+  "dataset": {
+    "extrinsics_file_path": "YOUR_EXTRINSICS_FILE_PATH",
+    "folder_path": "YOUR_FOLDER_PATH",
+    "intrinsics_file_path": "YOUR_INTRINSICS_FILE_PATH",
+    "type": "png_folder"
+  },
+  "initializer": {
+    "default_distance": 0.001,
+    "enable_radius_outlier_removal": true,
+    "init_opacity": 0.1,
+    "init_scaling": 1.0,
+    "min_distance": 1.0e-07,
+    "nb_points": 16,
+    "num_neighbors": 4,
+    "radius": 0.05,
+    "sh_degree": 3,
+    "type": "knn"
+  },
+  "loss": [
+    {
+      "type": "l1",
+      "weight": 0.8
+    },
+    {
+      "type": "fused_ssim",
+      "weight": 0.2
+    }
+  ],
+  "lr_scheduler": {
+    "decay_rate": 0.9997689723968506,
+    "initial_lr": 1.0,
+    "step_count": 0,
+    "type": "exponential"
+  },
+  "metric": [
+    "psnr"
+  ],
+  "optimizer": {
+    "beta1": 0.8999999761581421,
+    "beta2": 0.9990000128746033,
+    "enable_adabound": false,
+    "epsilon": 9.99999993922529e-09,
+    "max_grad_1": 1.0,
+    "means_lr": 0.00015999999595806003,
+    "opacities_l1": 0.0,
+    "opacities_lr": 0.05000000074505806,
+    "rotations_lr": 0.0010000000474974513,
+    "scales_l1": 0.0,
+    "scales_lr": 0.004999999888241291,
+    "shs_lr": 0.0024999999441206455,
+    "skip_zero_grad": false,
+    "type": "adam"
+  },
+  "rasterizer": {
+    "type": "default"
+  }
+}

@@ -17,9 +17,7 @@
 
 namespace tinygs {
 
-/**
- * @brief Configuration parameters for training
- */
+/// @brief Configuration parameters for training
 struct TrainerConfig {
   // Training parameters
   size_t max_steps = 30000;
@@ -41,13 +39,13 @@ struct TrainerConfig {
   float near_plane = 0.01f;
   float far_plane = 100.0f;
 
+  /// @brief Convert config to JSON
   json to_json() const;
+  /// @brief Load config from JSON
   void from_json(const json& j);
 };
 
-/**
- * @brief Training state information
- */
+/// @brief Training state information
 struct TrainingState {
   size_t current_step = 0;
   float current_loss = 0.0f;
@@ -57,191 +55,108 @@ struct TrainingState {
   bool should_stop = false;
 };
 
-/**
- * @brief Callback function types for training events
- */
+/// @brief Callback function types for training events
 using PreStepCallback = std::function<void(const TrainingState&)>;
 using PostStepCallback = std::function<void(const TrainingState&)>;
 using CheckpointCallback = std::function<void(const TrainingState&)>;
 
-/**
- * @brief Main trainer class for 3D Gaussian Splatting
- *
- * This class encapsulates the training loop and provides a flexible interface
- * for training 3D Gaussian Splatting models with various optimizers, loss functions,
- * and densification strategies.
- */
+/// @brief Main trainer class for 3D Gaussian Splatting
 class Trainer {
 public:
-  /**
-   * @brief Construct a new Trainer object
-   * @param config Training configuration parameters
-   */
+  /// @brief Construct a new Trainer object
+  /// @param config Training configuration parameters
   explicit Trainer(const TrainerConfig& config = TrainerConfig{});
 
   ~Trainer() = default;
 
   // Core setup methods
 
-  /**
-   * @brief Set the gaussians data and gradients
-   * @param gaussians Shared pointer to GPU gaussians
-   * @param gradients Shared pointer to gaussians gradients
-   */
+  /// @brief Set the gaussians data and gradients
   void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gradients);
 
-  /**
-   * @brief Set the rasterizer for rendering
-   * @param rasterizer Shared pointer to rasterizer
-   */
+  /// @brief Set the rasterizer for rendering
   void set_rasterizer(std::shared_ptr<RasterizerBase> rasterizer);
 
-  /**
-   * @brief Set the data loader for training data
-   * @param dataloader Shared pointer to data loader
-   */
+  /// @brief Set the data loader for training data
   void set_dataloader(std::shared_ptr<DataLoaderBase> dataloader);
 
-  /**
-   * @brief Set the optimizer for parameter updates
-   * @param optimizer Shared pointer to optimizer
-   */
+  /// @brief Set the optimizer for parameter updates
   void set_optimizer(std::shared_ptr<OptimizerBase> optimizer);
 
-  /**
-   * @brief Set the densification strategy
-   * @param strategy Shared pointer to densification strategy
-   */
+  /// @brief Set the densification strategy
   void set_strategy(std::shared_ptr<StrategyBase> strategy);
 
-  /**
-   * @brief Set the learning rate scheduler for automatic learning rate updates
-   * @param scheduler Shared pointer to the learning rate scheduler
-   */
+  /// @brief Set the learning rate scheduler
   void set_lr_scheduler(std::shared_ptr<LrSchedulerBase> scheduler);
 
-  /**
-   * @brief Get the current learning rate scheduler
-   * @return Shared pointer to the current scheduler, or nullptr if none set
-   */
+  /// @brief Get the current learning rate scheduler
   std::shared_ptr<LrSchedulerBase> get_lr_scheduler() const;
 
-  /**
-   * @brief Get the current optimizer
-   * @return
-   */
+  /// @brief Get the current optimizer
   std::shared_ptr<OptimizerBase> get_optimizer() const;
 
   // Loss and metrics management
 
-  /**
-   * @brief Add a loss function with weight
-   * @param loss Shared pointer to loss function
-   * @param weight Weight for this loss component
-   */
+  /// @brief Add a loss function with weight
   void add_loss(std::shared_ptr<LossBase> loss, float weight = 1.0f);
 
-  /**
-   * @brief Add a metric for evaluation (no gradient computation)
-   * @param metric Shared pointer to metric
-   * @param name Name of the metric for logging
-   */
+  /// @brief Add a metric for evaluation
   void add_metric(std::shared_ptr<MetricBase> metric, const std::string& name);
 
   // Callback registration
 
-  /**
-   * @brief Register callback to be called before each training step
-   * @param callback Pre-step callback function
-   */
+  /// @brief Register pre-step callback
   void set_pre_step_callback(PreStepCallback callback);
 
-  /**
-   * @brief Register callback to be called after each training step
-   * @param callback Post-step callback function
-   */
+  /// @brief Register post-step callback
   void set_post_step_callback(PostStepCallback callback);
 
-  /**
-   * @brief Register callback to be called at checkpoint intervals
-   * @param callback Checkpoint callback function
-   */
+  /// @brief Register checkpoint callback
   void set_checkpoint_callback(CheckpointCallback callback);
 
   // Training control
 
-  /**
-   * @brief Start the training loop
-   * @return Final training state
-   */
+  /// @brief Start the training loop
   TrainingState train();
 
-  /**
-   * @brief Execute a single training step
-   */
+  /// @brief Execute a single training step
   void step();
 
-  /**
-   * @brief Accumulate the loss
-   * @return the value
-   */
+  /// @brief Accumulate the loss
   float accumulate_loss();
 
-  /**
-   * @brief Stop training (can be called from callbacks)
-   */
+  /// @brief Stop training
   void stop_training();
 
-  /**
-   * @brief Check if a stop has been requested
-   * @return True if training should stop
-   */
+  /// @brief Check if a stop has been requested
   bool is_stop_requested() const;
 
-  /**
-   * @brief Reset trainer state for new training session
-   */
+  /// @brief Reset trainer state for new training session
   void reset();
 
   // State access
 
-  /**
-   * @brief Get current training state
-   * @return Current training state
-   */
+  /// @brief Get current training state
   const TrainingState& get_state() const { return m_state; }
 
-  /**
-   * @brief Get training configuration
-   * @return Training configuration
-   */
+  /// @brief Get training configuration
   const TrainerConfig& get_config() const { return m_config; }
 
-  /**
-   * @brief Update training configuration
-   * @param config New configuration
-   */
+  /// @brief Update training configuration
   void update_config(const TrainerConfig& config);
 
-  /**
-   * @brief Get the rasterize context for accessing rendered output
-   * @return Reference to the rasterize context
-   */
+  /// @brief Get the rasterize context
   const RasterizeContext& get_rasterize_context() const { return m_rasterize_ctx; }
 
-  /**
-   * @brief Get the loss context for accessing loss computation data
-   * @return Reference to the loss context
-   */
+  /// @brief Get the loss context
   const LossContext& get_loss_context() const { return m_loss_ctx; }
 
-  /**
-   * @brief Evaluate all metrics for logging
-   * @return Vector of metric values
-   */
+  /// @brief Evaluate all metrics
   std::vector<float> evaluate_metrics();
 
+  /// @brief Set parameters from JSON
   void set_params(const json& j);
+  /// @brief Get parameters as JSON
   json get_params() const;
 
 private:
@@ -285,43 +200,26 @@ private:
 
   // Helper methods
 
-  /**
-   * @brief Initialize GPU memory buffers based on image dimensions
-   */
+  /// @brief Initialize GPU memory buffers
   void initialize_buffers();
 
-  /**
-   * @brief Compute current learning rate based on step and schedule
-   * @return Current learning rate
-   */
+  /// @brief Compute current learning rate
   float compute_learning_rate() const;
 
-  /**
-   * @brief Update spherical harmonics degree based on training progress
-   */
+  /// @brief Update spherical harmonics degree
   void update_sh_degree();
 
-  /**
-   * @brief Evaluate all loss functions and accumulate gradients
-   * @param data Current training data batch
-   */
+  /// @brief Evaluate all loss functions and accumulate gradients
+  /// @param data Current training data batch
   void evaluate_losses(const GPUBatchInputOutput& data);
 
-  /**
-   * @brief Check if early stopping criteria are met
-   * @return True if training should stop early
-   */
+  /// @brief Check if early stopping criteria are met
   bool should_early_stop() const;
 
-  /**
-   * @brief Validate that all required components are set
-   * @throws std::runtime_error if any required component is missing
-   */
+  /// @brief Validate that all required components are set
   void validate_setup() const;
 
-  /**
-   * @brief Recompute the scene scale
-   */
+  /// @brief Recompute the scene scale
   void recompute_scene_scale();
 };
 

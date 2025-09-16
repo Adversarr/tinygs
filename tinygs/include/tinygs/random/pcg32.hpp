@@ -36,20 +36,17 @@
 
 namespace tinygs {
 
-/// PCG32 Pseudorandom number generator
+/// @brief PCG32 Pseudorandom number generator
 struct pcg32 {
-	/// Initialize the pseudorandom number generator with default seed
+	/// @brief Initialize with default seed
 	TINYGS_HOST_DEVICE pcg32() : state(PCG32_DEFAULT_STATE), inc(PCG32_DEFAULT_STREAM) {}
 
-	/// Initialize the pseudorandom number generator with the \ref seed() function
+	/// @brief Initialize with custom seed
 	TINYGS_HOST_DEVICE pcg32(uint64_t initstate, uint64_t initseq = 1u) { seed(initstate, initseq); }
 
-	/**
-	 * \brief Seed the pseudorandom number generator
-	 *
-	 * Specified in two parts: a state initializer and a sequence selection
-	 * constant (a.k.a. stream id)
-	 */
+	/// @brief Seed the pseudorandom number generator
+	/// @param initstate State initializer
+	/// @param initseq Sequence selection constant
 	TINYGS_HOST_DEVICE void seed(uint64_t initstate, uint64_t initseq = 1) {
 		state = 0U;
 		inc = (initseq << 1u) | 1u;
@@ -58,7 +55,7 @@ struct pcg32 {
 		next_uint();
 	}
 
-	/// Generate a uniformly distributed unsigned 32-bit random number
+	/// @brief Generate uniformly distributed 32-bit random number
 	TINYGS_HOST_DEVICE uint32_t next_uint() {
 		uint64_t oldstate = state;
 		state = oldstate * PCG32_MULT + inc;
@@ -67,7 +64,7 @@ struct pcg32 {
 		return (xorshifted >> rot) | (xorshifted << ((~rot + 1u) & 31));
 	}
 
-	/// Generate a uniformly distributed number, r, where 0 <= r < bound
+	/// @brief Generate uniformly distributed number in range [0, bound)
 	TINYGS_HOST_DEVICE uint32_t next_uint(uint32_t bound) {
 		// To avoid bias, we need to make the range of the RNG a multiple of
 		// bound, which we do by dropping output less than a threshold.
@@ -99,7 +96,7 @@ struct pcg32 {
 		}
 	}
 
-	/// Generate a single precision floating point value on the interval [0, 1)
+	/// @brief Generate single precision float in [0, 1)
 	TINYGS_HOST_DEVICE float next_float() {
 		/* Trick from MTGP: generate an uniformly distributed
 			single precision number in [1,2) and subtract 1. */
@@ -111,13 +108,7 @@ struct pcg32 {
 		return x.f - 1.0f;
 	}
 
-	/**
-	 * \brief Generate a double precision floating point value on the interval [0, 1)
-	 *
-	 * \remark Since the underlying random number generator produces 32 bit output,
-	 * only the first 32 mantissa bits will be filled (however, the resolution is still
-	 * finer than in \ref next_float(), which only uses 23 mantissa bits)
-	 */
+	/// @brief Generate double precision float in [0, 1)
 	TINYGS_HOST_DEVICE double next_double() {
 		/* Trick from MTGP: generate an uniformly distributed
 			double precision number in [1,2) and subtract 1. */
@@ -129,19 +120,8 @@ struct pcg32 {
 		return x.d - 1.0;
 	}
 
-	/**
-	 * \brief Multi-step advance function (jump-ahead, jump-back)
-	 *
-	 * The method used here is based on Brown, "Random Number Generation
-	 * with Arbitrary Stride", Transactions of the American Nuclear
-	 * Society (Nov. 1994). The algorithm is very similar to fast
-	 * exponentiation.
-	 *
-	 * The default value of 2^32 ensures that the PRNG is advanced
-	 * sufficiently far that there is (likely) no overlap with
-	 * previously drawn random numbers, even if small advancements.
-	 * are made inbetween.
-	 */
+	/// @brief Multi-step advance function (jump-ahead, jump-back)
+	/// @param delta_ Number of steps to advance (default 2^32)
 	TINYGS_HOST_DEVICE void advance(int64_t delta_ = (1ll<<32)) {
 		uint64_t
 			cur_mult = PCG32_MULT,
@@ -165,7 +145,7 @@ struct pcg32 {
 		state = acc_mult * state + acc_plus;
 	}
 
-	/// Compute the distance between two PCG32 pseudorandom number generators
+	/// @brief Compute distance between two PCG32 generators
 	TINYGS_HOST_DEVICE int64_t operator-(const pcg32 &other) const {
 		uint64_t
 			cur_mult = PCG32_MULT,
@@ -188,10 +168,10 @@ struct pcg32 {
 		return (int64_t) distance;
 	}
 
-	/// Equality operator
+	/// @brief Equality operator
 	TINYGS_HOST_DEVICE bool operator==(const pcg32 &other) const { return state == other.state && inc == other.inc; }
 
-	/// Inequality operator
+	/// @brief Inequality operator
 	TINYGS_HOST_DEVICE bool operator!=(const pcg32 &other) const { return state != other.state || inc != other.inc; }
 
 	uint64_t state;  // RNG state.  All values are possible.

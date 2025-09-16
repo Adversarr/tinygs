@@ -17,10 +17,7 @@ struct GPUBatchOutput {
   Image alpha;
 };
 
-/**
- * @brief Forward & Backward Ready data for 3DGS.
- *
- */
+/// @brief Input/output data structure for 3DGS batch processing
 struct GPUBatchInputOutput {
   GPUBatchInput input;
   GPUBatchOutput output;
@@ -32,19 +29,11 @@ public:
 
   virtual ~DataLoaderBase() = default;
 
-  /**
-   * @brief Get next batch of data ready for compute.
-   *
-   * @param stream CUDA stream to use for asynchronous data transfers
-   * @return GPUBatchInputOutput
-   */
+  /// @brief Get next batch of data ready for compute
+  /// @param stream CUDA stream for asynchronous transfers
   virtual GPUBatchInputOutput next(cudaStream_t stream) = 0;
 
-  /**
-   * @brief Get next batch of data ready for compute using default stream.
-   *
-   * @return GPUBatchInputOutput
-   */
+  /// @brief Get next batch using default stream
   virtual GPUBatchInputOutput next() = 0;
 
   virtual void reset();
@@ -91,13 +80,9 @@ private:
 };
 
 
-/**
- * @brief Create a dataloader object
- *
- * @param dataloader_type The type of dataloader to create ("simple", etc.)
- * @param dataset The dataset to use with the dataloader
- * @return std::unique_ptr<DataLoaderBase> The created dataloader
- */
+/// @brief Create a dataloader object
+/// @param dataloader_type Type of dataloader ("simple", etc.)
+/// @param dataset Dataset to use with the dataloader
 std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_type,
                                                   std::shared_ptr<DatasetBase> dataset);
 

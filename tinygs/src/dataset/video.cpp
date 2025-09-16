@@ -44,6 +44,10 @@ void VideoDataset::load() {
   int video_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
   m_image_shape = ImageShape(video_width, video_height, 3);
 
+  // I do not know why, but the camera loader does not work with the video.
+  // I have to resize the sensor to match the video size.
+  m_camera_loader.resize_sensor(video_width, video_height);
+
   double fps = cap.get(cv::CAP_PROP_FPS);
 
   log_info("Video properties: {}x{}, {} frames, {:.2f} fps", video_width, video_height, total_frames, fps);

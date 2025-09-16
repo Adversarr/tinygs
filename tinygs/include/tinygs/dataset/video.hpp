@@ -6,19 +6,16 @@
 
 namespace tinygs {
 
-/**
- * @brief Dataset for loading frames from MP4 video files. With in-memory and 
- *        pinned memory optimization.
- */
+/// @brief Video dataset with in-memory and pinned memory optimization
 class VideoDataset final : public DatasetBase {
 public:
   VideoDataset();
 
   /**
-   * @brief Constructor that stores configuration parameters for later loading
-   * @param video_file_path Path to the video file
-   * @param extrinsics_file_path Path to camera extrinsics file
-   * @param intrinsics_file_path Path to camera intrinsics file
+   * @brief Constructor with configuration parameters
+   * @param video_file_path Video file path
+   * @param extrinsics_file_path Camera extrinsics file path
+   * @param intrinsics_file_path Camera intrinsics file path
    */
   explicit VideoDataset(const std::string &video_file_path,
                         const std::string &extrinsics_file_path,

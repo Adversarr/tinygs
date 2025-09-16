@@ -6,16 +6,16 @@
 namespace tinygs {
 
 struct StrategyParams {
-  // prune transparent gaussians
+  /// @brief Prune transparent gaussians
   float pruning_opacity_threshold = 0.005f;
-  // prune large gaussians in world space
+  /// @brief Prune large gaussians in world space
   float pruning_scale_threshold = 0.1f;
-  // prune large gaussians in view space (2D)
+  /// @brief Prune large gaussians in view space (2D)
   int max_screen_size = 20;
 
-  // grow if gradient is large (Default Strategy)
+  /// @brief Grow if gradient is large (Default Strategy)
   float duplicate_grad_threshold = 0.0002f;
-  // split if large gaussian is found (Default Strategy)
+  /// @brief Split if large gaussian is found (Default Strategy)
   float duplicate_scale_threshold = 0.01f;
 
   int refine_every = 100;
@@ -25,96 +25,70 @@ struct StrategyParams {
   int reset_every = 3'000;
   uint64_t seed = 42;
 
-  /** @brief Default constructor with default values */
+  /// @brief Default constructor with default values
   StrategyParams() = default;
 
-  /** @brief Construct from JSON configuration */
+  /// @brief Construct from JSON configuration
   explicit StrategyParams(const json& config);
 
-  /** @brief Convert parameters to JSON */
+  /// @brief Convert parameters to JSON
   json to_json() const;
 
-  /** @brief Load parameters from JSON */
+  /// @brief Load parameters from JSON
   void from_json(const json& config);
 };
 
 class StrategyBase {
 public:
-  /**
-   * @brief Construct a new StrategyBase object with gaussians, gradients, and optimizer
-   * @param gaussians Shared pointer to GPU gaussians data
-   * @param gaussians_grad Shared pointer to GPU gaussians gradients
-   * @param optimizer Shared pointer to optimizer for updating gaussians
-   */
+  /// @brief Construct strategy with gaussians, gradients, and optimizer
+  /// @param gaussians GPU gaussians data
+  /// @param gaussians_grad GPU gaussians gradients
+  /// @param optimizer Optimizer for updating gaussians
   explicit StrategyBase(std::shared_ptr<GPUGaussian3d> gaussians, 
                        std::shared_ptr<GPUGaussian3d> gaussians_grad,
                        std::shared_ptr<OptimizerBase> optimizer);
 
   virtual ~StrategyBase() = default;
 
-  /**
-   * @brief Execute one step of the strategy using rasterization context
-   * @param ctx Rasterization context containing densification info
-   */
+  /// @brief Execute one step of the strategy
+  /// @param ctx Rasterization context containing densification info
   void step(const RasterizeContext& ctx);
 
-  /**
-   * @brief Reset the strategy state
-   */
+  /// @brief Reset the strategy state
   virtual void reset() = 0;
 
-  /**
-   * @brief Implementation-specific strategy step logic
-   * @param ctx Rasterization context for strategy decisions
-   */
+  /// @brief Implementation-specific strategy step logic
+  /// @param ctx Rasterization context for strategy decisions
   virtual void step_impl(const RasterizeContext& ctx) = 0;
 
-  /**
-   * @brief Set strategy parameters from JSON configuration
-   *
-   * @param config JSON configuration containing strategy parameters
-   */
+  /// @brief Set strategy parameters from JSON configuration
+  /// @param config JSON configuration containing strategy parameters
   virtual void set_params(const json& config);
 
-  /**
-   * @brief Get current strategy parameters as JSON
-   *
-   * @return JSON object containing current strategy parameters
-   */
+  /// @brief Get current strategy parameters as JSON
   virtual json get_params() const;
 
 protected:
-  /**
-   * @brief Handle removal of gaussians and update optimizer state
-   * @param kept_flag Array indicating which gaussians to keep
-   * @param num_kept Number of gaussians being kept
-   */
+  /// @brief Handle removal of gaussians and update optimizer state
+  /// @param kept_flag Array indicating which gaussians to keep
+  /// @param num_kept Number of gaussians being kept
   void on_remove(char* kept_flag, int num_kept);
   
-  /**
-   * @brief Handle duplication of gaussians and update optimizer state
-   * @param indices Original gaussian indices
-   * @param new_indices New gaussian indices after duplication
-   * @param num_duplications Number of gaussians being duplicated
-   */
+  /// @brief Handle duplication of gaussians and update optimizer state
+  /// @param indices Original gaussian indices
+  /// @param new_indices New gaussian indices after duplication
+  /// @param num_duplications Number of gaussians being duplicated
   void on_duplicate(int* indices, int* new_indices, int num_duplications);
   
-  /**
-   * @brief Handle reset of specific gaussians in optimizer
-   * @param indices Indices of gaussians to reset
-   * @param num_reset Number of gaussians to reset
-   */
+  /// @brief Handle reset of specific gaussians in optimizer
+  /// @param indices Indices of gaussians to reset
+  /// @param num_reset Number of gaussians to reset
   void on_reset(int* indices, int num_reset);
   
-  /**
-   * @brief Handle opacity reset for all gaussians
-   */
+  /// @brief Handle opacity reset for all gaussians
   void on_reset_opacity();
 
-  /**
-   * @brief Get current step count
-   * @return Current step number
-   */
+  /// @brief Get current step count
   int this_step() const noexcept { return m_step_count; }
 
   std::shared_ptr<GPUGaussian3d> m_gaussians;
@@ -126,15 +100,11 @@ private:
   int m_step_count = 0;
 };
 
-/**
- * @brief Create a strategy object
- *
- * @param strategy_type The type of strategy to create ("default", "mcmc", etc.)
- * @param gaussians The gaussians to optimize
- * @param gaussians_grad The gradient of gaussians
- * @param optimizer The optimizer to use
- * @return std::unique_ptr<StrategyBase> The created strategy
- */
+/// @brief Create a strategy object
+/// @param strategy_type The type of strategy to create
+/// @param gaussians The gaussians to optimize
+/// @param gaussians_grad The gradient of gaussians
+/// @param optimizer The optimizer to use
 std::unique_ptr<StrategyBase> create_strategy(const std::string& strategy_type,
                                             std::shared_ptr<GPUGaussian3d> gaussians,
                                             std::shared_ptr<GPUGaussian3d> gaussians_grad,

@@ -5,25 +5,15 @@
 
 namespace tinygs {
 
-/**
- * @brief 2D Gaussian both Host and GPU memory, it is small, efficient enough that SoA does not work better.
- * @description It aligns to 16 bytes for better memory access performance.
- * @todo this structure have 36 Bytes in memory, which is not a good alignment
- */
+/// @brief 2D Gaussian structure for Host and GPU memory
 struct Gaussian2dItem {
-  // mean2d
-  vec2 mean;
-  // color
-  vec3 rgb;
-  // conic matrix(2x2, sym, store 3) and opacity
-  vec4 conic_opacity;
+  vec2 mean; ///< 2D mean position
+  vec3 rgb; ///< Color
+  vec4 conic_opacity; ///< Conic matrix and opacity
   // other auxiliary variables...
 };
 
-/**
- * @brief SoA structure for 3D Gaussians
- * 
- */
+/// @brief SoA structure for 3D Gaussians
 struct Gaussian3d {
   std::vector<vec3> means;
   std::vector<float> opacities;

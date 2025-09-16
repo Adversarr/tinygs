@@ -12,23 +12,13 @@ struct LossContext {
   cudaStream_t stream = nullptr;
 };
 
-/**
- * @brief Base class for loss function. (only per-pixel is supported)
- * 
- */
+/// @brief Base class for loss function (per-pixel only)
 class LossBase {
 public:
   LossBase() = default;
   virtual ~LossBase() = default;
 
-  /**
-   * @brief Accumulate loss and gradient.
-   * 
-   * @param pred The prediction image.
-   * @param target The target image.
-   * @param loss The loss image.
-   * @param grad The gradient image.
-   */
+  /// @brief Accumulate loss and gradient
   virtual void evaluate(LossContext ctx) = 0;
 };
 
@@ -36,30 +26,16 @@ class MetricBase {
 public:
   virtual ~MetricBase() = default;
 
-  /**
-   * @brief Evaluate the metric. (no gradient computation)
-   * 
-   * @param pred The prediction image.
-   * @param target The target image.
-   * @return float The metric value.
-   */
+  /// @brief Evaluate metric (no gradient computation)
   virtual float evaluate(Image pred, Image target) = 0;
 };
 
-/**
- * @brief Create a loss object
- *
- * @param loss_type The type of loss to create ("l1", "fused_ssim", etc.)
- * @return std::unique_ptr<LossBase> The created loss
- */
+/// @brief Create loss object
+/// @param loss_type Type of loss ("l1", "fused_ssim", etc.)
 std::unique_ptr<LossBase> create_loss(const std::string& loss_type);
 
-/**
- * @brief Create a metric object
- *
- * @param metric_type The type of metric to create ("psnr", "ssim", etc.)
- * @return std::unique_ptr<MetricBase> The created metric
- */
+/// @brief Create metric object
+/// @param metric_type Type of metric ("psnr", "ssim", etc.)
 std::unique_ptr<MetricBase> create_metric(const std::string& metric_type);
 
 } // namespace tinygs

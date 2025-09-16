@@ -3,6 +3,7 @@
 
 namespace tinygs {
 
+/// @brief Fused SSIM loss implementation
 class FusedSSIMLoss final : public LossBase {
 public:
   FusedSSIMLoss();

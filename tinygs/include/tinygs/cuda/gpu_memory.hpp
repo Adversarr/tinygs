@@ -57,7 +57,7 @@ inline std::atomic<size_t>& total_n_bytes_allocated() {
 	return s_total_n_bytes_allocated;
 }
 
-/// Managed memory on the Device
+/// @brief GPU memory container with automatic management
 template<class T>
 class GPUMemory {
 private:
@@ -168,10 +168,7 @@ public:
 #endif
 	}
 
-	/** @name Resizing/enlargement
-	 *  @{
-	 */
-	/// Resizes the array to the exact new size, even if it is already larger
+	/// @brief Resize array to exact size
 	void resize(const size_t size) {
 		if (m_size != size) {
 			if (m_size) {
@@ -194,18 +191,13 @@ public:
 		}
 	}
 
-	/// Enlarges the array if its size is smaller
+	/// @brief Enlarge array if current size is smaller
 	void enlarge(const size_t size) {
 		if (size > m_size) {
 			resize(size);
 		}
 	}
-	/** @} */
-
-	/** @name Memset
-	 *  @{
-	 */
-	/// Sets the memory of the first num_elements to value
+	/// @brief Set memory of first num_elements to value
 	void memset(const int value, const size_t num_elements, const size_t offset = 0) {
 		if (num_elements + offset > m_size) {
 			throw std::runtime_error{fmt::format("Could not set memory: Number of elements {}+{} larger than allocated memory {}.", num_elements, offset, m_size)};
@@ -214,7 +206,7 @@ public:
 		CUDA_CHECK_THROW(cudaMemset(m_data + offset, value, num_elements * sizeof(T)));
 	}
 
-	/// Sets the memory of the all elements to value
+	/// @brief Set all elements to value
 	void memset(const int value) {
 		memset(value, m_size);
 	}

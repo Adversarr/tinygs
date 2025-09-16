@@ -49,13 +49,13 @@ __forceinline__ __device__ unsigned lane_id() {
 
 /// Based on https://www.iquilezles.org/www/articles/sfrand/sfrand.htm
 struct iqrand {
-  /// Initialize the pseudorandom number generator with default seed
+  /// @brief Initialize with default seed
   TINYGS_HOST_DEVICE iqrand() : state((uint32_t)IQ_DEFAULT_STATE) {}
 
-  /// Initialize the pseudorandom number generator with the \ref seed() function
+  /// @brief Initialize with custom seed
   TINYGS_HOST_DEVICE iqrand(uint32_t initstate) : state(initstate) {}
 
-  /// Generate a single precision floating point value on the interval [0, 1)
+  /// @brief Generate float in [0, 1)
   TINYGS_HOST_DEVICE float next_float() {
     union {
       float fres;
@@ -67,7 +67,7 @@ struct iqrand {
     return fres - 1.0f;
   }
 
-  uint32_t state; // RNG state.  All values are possible.
+  uint32_t state; ///< RNG state
 };
 
 using default_rng_t = pcg32;

@@ -47,9 +47,7 @@
 #include <cuda_fp16.h>
 #endif
 
-//////////////////////////////////////
-// CUDA ERROR HANDLING (EXCEPTIONS) //
-//////////////////////////////////////
+////////////////////////////// CUDA Macros //////////////////////////////
 
 #define STRINGIFY(x) #x
 #define STR(x) STRINGIFY(x)
@@ -135,10 +133,7 @@ using network_precision_t = __half;
 using network_precision_t = float;
 #endif
 
-// Optionally: set the precision to `float` to disable tensor cores and debug
-// potential
-//             problems with mixed-precision training.
-// using network_precision_t = float;
+/// Optional: use float precision for debugging
 #endif
 
 enum class Activation {
@@ -193,9 +188,7 @@ enum class ReductionType {
   Product,
 };
 
-//////////////////
-// Misc helpers //
-//////////////////
+////////////////////////////// Utility Functions //////////////////////////////
 
 inline constexpr TINYGS_HOST_DEVICE float PI() {
   return 3.14159265358979323846f;

@@ -5,9 +5,7 @@
 
 namespace tinygs {
 
-/**
- * @brief Peak Signal-to-Noise Ratio
- */
+/// @brief Peak Signal-to-Noise Ratio metric
 class PsnrMetric : public MetricBase {
 public:
   PsnrMetric() = default;

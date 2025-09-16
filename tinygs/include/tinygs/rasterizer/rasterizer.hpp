@@ -6,17 +6,13 @@
 namespace tinygs {
 
 struct RasterizeContext {
-  /// If true, the rasterizer will prepare the gradients for 
-  ///    - mat3x3 K;
-  ///    - mat4x4 w2c;
-  /// provided in GPUBatchInput.
+  /// @brief Prepare gradients for camera intrinsics and extrinsics
   bool prepare_input_gradients = false;
 
-  /// If true, the rasterizer will not store/compute the extra information
-  /// required for backpropagation.
+  /// @brief Skip backpropagation information storage
   bool inference = false;
 
-  /// Put all the computation to this stream
+  /// @brief CUDA stream for computation
   cudaStream_t stream = nullptr;
 
   GPUBatchInput fwd_input;
@@ -25,7 +21,7 @@ struct RasterizeContext {
   GPUBatchOutput grad_output;
   std::shared_ptr<GPUGaussian3d> gaussians_grad;
 
-  //! This is not a good design. But for now, we just put the densification info here.
+  /// @brief Densification information storage
   mutable std::shared_ptr<GPUBuffer<float>> densification_info;
 };
 
@@ -39,7 +35,7 @@ public:
 
   virtual void backward(const RasterizeContext& params) = 0;
 
-  /// Called when the gaussians are changed. (especially the number of gaussians)
+  /// @brief Update gaussians when changed
   virtual void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians);
 
   virtual json get_params() const = 0;
@@ -50,7 +46,7 @@ protected:
   std::shared_ptr<GPUMemoryArena> m_memory_arena;
 };
 
-// Factory function for creating rasterizers
+/// @brief Factory function for creating rasterizers
 std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type);
 
 }

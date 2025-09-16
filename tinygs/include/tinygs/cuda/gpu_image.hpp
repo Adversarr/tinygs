@@ -8,13 +8,16 @@
 
 namespace tinygs {
 
+/// @brief GPU-based image storage with templated pixel type
 template <typename T>
 class GPUImage {
 public:
+  /// @brief Construct GPU image with specified dimensions
   GPUImage(int width, int height);
 
   ~GPUImage();
 
+  /// @brief Resize image to new dimensions
   void resize(int width, int height);
 
 private:

@@ -1,9 +1,12 @@
 #include "tinygs/core/pointcloud.hpp"
-#include "tinygs/utils/scope_timer.hpp"
+
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <vector>
+
+#include "./happly.h"
+#include "tinygs/utils/scope_timer.hpp"
 
 namespace tinygs {
 
@@ -65,5 +68,26 @@ PointCloud load_from_colmap_file(const std::string &filename) {
   log_info("Loaded {} 3D points.", pointcloud.points.size());
   return pointcloud;
 }
+
+
+PointCloud load_ply(std::string filename) {
+  happly::PLYData ply_in(filename);
+  auto points = ply_in.getVertexPositions();
+  auto colors = ply_in.getVertexColors();
+  log_info("Loaded PLY file {} with {} points and {} colors", filename, points.size(), colors.size());
+  PointCloud pc;
+  pc.points.reserve(points.size());
+  pc.colors.reserve(colors.size());
+
+  for (int i = 0; i < points.size(); i++) {
+    pc.points.push_back({(float)points[i][0], (float)points[i][1], (float)points[i][2]});
+    pc.colors.push_back({
+      (float) colors[i][0] / RGB_NORMALIZATION_FACTOR,
+      (float) colors[i][1] / RGB_NORMALIZATION_FACTOR,
+      (float) colors[i][2] / RGB_NORMALIZATION_FACTOR});
+  }
+  return pc;
+}
+
 
 }  // namespace tinygs

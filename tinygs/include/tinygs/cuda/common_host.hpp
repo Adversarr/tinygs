@@ -78,7 +78,7 @@ void set_verbose(bool verbose);
 #define CHECK_THROW(x) \
 	do { if (!(x)) throw std::runtime_error{FILE_LINE " check failed: " #x}; } while(0)
 
-/// Checks the result of a cuXXXXXX call and throws an error on failure
+/// Check CUDA driver API call and throw on failure
 #define CU_CHECK_THROW(x) \
 	do { \
 		CUresult _result = x; \
@@ -89,7 +89,7 @@ void set_verbose(bool verbose);
 		} \
 	} while(0)
 
-/// Checks the result of a cuXXXXXX call and prints an error on failure
+/// Check CUDA driver API call and print error on failure
 #define CU_CHECK_PRINT(x) \
 	do { \
 		CUresult _result = x; \
@@ -100,7 +100,7 @@ void set_verbose(bool verbose);
 		} \
 	} while(0)
 
-/// Checks the result of a cudaXXXXXX call and throws an error on failure
+/// Check CUDA runtime API call and throw on failure
 #define CUDA_CHECK_THROW(x) \
 	do { \
 		cudaError_t _result = x; \
@@ -108,7 +108,7 @@ void set_verbose(bool verbose);
 			throw std::runtime_error{fmt::format(FILE_LINE " " #x " failed: {}", cudaGetErrorString(_result))}; \
 	} while(0)
 
-/// Checks the result of a cudaXXXXXX call and prints an error on failure
+/// Check CUDA runtime API call and print error on failure
 #define CUDA_CHECK_PRINT(x) \
 	do { \
 		cudaError_t _result = x; \
@@ -193,7 +193,7 @@ inline size_t cuda_memory_granularity() {
   return cuda_memory_granularity(cuda_device());
 }
 
-/// Checks that the current CUDA device supports the features required by TinyGS
+/// @brief Check if current CUDA device supports required features
 void check_features_supported();
 
 // Hash helpers taken from https://stackoverflow.com/a/50978188
@@ -275,7 +275,7 @@ inline std::string bytes_to_string(size_t bytes) {
   return oss.str();
 }
 
-/// Checks if a number is a power of two. If so, and if log2 is not null, writes the base-2 logarithm of the number to log2.
+/// @brief Check if number is power of two, optionally return log2
 inline bool is_pot(uint32_t num, uint32_t* log2 = nullptr) {
   if (log2) {
     *log2 = 0;

@@ -59,18 +59,12 @@ private:
   int m_current_sh_degree = 0;
   float m_scene_scale = 1.0f;
 
-  // means
-  thrust::device_vector<vec3> m_means;
-  // opacities
-  thrust::device_vector<float> m_opacities;
-  // rotations are packed in a single vec4
-  thrust::device_vector<vec4> m_rotations;
-  // scales are packed in a single vec3
-  thrust::device_vector<vec3> m_scales;
-  // sh coefficients are packed in a single vec3, 16 coefficients per color.
-  // the sh0 is special.
-  thrust::device_vector<vec3> m_sh_coefficient_0;
-  thrust::device_vector<vec3> m_sh_coefficients_rest;
+  thrust::device_vector<vec3> m_means; ///< 3D positions
+  thrust::device_vector<float> m_opacities; ///< Opacity values
+  thrust::device_vector<vec4> m_rotations; ///< Rotation quaternions
+  thrust::device_vector<vec3> m_scales; ///< Scale factors
+  thrust::device_vector<vec3> m_sh_coefficient_0; ///< SH coefficient 0
+  thrust::device_vector<vec3> m_sh_coefficients_rest; ///< Remaining SH coefficients
 };
 
 }  // namespace tinygs
