@@ -18,7 +18,7 @@
 namespace tinygs {
 
 /// @brief Configuration parameters for training
-struct TrainerConfig {
+struct OrchestratorConfig {
   // Training parameters
   size_t max_steps = 30000;
 
@@ -61,13 +61,13 @@ using PostStepCallback = std::function<void(const TrainingState&)>;
 using CheckpointCallback = std::function<void(const TrainingState&)>;
 
 /// @brief Main trainer class for 3D Gaussian Splatting
-class Trainer {
+class Orchestrator {
 public:
   /// @brief Construct a new Trainer object
   /// @param config Training configuration parameters
-  explicit Trainer(const TrainerConfig& config = TrainerConfig{});
+  explicit Orchestrator(const OrchestratorConfig& config = OrchestratorConfig{});
 
-  ~Trainer() = default;
+  ~Orchestrator() = default;
 
   // Core setup methods
 
@@ -140,10 +140,10 @@ public:
   const TrainingState& get_state() const { return m_state; }
 
   /// @brief Get training configuration
-  const TrainerConfig& get_config() const { return m_config; }
+  const OrchestratorConfig& get_config() const { return m_config; }
 
   /// @brief Update training configuration
-  void update_config(const TrainerConfig& config);
+  void update_config(const OrchestratorConfig& config);
 
   /// @brief Get the rasterize context
   const RasterizeContext& get_rasterize_context() const { return m_rasterize_ctx; }
@@ -183,7 +183,7 @@ private:
   std::vector<MetricComponent> m_metrics;
 
   // Training state and configuration
-  TrainerConfig m_config;
+  OrchestratorConfig m_config;
   TrainingState m_state;
 
   // Callbacks

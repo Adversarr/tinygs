@@ -1,17 +1,17 @@
-#include "tinygs/trainer/trainer.hpp"
-
-#include <stdexcept>
 #include <spdlog/spdlog.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform_reduce.h>
 
-#include "tinygs/cuda/reduce.hpp"
+#include <stdexcept>
+
 #include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/cuda/reduce.hpp"
+#include "tinygs/orchestrator.hpp"
 
 namespace tinygs {
 
 // TrainerConfig serialization methods
-json TrainerConfig::to_json() const {
+json OrchestratorConfig::to_json() const {
   json j;
   j["max_steps"] = max_steps;
   j["log_interval"] = log_interval;
@@ -26,7 +26,7 @@ json TrainerConfig::to_json() const {
   return j;
 }
 
-void TrainerConfig::from_json(const json& j) {
+void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("max_steps")) max_steps = j["max_steps"].get<int>();
   if (j.contains("log_interval")) log_interval = j["log_interval"].get<int>();
   if (j.contains("checkpoint_interval")) checkpoint_interval = j["checkpoint_interval"].get<int>();
@@ -51,7 +51,7 @@ void mean(const vec3* data, size_t size, vec3& out) {
 }
 
 
-void Trainer::recompute_scene_scale() {
+void Orchestrator::recompute_scene_scale() {
   auto ds = m_dataloader->get_dataset();
   auto pc = m_gaussians->means();
 
@@ -69,57 +69,57 @@ void Trainer::recompute_scene_scale() {
   log_info("Recompute scene scale: {}", scale);
 }
 
-Trainer::Trainer(const TrainerConfig& config) : m_config(config) {
+Orchestrator::Orchestrator(const OrchestratorConfig& config) : m_config(config) {
   m_state.start_time = std::chrono::steady_clock::now();
   m_state.last_log_time = m_state.start_time;
 }
 
-void Trainer::set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians, 
+void Orchestrator::set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians, 
                            std::shared_ptr<GPUGaussian3d> gradients) {
   m_gaussians = gaussians;
   m_gradients = gradients;
 }
 
-void Trainer::set_rasterizer(std::shared_ptr<RasterizerBase> rasterizer) {
+void Orchestrator::set_rasterizer(std::shared_ptr<RasterizerBase> rasterizer) {
   m_rasterizer = rasterizer;
   if (m_gaussians) {
     m_rasterizer->set_gaussians(m_gaussians);
   }
 }
 
-void Trainer::set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) {
+void Orchestrator::set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) {
   m_dataloader = dataloader;
 }
 
-void Trainer::set_optimizer(std::shared_ptr<OptimizerBase> optimizer) {
+void Orchestrator::set_optimizer(std::shared_ptr<OptimizerBase> optimizer) {
   m_optimizer = optimizer;
 }
 
-void Trainer::set_strategy(std::shared_ptr<StrategyBase> strategy) {
+void Orchestrator::set_strategy(std::shared_ptr<StrategyBase> strategy) {
   m_strategy = strategy;
 }
 
-void Trainer::add_loss(std::shared_ptr<LossBase> loss, float weight) {
+void Orchestrator::add_loss(std::shared_ptr<LossBase> loss, float weight) {
   m_losses.push_back({loss, weight});
 }
 
-void Trainer::add_metric(std::shared_ptr<MetricBase> metric, const std::string& name) {
+void Orchestrator::add_metric(std::shared_ptr<MetricBase> metric, const std::string& name) {
   m_metrics.push_back({metric, name});
 }
 
-void Trainer::set_pre_step_callback(PreStepCallback callback) {
+void Orchestrator::set_pre_step_callback(PreStepCallback callback) {
   m_pre_step_callback = callback;
 }
 
-void Trainer::set_post_step_callback(PostStepCallback callback) {
+void Orchestrator::set_post_step_callback(PostStepCallback callback) {
   m_post_step_callback = callback;
 }
 
-void Trainer::set_checkpoint_callback(CheckpointCallback callback) {
+void Orchestrator::set_checkpoint_callback(CheckpointCallback callback) {
   m_checkpoint_callback = callback;
 }
 
-TrainingState Trainer::train() {
+TrainingState Orchestrator::train() {
   validate_setup();
   initialize_buffers();
   recompute_scene_scale();
@@ -141,7 +141,7 @@ TrainingState Trainer::train() {
   return m_state;
 }
 
-void Trainer::step() {
+void Orchestrator::step() {
   // Pre-step callback
   if (m_pre_step_callback) {
     m_pre_step_callback(m_state);
@@ -210,7 +210,7 @@ void Trainer::step() {
   m_state.current_step++;
 }
 
-float Trainer::accumulate_loss() {
+float Orchestrator::accumulate_loss() {
   if (!m_loss_buffer) {
     return 0.0f;
   }
@@ -219,11 +219,11 @@ float Trainer::accumulate_loss() {
   return gpu_sum(m_loss_buffer->data(), shape.width * shape.height * 3);
 }
 
-void Trainer::stop_training() {
+void Orchestrator::stop_training() {
   m_state.should_stop = true;
 }
 
-void Trainer::reset() {
+void Orchestrator::reset() {
   m_state.current_step = 0;
   m_state.current_loss = 0.0f;
 
@@ -246,11 +246,11 @@ void Trainer::reset() {
   // Learning rate is now managed by the scheduler-optimizer system
 }
 
-void Trainer::update_config(const TrainerConfig& config) {
+void Orchestrator::update_config(const OrchestratorConfig& config) {
   m_config = config;
 }
 
-void Trainer::initialize_buffers() {
+void Orchestrator::initialize_buffers() {
   m_dataloader->reset();
   // Get image dimensions from the first data sample
   auto shape = m_dataloader->get_dataset()->image_shape();
@@ -294,7 +294,7 @@ void Trainer::initialize_buffers() {
   log_info("Setup trainer buffers with image shape: {}", to_string(shape));
 }
 
-float Trainer::compute_learning_rate() const {
+float Orchestrator::compute_learning_rate() const {
   // Learning rate is now controlled by the scheduler through the optimizer
   if (m_optimizer) {
     return m_optimizer->get_lr();
@@ -302,22 +302,22 @@ float Trainer::compute_learning_rate() const {
   return 0.0f;
 }
 
-void Trainer::set_lr_scheduler(std::shared_ptr<LrSchedulerBase> scheduler) {
+void Orchestrator::set_lr_scheduler(std::shared_ptr<LrSchedulerBase> scheduler) {
   m_lr_scheduler = scheduler;
   if (m_lr_scheduler) {
     m_lr_scheduler->reset();
   }
 }
 
-std::shared_ptr<LrSchedulerBase> Trainer::get_lr_scheduler() const {
+std::shared_ptr<LrSchedulerBase> Orchestrator::get_lr_scheduler() const {
   return m_lr_scheduler;
 }
 
-std::shared_ptr<OptimizerBase> Trainer::get_optimizer() const {
+std::shared_ptr<OptimizerBase> Orchestrator::get_optimizer() const {
   return m_optimizer;
 }
 
-void Trainer::update_sh_degree() {
+void Orchestrator::update_sh_degree() {
   if (m_state.current_step % m_config.sh_degree_interval == 0) {
     size_t new_degree = std::min(
       m_state.current_step / m_config.sh_degree_interval,
@@ -327,7 +327,7 @@ void Trainer::update_sh_degree() {
   }
 }
 
-void Trainer::evaluate_losses(const GPUBatchInputOutput& data) {
+void Orchestrator::evaluate_losses(const GPUBatchInputOutput& data) {
   m_loss_ctx.target = data.output.image;
   m_loss_ctx.pred = m_rasterize_ctx.fwd_output.image;
   for (const auto& loss_component : m_losses) {
@@ -336,7 +336,7 @@ void Trainer::evaluate_losses(const GPUBatchInputOutput& data) {
   }
 }
 
-std::vector<float> Trainer::evaluate_metrics() {
+std::vector<float> Orchestrator::evaluate_metrics() {
   std::vector<float> metric_values;
   metric_values.reserve(m_metrics.size());
   
@@ -351,21 +351,21 @@ std::vector<float> Trainer::evaluate_metrics() {
   return metric_values;
 }
 
-bool Trainer::should_early_stop() const {
+bool Orchestrator::should_early_stop() const {
   // Simple early stopping based on loss threshold
   // More sophisticated implementations could track loss history
   return m_state.current_loss < m_config.early_stopping_threshold;
 }
 
-void Trainer::set_params(const json& j) {
+void Orchestrator::set_params(const json& j) {
   m_config.from_json(j);
 }
 
-json Trainer::get_params() const {
+json Orchestrator::get_params() const {
   return m_config.to_json();
 }
 
-void Trainer::validate_setup() const {
+void Orchestrator::validate_setup() const {
   if (!m_gaussians) {
     throw std::runtime_error("Gaussians not set. Call set_gaussians() before training.");
   }

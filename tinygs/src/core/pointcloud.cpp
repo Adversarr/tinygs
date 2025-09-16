@@ -79,7 +79,7 @@ PointCloud load_ply(std::string filename) {
   pc.points.reserve(points.size());
   pc.colors.reserve(colors.size());
 
-  for (int i = 0; i < points.size(); i++) {
+  for (size_t i = 0; i < points.size(); i++) {
     pc.points.push_back({(float)points[i][0], (float)points[i][1], (float)points[i][2]});
     pc.colors.push_back({
       (float) colors[i][0] / RGB_NORMALIZATION_FACTOR,

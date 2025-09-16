@@ -1,14 +1,15 @@
+#include <cxxopts.hpp>
+#include <fstream>
+#include <iostream>
+#include <tinygs/dataloader/dataloader.hpp>
+#include <tinygs/dataset/dataset.hpp>
+
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/initialization/initialization.hpp"
 #include "tinygs/optim/lr_scheduler.hpp"
 #include "tinygs/optim/optim.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
-#include "tinygs/trainer/trainer.hpp"
-#include <cxxopts.hpp>
-#include <iostream>
-#include <fstream>
-#include <tinygs/dataset/dataset.hpp>
-#include <tinygs/dataloader/dataloader.hpp>
+#include "tinygs/orchestrator.hpp"
 
 using namespace tinygs;
 
@@ -57,7 +58,7 @@ int main(int argc, char* argv[]) {
   j["metric"] = json::array({"psnr"});
   j["input_pc_file"] = "YOUR_POINT_CLOUD.txt";
 
-  Trainer t;
+  Orchestrator t;
   j["trainer"] = t.get_params();
 
   if (result.count("output")) {

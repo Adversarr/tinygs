@@ -1,28 +1,78 @@
-# Source files (following tiny-cuda-nn patterns)
-file(GLOB_RECURSE TINYGS_SOURCES
-    "src/*.cpp"
-    "src/*.cu"
-    "src/*.cuh"
-    "src/*.hpp"
-)
-
-file(GLOB_RECURSE TINYGS_HEADERS
-    "include/*.hpp"
-    "include/*.cuh"
-    "include/*.h"
-)
-
-# Separate CUDA sources for specific handling
-file(GLOB_RECURSE TINYGS_CUDA_SOURCES
-    "src/*.cu"
-)
-
-file(GLOB_RECURSE TINYGS_CPP_SOURCES
-    "src/*.cpp"
+# Source files (explicit listing instead of GLOB)
+set(TINYGS_SOURCES
+    # Core sources
+    "src/core/camera.cpp"
+    "src/core/camera_loader.cpp"
+    "src/core/gaussian.cpp"
+    "src/core/gpu_gaussian.cu"
+    "src/core/pointcloud.cpp"
+    
+    # CUDA utilities
+    "src/cuda/common_host.cu"
+    "src/cuda/reduce.cu"
+    "src/cuda/stat.cu"
+    
+    # Dataloader
+    "src/dataloader/dataloader.cu"
+    "src/dataloader/simple.cpp"
+    
+    # Dataset
+    "src/dataset/dataset.cpp"
+    "src/dataset/png_folder.cpp"
+    "src/dataset/video.cpp"
+    
+    # Initialization
+    "src/initialization/initialization.cpp"
+    "src/initialization/knn.cpp"
+    "src/initialization/nanoflann.hpp"
+    "src/initialization/random.cpp"
+    
+    # Loss functions
+    "src/loss/fused_ssim.cu"
+    "src/loss/l1.cu"
+    "src/loss/loss.cu"
+    "src/loss/psnr.cu"
+    
+    # Optimizers
+    "src/optim/adamw.cu"
+    "src/optim/lr_scheduler.cpp"
+    "src/optim/optim.cu"
+    "src/optim/sgd.cu"
+    
+    # Random utilities
+    "src/random/multinomial.cu"
+    
+    # Rasterizer
+    "src/rasterizer/3dgs_accel/backward.cu"
+    "src/rasterizer/3dgs_accel/forward.cu"
+    "src/rasterizer/3dgs_accel/rasterizer_impl.cu"
+    "src/rasterizer/default.cu"
+    "src/rasterizer/fastgs.cu"
+    "src/rasterizer/fastgs_ours/backward.cu"
+    "src/rasterizer/fastgs_ours/forward.cu"
+    "src/rasterizer/rasterizer.cpp"
+    
+    # Strategy
+    "src/strategy/default.cu"
+    "src/strategy/mcmc.cu"
+    "src/strategy/strategy.cpp"
+    
+    # Main library
+    "src/tinygs.cpp"
+    
+    # Trainer
+    "src/orchestrator.cu"
+    
+    # Utilities
+    "src/utils/file.cpp"
+    "src/utils/image_format.cpp"
+    "src/utils/inspect_change.cu"
+    "src/utils/scope_timer.cpp"
+    "src/utils/stbi_wrapper.cpp"
 )
 
 # Create main library (following tiny-cuda-nn patterns)
-add_library(tinygs STATIC ${TINYGS_SOURCES} ${TINYGS_HEADERS})
+add_library(tinygs STATIC ${TINYGS_SOURCES})
 
 # Set library alias for consistency
 add_library(tinygs::tinygs ALIAS tinygs)

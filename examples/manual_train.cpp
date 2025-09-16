@@ -25,7 +25,7 @@
 #include "tinygs/rasterizer/fastgs.hpp"
 #include "tinygs/strategy/default.hpp"
 #include "tinygs/strategy/mcmc.hpp"
-#include "tinygs/trainer/trainer.hpp"
+#include "tinygs/orchestrator.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/inspect_change.hpp"
 #include "tinygs/utils/scope_timer.hpp"
@@ -113,13 +113,13 @@ int main() {
   gs3d->set_sh_degree(0);
 
   // Setup trainer configuration
-  TrainerConfig config;
+  OrchestratorConfig config;
   config.max_steps = 30000;
   config.log_interval = 100;
   config.sh_degree_interval = 1000;
   config.max_sh_degree = 3;
   
-  Trainer trainer(config);
+  Orchestrator trainer(config);
   
   // Setup trainer components
   trainer.set_gaussians(gs3d, grads);
