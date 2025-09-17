@@ -80,7 +80,8 @@ class Aligner:
 
     def estimate_depth(self, img_path):
         img = Image.open(img_path)
-        img_np = cv2.remap(np.array(img), self.map1, self.map2, cv2.INTER_LINEAR)
+        img = cv2.resize(np.array(img), (self.undistorted.width, self.undistorted.height))
+        img_np = cv2.remap(img, self.map1, self.map2, cv2.INTER_LINEAR)
         depth_map: np.ndarray = self.depth_anything.predict_depth(img_np)  # type: ignore
         return depth_map, img_np
 
@@ -114,8 +115,8 @@ class Aligner:
         return best_cam_id, best_result, best_aligner
 
     def run(self):
-        for (cam, img_path) in tqdm(zip(self.camera_extrinsics, self.images)):
-            cam_id = cam.img_id
+        for (cam, img_path) in tqdm(zip(self.camera_extrinsics, self.images), total=len(self.images)):
+            cam_id = cam.timestamp
             depth, rgb = self.estimate_depth(img_path)
             self.histories[cam_id] = (depth, rgb, cam)
 
@@ -126,7 +127,7 @@ class Aligner:
         while avail_intervals:
             candidates = []
             for interval in avail_intervals:
-                best_cam_id, best_result, best_aligner = self.best_alignment(interval, iteration)
+                best_cam_id, best_result, best_aligner = self.best_alignment(interval, len(prev_scales))
                 if best_cam_id != -1 and best_result is not None:
                     if (
                         best_result.score >= 0.95
@@ -191,13 +192,15 @@ class Aligner:
 
 if __name__ == "__main__":
 
-    ID = '1751090600427'
     # ID = "1747834320424"
-    # ID = '1748422612463'
+    ID = '1748422612463'
+    # ID = '1751090600427'
     PC_FILE = f"/data/accgs/{ID}/inputs/slam/points3D.txt"
     EXTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/images.txt"
     INTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/cameras.txt"
-    INPUT_FOLDER = f"/data/accgs/{ID}/inputs/images_480x640_1"
+    INPUT_FOLDER = f"/data/accgs/{ID}/inputs/images"
+    VIDEO_INFO_FILE = f'/data/accgs/{ID}/inputs/videoInfo.txt'
+
     DEPTH_FILE = "./depth_output.png"
     OUT_PIX_FILE = "pixels_cam0.txt"
     OUT_PLOT = "pixels_cam0.png"
@@ -217,8 +220,8 @@ if __name__ == "__main__":
 
     images = []
     for cam in camera_extrinsics:
-        cam_id = cam.img_id
-        png_file = f"{INPUT_FOLDER}/{cam_id:04d}.png"
+        cam_id = cam.timestamp
+        png_file = f"{INPUT_FOLDER}/{cam_id}.png"
         if os.path.exists(png_file):
             images.append(png_file)
         else:

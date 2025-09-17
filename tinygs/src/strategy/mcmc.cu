@@ -377,10 +377,10 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   const int num_kept = thrust::reduce(is_alive.begin(), is_alive.end());
   const int num_dead = num_gaussians - num_kept;
   if (num_dead <= 0) {
-    log_debug("No gaussians to relocate");
+    log_info("No gaussians to relocate");
     return;
   }
-  log_debug("Relocating {} gaussians", num_dead);
+  log_info("Relocating {} gaussians", num_dead);
 
   thrust::device_vector<int> alive_indices(num_kept);
   thrust::device_vector<int> dead_indices(num_dead);

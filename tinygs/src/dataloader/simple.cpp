@@ -3,22 +3,41 @@
 #include <random>
 namespace tinygs {
 
-SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataLoaderBase(dataset) {
+SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataLoaderBase(dataset), m_current_index(0) {
   m_rng.seed(0);
+  generate_permutation();
+}
+
+void SimpleDataLoader::generate_permutation() {
+  size_t dataset_size = m_dataset->size();
+  m_permutation.resize(dataset_size);
+  
+  // Initialize permutation with sequential indices
+  for (size_t i = 0; i < dataset_size; ++i) {
+    m_permutation[i] = i;
+  }
+  
+  // Fisher-Yates shuffle using our RNG
+  for (size_t i = dataset_size - 1; i > 0; --i) {
+    size_t j = m_rng.next_uint(i + 1);
+    std::swap(m_permutation[i], m_permutation[j]);
+  }
+  
+  // Reset current index to start of new permutation
+  m_current_index = 0;
 }
 
 GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
-#ifdef NDEBUG
-  // Randomly pick a data from the dataset
-  size_t current_index = m_rng.next_uint(m_dataset->size());
-#else
-  // Get the next data from the dataset
-  static size_t current_index = 0;
-  current_index += 1;
-  if (current_index >= m_dataset->size()) {
-    current_index = 0; // Loop back to the beginning
+  // Check if we've consumed the entire permutation
+  if (m_current_index >= m_permutation.size()) {
+    // Generate a new permutation and reset index
+    generate_permutation();
   }
-#endif
+  
+  // Get the next index from the current permutation
+  size_t current_index = m_permutation[m_current_index];
+  m_current_index++;
+  
   Data host_data = (*m_dataset)[current_index];
 
   // Prepare GPU batch input
@@ -36,8 +55,8 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
   
   // Create GPU image structure
   Image gpu_image;
-  gpu_image.shape = host_data.image.shape;
-  gpu_image.format = host_data.image.format;
+  gpu_image.shape = host_data.image.shape; // TODO: allow lower resolution.
+  gpu_image.format = ImageFormat::CHW;
   gpu_image.data_type = ImageDataType::Float32;
   gpu_image.data = m_gpu_memory.data();
 
@@ -72,6 +91,10 @@ json SimpleDataLoader::get_params() const {
   json params = json::object();
   params["type"] = "simple";
   return params;
+}
+
+void SimpleDataLoader::reset() {
+  generate_permutation();
 }
 
 } // namespace tinygs

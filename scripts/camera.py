@@ -25,7 +25,7 @@ class CameraIntrinsic:
 class CameraExtrinsic:
     """Camera extrinsic parameters"""
 
-    img_id: int  # image ID
+    timestamp: int  # image ID
     rotation: np.ndarray  # quaternion [w, x, y, z]
     translation: np.ndarray  # translation [x, y, z]
 
@@ -124,7 +124,8 @@ def load_camera_extrinsics(
                     tx, ty, tz = map(float, parts[5:8])
                     qs.append([qw, qx, qy, qz])
                     ts.append([tx, ty, tz])
-                    img_ids.append(img_id)
+                    timestamp = int(parts[9][:-4])
+                    img_ids.append(timestamp)
                 except ValueError:
                     # 若解析失败则跳过（可能是匹配行而非图像行）
                     continue
@@ -139,7 +140,7 @@ def load_camera_extrinsics(
     extrinsics = []
     for i in range(len(qs)):
         extrinsics.append(
-            CameraExtrinsic(img_id=img_ids[i], rotation=qs[i], translation=ts[i])
+            CameraExtrinsic(timestamp=img_ids[i], rotation=qs[i], translation=ts[i])
         )
 
     return extrinsics, qs, ts

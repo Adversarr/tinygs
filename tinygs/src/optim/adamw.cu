@@ -79,10 +79,10 @@ __global__ void launch_gaussian_adam_step_SoA(
 
   // accumulate all the gradients, to cull out zero gradient gaussians
   const float grad_norm_1 = (
-    sum(abs(means_grad[idx])) +
-    abs(opacities_grad[idx]) +
-    sum(abs(rotations_grad[idx])) +
-    sum(abs(scales_grad[idx]))
+    sum(abs(means_grad[idx])) 
+    // + abs(opacities_grad[idx])
+    // + sum(abs(rotations_grad[idx]))
+    // + sum(abs(scales_grad[idx]))
   );
   if (grad_norm_1 == 0 && general_p.skip_zero_grad) return;
 
