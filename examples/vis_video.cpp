@@ -8,6 +8,7 @@ int main() {
   try {
     VideoDataset video_dataset(
      "/data/accgs/1747834320424/1747834320424_flip.mp4",
+     "/data/accgs/1747834320424/inputs/videoInfo.txt",
      "/data/accgs/1747834320424/inputs/traj_full.txt.bak",
      "/data/accgs/1747834320424/inputs/slam/cameras.txt"
    );

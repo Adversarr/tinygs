@@ -1,9 +1,10 @@
 #include "tinygs/dataset/video.hpp"
 
 #include <cuda_runtime.h>
-#include <opencv2/opencv.hpp>
 
 #include <chrono>
+#include <fstream>
+#include <opencv2/opencv.hpp>
 #include <stdexcept>
 
 #include "tinygs/core/camera.hpp"
@@ -13,25 +14,54 @@
 
 namespace tinygs {
 
+static std::unordered_map<uuid_t, uuid_t> load_video_info(const std::string& video_info_path) {
+  std::unordered_map<uuid_t, uuid_t> frame_info_list;
+  std::ifstream infile(video_info_path);
+  if (!infile.is_open()) {
+    throw std::runtime_error("Failed to open video info file: " + video_info_path);
+  }
+
+  std::string line;
+  while (std::getline(infile, line)) {
+    std::istringstream iss(line);
+    uuid_t frame_uid, timestamp;
+    if (!(iss >> frame_uid >> timestamp)) {
+      throw std::runtime_error("Malformed line in video info file: " + line);
+    }
+    // frame_info_list[frame_uid] = timestamp;
+    frame_info_list[timestamp] = frame_uid;
+  }
+
+  return frame_info_list;
+}
+
+
 VideoDataset::VideoDataset() 
     : m_data(nullptr), m_size(0) {
 }
 
 VideoDataset::VideoDataset(const std::string &video_file_path,
+                           const std::string &video_info_path,
                            const std::string &extrinsics_file_path,
                            const std::string &intrinsics_file_path)
-    : m_video_file_path(video_file_path), m_extrinsics_file_path(extrinsics_file_path),
-      m_intrinsics_file_path(intrinsics_file_path), m_data(nullptr), m_size(0) {
+    : m_video_file_path(video_file_path), m_video_info_path(video_info_path),
+      m_extrinsics_file_path(extrinsics_file_path), m_intrinsics_file_path(intrinsics_file_path),
+      m_data(nullptr), m_size(0) {
   VideoDataset::load();
 }
 
 void VideoDataset::load() {
   TINYGS_TIMER("VideoDataset::load");
   auto start = std::chrono::steady_clock::now();
-  
+
   // Initialize camera loader with stored paths
   m_camera_loader = SingleCameraLoader(m_extrinsics_file_path, m_intrinsics_file_path);
-  
+  m_timestamp_frame = load_video_info(m_video_info_path);
+  m_size = m_camera_loader.get_camera_extrinsics().size();
+  if (m_size == 0) {
+    throw std::runtime_error("No frames found in video: " + m_video_file_path);
+  }
+
   // Open video file
   cv::VideoCapture cap(m_video_file_path);
   if (!cap.isOpened()) {
@@ -39,29 +69,17 @@ void VideoDataset::load() {
   }
 
   // Get video properties
-  int total_frames = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
-  int video_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
-  int video_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+  const int total_frames = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
+  const int video_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+  const int video_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+  const double fps = cap.get(cv::CAP_PROP_FPS);
   m_image_shape = ImageShape(video_width, video_height, 3);
 
-  // I do not know why, but the camera loader does not work with the video.
+  // NOTE: I do not know why, but the camera loader does not work with the video.
   // I have to resize the sensor to match the video size.
   m_camera_loader.resize_sensor(video_width, video_height);
 
-  double fps = cap.get(cv::CAP_PROP_FPS);
-
   log_info("Video properties: {}x{}, {} frames, {:.2f} fps", video_width, video_height, total_frames, fps);
-  
-  m_size = std::min(static_cast<size_t>(total_frames), m_camera_loader.get_camera_extrinsics().size());
-  if (m_size == 0) {
-    throw std::runtime_error("No frames found in video: " + m_video_file_path);
-  }
-
-  if (m_size != m_camera_loader.get_camera_extrinsics().size()) {
-    log_warning("Number of video frames ({}) and camera extrinsics ({}) do not match.", m_size, m_camera_loader.get_camera_extrinsics().size());
-  } else if (m_size != static_cast<size_t>(total_frames)) {
-    log_warning("Number of video frames ({}) and camera extrinsics ({}) do not match.", m_size, total_frames);
-  }
 
   // Allocate pinned memory for all frames
   const size_t total_size = m_size * m_image_shape.height * m_image_shape.width * m_image_shape.channel * sizeof(uint8_t);
@@ -80,16 +98,21 @@ void VideoDataset::load() {
 
   for (size_t i = 0; i < m_size; ++i) {
     // frame_uid is 1-based, convert to 0-based for video frame indexing
-    uint32_t target_frame_index = camera_extrinsics[i].frame_uid - 1;
+    // NOTE: The extrinsics ensures the list is sorted.
+    const uuid_t target_timestamp = camera_extrinsics[i].timestamp;
+    const uuid_t target_video_frame_index = m_timestamp_frame.at(target_timestamp) - 1;
+
+    log_info("Load {}/{}: frame_idx={}, timestamp={}", i + 1, m_size,  //
+             camera_extrinsics[i].frame_idx, target_timestamp);
 
     // Validate frame index is within video bounds
-    if (target_frame_index >= static_cast<uint32_t>(total_frames)) {
-      throw std::runtime_error("Frame UID " + std::to_string(camera_extrinsics[i].frame_uid) + 
-                              " exceeds video frame count (" + std::to_string(total_frames) + ")");
+    if (target_video_frame_index >= static_cast<uint32_t>(total_frames)) {
+      throw std::runtime_error("Frame UID " + std::to_string(target_video_frame_index)
+                               + " exceeds video frame count (" + std::to_string(total_frames) + ")");
     }
 
     // Read frames sequentially until we reach the target frame
-    while (current_video_frame <= target_frame_index) {
+    while (current_video_frame <= target_video_frame_index) {
       if (!cap.read(frame)) {
         throw std::runtime_error("Failed to read frame " + std::to_string(current_video_frame) + " from video");
       }
@@ -98,7 +121,8 @@ void VideoDataset::load() {
 
     // Process the frame we just read (which is target_frame_index)
     // Verify frame dimensions match expected dimensions
-    if (static_cast<uint32_t>(frame.cols) != m_image_shape.width || static_cast<uint32_t>(frame.rows) != m_image_shape.height) {
+    if (static_cast<uint32_t>(frame.cols) != m_image_shape.width
+        || static_cast<uint32_t>(frame.rows) != m_image_shape.height) {
       // Resize frame to match expected dimensions
       cv::Mat resized_frame;
       cv::resize(frame, resized_frame, cv::Size(m_image_shape.width, m_image_shape.height));
@@ -121,8 +145,11 @@ void VideoDataset::load() {
         }
       }
     }
+
+    m_timestamp_data[target_timestamp] = dest_ptr;
   }
-  
+
+  // Release video capture resources
   cap.release();
   auto end = std::chrono::steady_clock::now();
 
@@ -154,20 +181,25 @@ Data VideoDataset::operator[](size_t index) const {
                             + std::to_string(m_size));
   }
 
+  const auto& intrin = m_camera_loader.get_camera_intrinsics();
+  const auto& extrin = m_camera_loader.get_camera_extrinsics()[index];
+  const auto timestamp = extrin.timestamp;
+
   Data data;
+  data.frame_idx = extrin.frame_idx;
+  data.cam_uid = 0; // TODO: Support multi-camera video dataset
+  data.timestamp = timestamp;
 
   // Set up image data
-  uint8_t* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
+  uint8_t* image_ptr = m_timestamp_data.at(timestamp);
   data.image.shape = image_shape();
   data.image.format = ImageFormat::CHW;  // Converted to CHW format
   data.image.data_type = ImageDataType::UInt8;
   data.image.data = image_ptr;
 
   // Set camera matrices from camera loader
-  data.w2c = m_camera_loader.get_camera_extrinsics()[index].get_w2c();
-  data.frame_uid = m_camera_loader.get_camera_extrinsics()[index].frame_uid;
-  data.cam_uid = 0; //! assuming single camera
-  data.K = m_camera_loader.get_camera_intrinsics().to_mat3();
+  data.w2c = extrin.get_w2c();
+  data.K = intrin.to_mat3();
   return data;
 }
 
@@ -180,6 +212,7 @@ VideoDataset::~VideoDataset() {
 
 void VideoDataset::set_params(const json& j) {
   m_video_file_path = j["video_file_path"].get<std::string>();
+  m_video_info_path = j["video_info_path"].get<std::string>();
   m_extrinsics_file_path = j["extrinsics_file_path"].get<std::string>();
   m_intrinsics_file_path = j["intrinsics_file_path"].get<std::string>();
 }
@@ -188,6 +221,7 @@ json VideoDataset::get_params() const {
   json params;
   params["type"] = "video";
   params["video_file_path"] = m_video_file_path;
+  params["video_info_path"] = m_video_info_path;
   params["extrinsics_file_path"] = m_extrinsics_file_path;
   params["intrinsics_file_path"] = m_intrinsics_file_path;
   return params;

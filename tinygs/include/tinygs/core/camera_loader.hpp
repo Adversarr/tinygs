@@ -13,17 +13,15 @@ public:
   /// @brief Default constructor
   SingleCameraLoader() = default;
 
-  /**
-   * @brief Constructor that loads camera parameters from files
-   * @param extrinsics_file_path Path to extrinsics file
-   * @param intrinsics_file_path Path to intrinsics file
-   */
+  /// @brief Constructor that loads camera parameters from files
   SingleCameraLoader(const std::string& extrinsics_file_path, const std::string& intrinsics_file_path);
 
   /**
    * @brief Load camera extrinsic parameters from text file
    * @param extrinsics_file_path Path to extrinsics file
    * @throws std::runtime_error if file cannot be read or format is invalid
+   *
+   * Expected format: "FrameID "
    */
   void load_camera_extrinsics(const std::string& extrinsics_file_path);
 
@@ -62,6 +60,7 @@ public:
 private:
   std::vector<CameraExtrinsics> m_camera_extrinsics;
   CameraIntrinsics m_camera_intrinsics;
+  std::unordered_map<uuid_t, size_t> m_timestamp_cam_idx;
 };
 
 }  // namespace tinygs

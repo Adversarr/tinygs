@@ -14,21 +14,6 @@
 
 namespace tinygs {
 
-static std::vector<std::string> list_png_files(const std::string& folder_path) {
-  auto result = list_folder(folder_path, true);
-  std::vector<std::string> filterd_pngs;
-  for (const auto& path : result) {
-    if (path.ends_with(".png")) {
-      filterd_pngs.push_back(path);
-    }
-  }
-
-  // sort by name
-  std::sort(filterd_pngs.begin(), filterd_pngs.end());
-
-  return filterd_pngs;
-}
-
 /**
  * @brief Load a single image and convert from RGBA/RGB HWC to RGB CHW format in uint8
  * @param index Index of the image in the dataset
@@ -92,38 +77,37 @@ PngFolderDataset::PngFolderDataset(const std::string &folder_path,
   PngFolderDataset::load();
 }
 
+static inline std::string get_image(uuid_t timestamp, const std::string& extension, const std::string& folder_path) {
+  return fmt::format("{}/{}.{}", folder_path, timestamp, extension);
+}
+
 void PngFolderDataset::load() {
   TINYGS_TIMER("PngFolderDataset::load");
   auto start = std::chrono::steady_clock::now();
   
   // Initialize camera loader with stored paths
   m_camera_loader = SingleCameraLoader(m_extrinsics_file_path, m_intrinsics_file_path);
-  
+
   // Get image paths from folder
-  m_image_paths = list_png_files(m_folder_path);
-  
-  m_size = std::min(m_image_paths.size(), m_camera_loader.get_camera_extrinsics().size());
+  m_size = m_camera_loader.get_camera_extrinsics().size();
   if (m_size == 0) {
     throw std::runtime_error("No PNG files found in folder: " + m_folder_path);
   }
 
-  // Infer image shape from the first image
-  auto first_img = load_stbi_u8(m_image_paths[0].c_str());
-  m_image_shape.width = first_img.shape.width;
-  m_image_shape.height = first_img.shape.height;
-  m_image_shape.channel = 3;  // Always use 3 channels (RGB) for consistency
-  free(first_img.data);       // Free the temporary image data
-  // scale the camera to fit the dataset width and height.
-  m_camera_loader.resize_sensor(m_image_shape.width, m_image_shape.height);
+  {
+    uuid_t front = m_camera_loader.get_camera_extrinsics().front().timestamp;
+    // Infer image shape from the first image
+    auto first_img = load_stbi_u8(get_image(front, m_extension, m_folder_path).c_str());
+    m_image_shape.width = first_img.shape.width;
+    m_image_shape.height = first_img.shape.height;
+    m_image_shape.channel = 3;  // Always use 3 channels (RGB) for consistency
+    free(first_img.data);       // Free the temporary image data
+    // scale the camera to fit the dataset width and height.
+    m_camera_loader.resize_sensor(m_image_shape.width, m_image_shape.height);
+  }
 
   if (m_image_shape.channel != 3 && m_image_shape.channel != 4) {
     throw std::runtime_error("Only 3 (RGB) or 4 (RGBA) channels are supported now.");
-  }
-
-  if (m_size != m_camera_loader.get_camera_extrinsics().size()) {
-    log_warning("Number of PNG files ({}) and camera extrinsics ({}) do not match.", m_size, m_camera_loader.get_camera_extrinsics().size());
-  } else if (m_size != m_image_paths.size()) {
-    log_warning("Number of PNG files ({}) and camera extrinsics ({}) do not match.", m_size, m_image_paths.size());
   }
 
   // Allocate pinned memory for all images
@@ -133,9 +117,17 @@ void PngFolderDataset::load() {
   // Load all images into memory
 #pragma omp parallel for
   for (size_t i = 0; i < m_size; ++i) {
-    load_single_image(i, m_image_paths[i], m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
+    uuid_t timestamp = m_camera_loader.get_camera_extrinsics()[i].timestamp;
+    std::string image_path = get_image(timestamp, m_extension, m_folder_path);
+    load_single_image(i, image_path, m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
   }
   auto end = std::chrono::steady_clock::now();
+
+  // uuid to data_pointer
+  for (size_t i = 0; i < m_size; ++i) {
+    uuid_t timestamp = m_camera_loader.get_camera_extrinsics()[i].timestamp;
+    m_timestamp_data[timestamp] = m_data + i * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
+  }
 
   log_info("Loaded {} images with resolution={}x{} (inferred from first image). (consumed {:.6f} GiB in {:.6f} sec.)",
             m_size, m_image_shape.width, m_image_shape.height, static_cast<double>(total_size) / (1024 * 1024 * 1024),
@@ -164,21 +156,23 @@ Data PngFolderDataset::operator[](size_t index) const {
     throw std::out_of_range(fmt::format("Index {} out of range for dataset of size {}", index, m_size));
   }
 
+  const auto& intrin = m_camera_loader.get_camera_intrinsics();
+  const auto& extrin = m_camera_loader.get_camera_extrinsics()[index];
+
   Data data;
+  data.frame_idx = extrin.frame_idx;
+  data.cam_uid = 0; // TODO: Support multi-camera video dataset
+  data.timestamp = extrin.timestamp;
 
   // Set up image data
-  uint8_t* image_ptr = m_data + index * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
+  uint8_t* image_ptr = m_timestamp_data.at(extrin.timestamp);
   data.image.shape = image_shape();
-  data.image.format = ImageFormat::CHW;  // Converted to CHW format
+  data.image.format = ImageFormat::CHW;
   data.image.data_type = ImageDataType::UInt8;
   data.image.data = image_ptr;
 
-  // Initialize camera matrices to identity (placeholder values)
-  // In a real implementation, these would be loaded from camera calibration files
-  data.w2c = m_camera_loader.get_camera_extrinsics()[index].get_w2c();
-  data.frame_uid = m_camera_loader.get_camera_extrinsics()[index].frame_uid;
-  data.cam_uid = 0; //! assuming single camera
-  data.K = m_camera_loader.get_camera_intrinsics().to_mat3();
+  data.w2c = extrin.get_w2c();
+  data.K = intrin.to_mat3();
   return data;
 }
 
@@ -199,6 +193,9 @@ void PngFolderDataset::set_params(const json& j) {
   if (j.contains("intrinsics_file_path")) {
     m_intrinsics_file_path = j["intrinsics_file_path"].get<std::string>();
   }
+  if (j.contains("extension")) {
+    m_extension = j["extension"].get<std::string>();
+  }
 }
 
 json PngFolderDataset::get_params() const {
@@ -207,6 +204,7 @@ json PngFolderDataset::get_params() const {
   params["folder_path"] = m_folder_path;
   params["extrinsics_file_path"] = m_extrinsics_file_path;
   params["intrinsics_file_path"] = m_intrinsics_file_path;
+  params["extension"] = m_extension;
   return params;
 }
 

@@ -188,6 +188,9 @@ enum class ReductionType {
   Product,
 };
 
+/// The frame_id, camera_id, ... Always ui64.
+using uuid_t = uint64_t;
+
 ////////////////////////////// Utility Functions //////////////////////////////
 
 inline constexpr TINYGS_HOST_DEVICE float PI() {

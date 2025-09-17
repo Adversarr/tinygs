@@ -20,7 +20,7 @@ CameraIntrinsics CameraIntrinsics::parse(const std::string& line) {
     }
     
     CameraIntrinsics intrinsics;
-    intrinsics.uid = std::stoi(tokens[0]);
+    intrinsics.uid = std::stoull(tokens[0]);
     
     // Parse camera model
     if (tokens[1] == "PINHOLE") {
@@ -51,17 +51,15 @@ CameraExtrinsics CameraExtrinsics::parse(const std::string& line) {
     std::string token;
     while (iss >> token) {
         tokens.push_back(token);
-        if (tokens.size() >= 8) {
-            break;
-        }
     }
 
-    if (tokens.size() < 8) {
-        throw std::runtime_error("Invalid camera extrinsics format: expected at least 8 values, got " + std::to_string(tokens.size()));
+    if (tokens.size() < 10) {
+      throw std::runtime_error("Invalid camera extrinsics format: expected at least 10 values, got "
+                               + std::to_string(tokens.size()) + "\"" + line + "\"");
     }
 
     // Parse camera id
-    uint32_t frame_uid = std::stoi(tokens[0]);
+    uuid_t frame_idx = std::stoull(tokens[0]);
 
     // Parse quaternion (qw, qx, qy, qz) and translation (tx, ty, tz)
     float qw = std::stof(tokens[1]);
@@ -71,12 +69,23 @@ CameraExtrinsics CameraExtrinsics::parse(const std::string& line) {
     float tx = std::stof(tokens[5]);
     float ty = std::stof(tokens[6]);
     float tz = std::stof(tokens[7]);
+    float rotation_ignored = std::stof(tokens[8]); // ignore.
 
+    const auto& timestamp_token = tokens[9];
+    uuid_t timestamp = 0;
+    if (auto dot_position = timestamp_token.find('.');
+        dot_position == std::string::npos) {
+      // something like "123456", which is safe to cast directly to uuid
+      timestamp = std::stoull(timestamp_token);
+    } else {
+      // "123456.jpg" or "34124.png", we extract the number part.
+      timestamp = std::stoull(timestamp_token.substr(0, dot_position));
+    }
     // Normalize quaternion
     float norm = std::sqrt(qw*qw + qx*qx + qy*qy + qz*qz);
     qw /= norm; qx /= norm; qy /= norm; qz /= norm;
 
-    return CameraExtrinsics(quat{qw, qx, qy, qz}, vec3{tx, ty, tz}, frame_uid);
+    return CameraExtrinsics(quat{qw, qx, qy, qz}, vec3{tx, ty, tz}, frame_idx, timestamp);
 }
 
 std::string CameraIntrinsics::to_string() const {

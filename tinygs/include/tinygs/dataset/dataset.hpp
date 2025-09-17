@@ -9,8 +9,9 @@ struct Data {
   /// Camera data
   mat4x4 w2c;
   mat3x3 K;
-  uint32_t cam_uid;    ///< Camera ID (0-based)
-  uint32_t frame_uid;  ///< Frame ID (1-based)
+  uuid_t cam_uid;    ///< Camera ID (0-based)
+  uuid_t frame_idx;  ///< Frame ID (1-based)
+  uuid_t timestamp;  ///< Timestamp ID
 };
 
 class DatasetBase {
@@ -30,12 +31,9 @@ public:
   /// @brief Get dataset parameters
   virtual json get_params() const { return json::object(); }
 
-  SingleCameraLoader& get_camera_loader() { return m_camera_loader; }
-  const SingleCameraLoader& get_camera_loader() const { return m_camera_loader; }
-
   virtual ~DatasetBase() = default;
 
-  /// Get the size of the dataset.
+  /// @brief Get the size of the dataset.
   virtual size_t size() const noexcept = 0;
 
   /// @brief Get image shape
@@ -43,6 +41,10 @@ public:
 
   /// @brief Get data at index
   virtual Data operator[](size_t idx) const = 0;
+
+
+  SingleCameraLoader& get_camera_loader() { return m_camera_loader; }
+  const SingleCameraLoader& get_camera_loader() const { return m_camera_loader; }
 
 protected:
   SingleCameraLoader m_camera_loader;

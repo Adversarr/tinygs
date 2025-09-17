@@ -98,7 +98,6 @@ target_link_libraries(tinygs
         # CUDA libraries
         CUDA::cuda_driver
         CUDA::cudart
-        CUDA::curand
         # System libraries
         Threads::Threads
         # Third-party libraries

@@ -163,7 +163,7 @@ void MCMCStrategy::step_impl(const RasterizeContext& ctx) {
     add_new_gs(ctx);
   }
 
-  // add_noise(ctx);
+  add_noise(ctx);
 }
 
 void MCMCStrategy::reset() {}

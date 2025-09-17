@@ -9,7 +9,7 @@
 namespace tinygs {
 
 SingleCameraLoader::SingleCameraLoader(const std::string& extrinsics_file_path,
-                                               const std::string& intrinsics_file_path) {
+                                       const std::string& intrinsics_file_path) {
   load_camera_extrinsics(extrinsics_file_path);
   load_camera_intrinsics(intrinsics_file_path);
 }
@@ -18,12 +18,15 @@ void SingleCameraLoader::load_camera_extrinsics(const std::string& extrinsics_fi
   auto lines = readlines(extrinsics_file_path);
   m_camera_extrinsics.clear();
   m_camera_extrinsics.reserve(lines.size());
+  m_timestamp_cam_idx.clear();
 
-  for (auto& line : lines) {
-    m_camera_extrinsics.emplace_back(CameraExtrinsics::parse(line));
+  for (const auto& line : lines) {
+    const auto& ext = m_camera_extrinsics.emplace_back(CameraExtrinsics::parse(line));
+    m_timestamp_cam_idx[ext.timestamp] = m_camera_extrinsics.size() - 1;
   }
-  std::sort(m_camera_extrinsics.begin(), m_camera_extrinsics.end(),
-      [](const auto& a, const auto& b) { return a.frame_uid < b.frame_uid; });
+  std::sort(m_camera_extrinsics.begin(), m_camera_extrinsics.end(), [](const auto& a, const auto& b) {
+    return a.frame_idx < b.frame_idx;
+  });
 
   log_info("Loaded {} camera extrinsics from file: {}", m_camera_extrinsics.size(), extrinsics_file_path);
 }

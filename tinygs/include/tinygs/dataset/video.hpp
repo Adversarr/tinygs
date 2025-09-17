@@ -1,4 +1,7 @@
 #pragma once
+
+#include <unordered_map>
+
 #include "tinygs/common.hpp"
 #include "tinygs/core/camera.hpp"
 #include "tinygs/core/camera_loader.hpp"
@@ -14,10 +17,12 @@ public:
   /**
    * @brief Constructor with configuration parameters
    * @param video_file_path Video file path
+   * @param video_info_path Video info file path (frame to timestamp mapping)
    * @param extrinsics_file_path Camera extrinsics file path
    * @param intrinsics_file_path Camera intrinsics file path
    */
   explicit VideoDataset(const std::string &video_file_path,
+                        const std::string &video_info_path,
                         const std::string &extrinsics_file_path,
                         const std::string &intrinsics_file_path);
   virtual ~VideoDataset();
@@ -36,6 +41,7 @@ public:
 private:
   /// Configurables
   std::string m_video_file_path{"YOUR_VIDEO_FILE_PATH"};
+  std::string m_video_info_path{"YOUR_VIDEO_INFO_PATH"};
   std::string m_extrinsics_file_path{"YOUR_EXTRINSICS_FILE_PATH"};
   std::string m_intrinsics_file_path{"YOUR_INTRINSICS_FILE_PATH"};
 
@@ -43,6 +49,14 @@ private:
   SingleCameraLoader m_camera_loader;
   ImageShape m_image_shape;
   uint8_t* m_data;
+
+  // TODO: this class do not support undistortion.
+
+  // Load from videoInfo. a timestamp -> video_frame_id mapping.
+  std::unordered_map<uuid_t, uuid_t> m_timestamp_frame;
+  // timestamp -> data mapping for quick access.
+  std::unordered_map<uuid_t, uint8_t*> m_timestamp_data;
+
   size_t m_size;
 };
 

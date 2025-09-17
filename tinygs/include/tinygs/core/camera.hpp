@@ -16,7 +16,7 @@ enum class CameraModel: int {
 
 /// @brief Camera intrinsic parameters
 struct CameraIntrinsics {
-  int uid; ///< Camera ID (0-based)
+  uuid_t uid; ///< Camera ID (0-based)
   CameraModel model;
   int width;
   int height;
@@ -28,9 +28,9 @@ struct CameraIntrinsics {
   /// @brief Get 3x3 intrinsics matrix K
   TINYGS_HOST_DEVICE mat3x3 to_mat3() const {
     return mat3x3{
-      fx, 0.0f, 0.f,
-      0.0f, fy, 0.f,
-      cx,   cy, 1.0f
+      fx, 0.0f, 0.f, // col 0
+      0.0f, fy, 0.f, // col 1
+      cx,   cy, 1.0f // col 2
     };
   }
   
@@ -46,13 +46,15 @@ std::string to_string(const CameraIntrinsics &intrinsics);
 
 /// @brief Camera extrinsic parameters (pose)
 struct CameraExtrinsics {
-  quat m_q;  ///< Quaternion (qw, qx, qy, qz)
-  vec3 m_t;  ///< Translation (tx, ty, tz)
-  uint32_t frame_uid; ///< Frame ID (1-based)
+  quat m_q;            ///< Quaternion (qw, qx, qy, qz)
+  vec3 m_t;            ///< Translation (tx, ty, tz)
+  uuid_t frame_idx;    ///< Frame IDX (1-based)
+  uuid_t timestamp;    ///< Global timestamp
 
   /// @brief Constructor from quaternion and translation
-  TINYGS_HOST_DEVICE CameraExtrinsics(const quat& quaternion, const vec3& translation, uint32_t frame_uid) 
-    : m_q(quaternion), m_t(translation), frame_uid(frame_uid) {}
+  TINYGS_HOST_DEVICE CameraExtrinsics(const quat& quaternion, const vec3& translation,  //
+                                      uuid_t frame_uid, uuid_t timestamp) :
+      m_q(quaternion), m_t(translation), frame_idx(frame_uid), timestamp(timestamp) {}
 
   /// @brief Default constructor
   CameraExtrinsics() = default;

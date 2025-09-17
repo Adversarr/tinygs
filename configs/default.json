@@ -3,9 +3,10 @@
     "type": "simple"
   },
   "dataset": {
-    "extrinsics_file_path": "/data/accgs/1748422612463/inputs/traj_full.txt.bak",
-    "folder_path": "/data/accgs/1748422612463/inputs/images_480x640_1",
+    "extrinsics_file_path": "/data/accgs/1748422612463/inputs/slam/images.txt",
+    "folder_path": "/data/accgs/1748422612463/inputs/images/",
     "intrinsics_file_path": "/data/accgs/1748422612463/inputs/slam/cameras.txt",
+    "extension": "png",
     "type": "png_folder"
   },
   "initializer": {

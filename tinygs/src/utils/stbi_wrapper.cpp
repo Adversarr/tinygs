@@ -50,7 +50,7 @@ Image load_stbi_u8(const char* filename) {
   uint8_t* data = stbi_load(filename, &width, &height, &n_channels, 3);
 
   if (!data) {
-    throw std::runtime_error{std::string{stbi_failure_reason()}};
+    throw std::runtime_error{std::string{stbi_failure_reason()} + " filename: " + filename};
   }
   Image img;
   img.data = data;
