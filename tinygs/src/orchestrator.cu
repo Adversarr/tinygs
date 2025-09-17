@@ -323,6 +323,9 @@ void Orchestrator::update_sh_degree() {
       m_state.current_step / m_config.sh_degree_interval,
       m_config.max_sh_degree
     );
+    if (new_degree != m_gaussians->get_sh_degree()) {
+      log_info("Updating SH degree to {}", new_degree);
+    }
     m_gaussians->set_sh_degree(static_cast<int>(new_degree));
   }
 }

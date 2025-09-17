@@ -8,7 +8,9 @@
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/random/multinomial.hpp"
 #include "tinygs/strategy/mcmc.hpp"
-#include "utils/scope_timer.hpp"
+#include "tinygs/utils/scope_timer.hpp"
+
+#include "tinygs/random/device.cuh"
 
 namespace tinygs {
   
@@ -34,15 +36,6 @@ void init_binom() {
     }
   }
   CUDA_CHECK_THROW(cudaMemcpyToSymbol(binom, h_binom, sizeof(h_binom)));
-}
-
-// Custom CUDA kernel for `index_add_` (scatter-add) operation
-// This function needs to be defined globally or in a namespace, not inside a class method.
-__global__ static void index_add_kernel(int* data, const int* indices, int value_to_add, int num_indices) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < num_indices) {
-        atomicAdd(&data[indices[i]], value_to_add);
-    }
 }
 
 // Refer: https://github.com/MrNeRF/LichtFeld-Studio/blob/60b4f2abf080e35afb858373a9fb152a3fdf1d3b/gsplat/RelocationCUDA.cu#L11
@@ -71,13 +64,34 @@ __global__ static void relocation_kernel(
     for (int i = 1; i <= n_idx; ++i) {
         for (int k = 0; k <= (i - 1); ++k) {
             float bin_coeff = binom[(i - 1) * max_binom_size + k];
-            float term = (::pow(-1.0f, k) / sqrt(static_cast<float>(k + 1))) *
-                          ::pow(nop, k + 1);
+            float term = ((k % 2 == 0 ? 1.0f : -1.0f) / sqrt(static_cast<float>(k + 1))) *
+                          ::powf(nop, k + 1);
             denom_sum += (bin_coeff * term);
         }
     }
     float coeff = (opacities[idx] / denom_sum);
-    new_scales[idx] = coeff * scales[idx]; // TODO: This could be much larger than original. we should clamp
+    new_scales[idx] = coeff * scales[idx];
+}
+
+// Refer: https://github.com/MrNeRF/LichtFeld-Studio/blob/60b4f2abf080e35afb858373a9fb152a3fdf1d3b/gsplat/RelocationCUDA.cu
+// This is a custom CUDA kernel function to convert raw quaternion to rotation matrix
+inline __device__ mat3x3 raw_quat_to_rotmat(const vec4 raw_quat) {
+  float w = raw_quat[0], x = raw_quat[1], y = raw_quat[2], z = raw_quat[3];
+  // normalize
+  float inv_norm = fminf(rsqrt(x * x + y * y + z * z + w * w),
+                         1e+12f); // match torch normalize
+  x *= inv_norm;
+  y *= inv_norm;
+  z *= inv_norm;
+  w *= inv_norm;
+  float x2 = x * x, y2 = y * y, z2 = z * z;
+  float xy = x * y, xz = x * z, yz = y * z;
+  float wx = w * x, wy = w * y, wz = w * z;
+  return mat3x3(
+    (1.f - 2.f * (y2 + z2)), (2.f * (xy + wz)), (2.f * (xz - wy)), // 1st col
+    (2.f * (xy - wz)), (1.f - 2.f * (x2 + z2)), (2.f * (yz + wx)), // 2nd col
+    (2.f * (xz + wy)), (2.f * (yz - wx)), (1.f - 2.f * (x2 + y2))  // 3rd col
+  );
 }
 
 __global__ void add_noise_kernel(
@@ -99,21 +113,23 @@ __global__ void add_noise_kernel(
       raw_scales[idx_3d + 1],
       raw_scales[idx_3d + 2]
     );
-    mat3x3 S = mat3x3(
-      activate_scale(raw_scale[0]), 0.f, 0.f,
-      0.f, activate_scale(raw_scale[1]), 0.f,
-      0.f, 0.f, activate_scale(raw_scale[2])
+    auto s0 = activate_scale(raw_scale[0]),
+         s1 = activate_scale(raw_scale[1]),
+         s2 = activate_scale(raw_scale[2]);
+    mat3x3 S2 = mat3x3(
+      s0 * s0, 0.f, 0.f,
+      0.f, s1 * s1, 0.f,
+      0.f, 0.f, s2 * s2
     );
 
-    quat raw_quat = normalize(quat( //
-        raw_quats[4 * idx + 0],     //
-        raw_quats[4 * idx + 1],     //
-        raw_quats[4 * idx + 2],     //
-        raw_quats[4 * idx + 3]      //
-        ));
-    mat3x3 R = quat_to_mat3(raw_quat);
+    mat3x3 R = raw_quat_to_rotmat(vec4(
+      raw_quats[4 * idx + 0],
+      raw_quats[4 * idx + 1],
+      raw_quats[4 * idx + 2],
+      raw_quats[4 * idx + 3]
+    ));
 
-    mat3x3 covariance = R * S;
+    mat3x3 covariance = R * S2 * glm::transpose(R);
 
     vec3 transformed_noise = covariance * vec3(
       noise[idx_3d + 0],
@@ -121,12 +137,11 @@ __global__ void add_noise_kernel(
       noise[idx_3d + 2]
     );
 
-    float opacity = deactivate_opacity(-raw_opacities[idx]); // convert to [0, 1]
-    // float op_sigmoid = __frcp_rn(1.f + __expf(100.f * opacity - 0.5f));
-    float op_sigmoid = 1.0f / (1 + expf(-100.0f * ((1 - opacity) - 0.995f)));
+    float opacity = activate_opacity(raw_opacities[idx]);
+    float op_sigmoid = __frcp_rn(1.f + __expf(100.f * opacity - 0.5f));
     float noise_factor = current_lr * op_sigmoid;
 
-    means[idx_3d] += noise_factor * transformed_noise.x;
+    means[idx_3d + 0] += noise_factor * transformed_noise.x;
     means[idx_3d + 1] += noise_factor * transformed_noise.y;
     means[idx_3d + 2] += noise_factor * transformed_noise.z;
 }
@@ -137,41 +152,36 @@ MCMCStrategy::MCMCStrategy(
     std::shared_ptr<OptimizerBase> optimizer
 ) : StrategyBase(gaussians, gaussians_grad, optimizer) {
   init_binom();
-  m_noise_lr = m_mcmc_params.noise_lr_init;
 }
 
 
 void MCMCStrategy::step_impl(const RasterizeContext& ctx) {
   ctx.densification_info.reset();
   const size_t step = this_step();
-  add_noise(ctx);
   if (step % m_params.refine_every == 0 && step >= m_params.start_refine && step <= m_params.end_refine) {
     relocate(ctx);
     add_new_gs(ctx);
   }
+
+  // add_noise(ctx);
 }
 
-void MCMCStrategy::reset() {
-  m_noise_lr = m_mcmc_params.noise_lr_init;
-}
+void MCMCStrategy::reset() {}
 
 void MCMCStrategy::add_noise(const RasterizeContext& /* ctx */) {
   // TODO: this is simpler than expected.
   TINYGS_TIMER("MCMCStrategy::add_noise");
   size_t num_gaussians = m_gaussians->size();
   if (num_gaussians == 0) return;
-  thrust::host_vector<float> h_noise(3 * num_gaussians);
-  thrust::generate(h_noise.begin(), h_noise.end(), [&]() { 
-    float u1 = 1 - m_rng.next_float();
-    float u2 = m_rng.next_float();
-    // Box-Muller transform with safety checks
-    const float epsilon = 1e-7f;
-    u1 = std::max(epsilon, std::min(1.0f - epsilon, u1)); // Ensure u1 is in (0,1)
-    const float noise = m_noise_lr * std::sqrt(-2.0f * std::log(u1)) * std::cos(2.0f * M_PI * u2);
-    return std::isfinite(noise) ? noise : 0.0f; // Return 0 if result is invalid
-  });
 
-  thrust::device_vector<float> noise = h_noise;
+  thrust::device_vector<float> noise(3 * num_gaussians);
+  generate_random_logistic<float>(
+    m_rng,
+    noise.size(),
+    thrust::raw_pointer_cast(noise.data()),
+    0.0f, 1.0f
+  ); // TODO: fuse the two kernels.
+
   add_noise_kernel<<<(num_gaussians + 255) / 256, 256>>>(
     num_gaussians,
     thrust::raw_pointer_cast(m_gaussians->opacities().data()),
@@ -179,10 +189,8 @@ void MCMCStrategy::add_noise(const RasterizeContext& /* ctx */) {
     reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
     thrust::raw_pointer_cast(noise.data()),
     reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
-    m_noise_lr
+    m_mcmc_params.noise_lr_init * m_optimizer->get_lr()
   );
-
-  m_noise_lr *= m_mcmc_params.noise_lr_decay;
 }
 
 void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
@@ -208,19 +216,22 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
 
   // Sample from alive Gaussians based on opacity
   const auto& probs = opacities;
-  auto sampled_idxs_local = multinomial_cuda_cpu(
-    thrust::raw_pointer_cast(probs.data()),
-    num_gaussians,
-    num_to_add,
-    m_rng.next_uint()
-  );
   thrust::device_vector<int> sampled_idxs(num_to_add);
-  thrust::copy(
-    thrust::device,
-    sampled_idxs_local.data(),
-    sampled_idxs_local.data() + num_to_add,
-    sampled_idxs.begin()
-  );
+  {
+    auto sampled_idxs_local = multinomial_cuda_with_replacement(
+    thrust::raw_pointer_cast(probs.data()),
+      num_gaussians,
+      num_to_add,
+      m_rng.next_uint()
+    );
+
+    thrust::copy(
+      thrust::device,
+      sampled_idxs_local.data(),
+      sampled_idxs_local.data() + num_to_add,
+      sampled_idxs.begin()
+    );
+  }
 
   // Get parameters for sampled Gaussians
   thrust::device_vector<float> sampled_opacities(num_to_add);
@@ -241,7 +252,37 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
     [
       scales = thrust::raw_pointer_cast(m_gaussians->scales().data()),
       sampled_idxs = thrust::raw_pointer_cast(sampled_idxs.data())
-    ] __device__ (int idx) { return exp(scales[sampled_idxs[idx]]); }
+    ] __device__ (int idx) { return activate_scale(scales[sampled_idxs[idx]]); }
+  );
+
+  // Count occurrences
+  thrust::device_vector<int> ratios(num_to_add, 0);
+  {
+    thrust::device_vector<int> sample_count(num_gaussians, 0);
+    thrust::for_each(thrust::device, sampled_idxs.begin(), sampled_idxs.end(),
+      [count = thrust::raw_pointer_cast(sample_count.data())] __device__ (int idx) {
+        atomicAdd(count + idx, 1);
+      });
+    thrust::transform( // gather from sample_idx in sample_count.
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(num_to_add), ratios.begin(),
+        [sample_count = thrust::raw_pointer_cast(sample_count.data()),
+         sampled_idxs = thrust::raw_pointer_cast(sampled_idxs.data())] __device__(int idx) {
+          return ::min(sample_count[sampled_idxs[idx]] + 1, max_binom_size);
+        });
+  }
+
+  // Call the CUDA relocation function from gsplat
+  thrust::device_vector<float> new_opacities(num_to_add); // activated
+  thrust::device_vector<vec3> new_scales(num_to_add);     // activated
+  relocation_kernel<<<(num_to_add + 255) / 256, 256>>>(
+    num_to_add,
+    thrust::raw_pointer_cast(sampled_opacities.data()),
+    thrust::raw_pointer_cast(sampled_scales.data()), // scales in exponential space.
+    thrust::raw_pointer_cast(ratios.data()),
+    thrust::raw_pointer_cast(new_opacities.data()),
+    thrust::raw_pointer_cast(new_scales.data()),
+    m_params.pruning_opacity_threshold
   );
 
   thrust::device_vector<int> new_indices(num_to_add);
@@ -261,10 +302,10 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_to_add),
     [
-      sampled_opacities = sampled_opacities.data(),
-      sampled_scales = thrust::raw_pointer_cast(sampled_scales.data()), // exp space.
-      sampled_idxs = sampled_idxs.data(), // copy from
-      new_indices = new_indices.data(),    // copy to
+      sampled_opacities = thrust::raw_pointer_cast(new_opacities.data()),
+      sampled_scales = thrust::raw_pointer_cast(new_scales.data()),
+      sampled_idxs = sampled_idxs.data(),   // copy from
+      new_indices = new_indices.data(),     // copy to
       means = m_gaussians->means().data(),
       opacities = m_gaussians->opacities().data(),
       scales = thrust::raw_pointer_cast(m_gaussians->scales().data()), // raw.
@@ -276,9 +317,10 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
       int src = sampled_idxs[idx]; // Get the source index.
       int dst = new_indices[idx];  // Get the destination index.
       assert(dst >= num_gaussians);
-      means[dst] = means[src];
       opacities[src] = opacities[dst] = deactivate_opacity(sampled_opacities[idx]);
-      scales[src] = scales[dst] = log(sampled_scales[idx]);
+      scales[src] = scales[dst] = deactivate_scale(sampled_scales[idx]);
+      // other fields are not changed
+      means[dst] = means[src];
       rotations[dst] = rotations[src];
       sh_coefficient_0[dst] = sh_coefficient_0[src];
       auto sh_coef_src = sh_coefficients_rest + src * (kMaxSphericalHarmonicsCoefficients - 1);
@@ -303,7 +345,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     m_gaussians->opacities().begin(),
     m_gaussians->opacities().end(),
     opacities.begin(),
-    [] __device__ (float opacity) { return logistic(opacity); }
+    [] __device__ (float opacity) { return activate_opacity(opacity); }
   ); // actual opacity = sigmoid(opacity)
 
   auto rotations = m_gaussians->rotations();
@@ -315,15 +357,17 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     [
       opacities = thrust::raw_pointer_cast(opacities.data()),
       scale = thrust::raw_pointer_cast(m_gaussians->scales().data()),
+      rots = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
       scene_scale = m_gaussians->scene_scale(),
       pruning_scale_threshold = m_params.pruning_scale_threshold,
       prune_large = this_step() > m_params.reset_every,
       min_opacity = m_params.pruning_opacity_threshold
     ] __device__ (int idx) {
-      bool not_large_ws = max(exp(scale[idx])) < pruning_scale_threshold * scene_scale;
+      bool not_large_ws = max(activate_scale(scale[idx])) < pruning_scale_threshold * scene_scale;
       bool not_transparent = opacities[idx] > min_opacity;
+      bool not_degrading = glm::length(rots[idx]) > FLT_EPSILON;
 
-      if (not_transparent && (not_large_ws || !prune_large)) {
+      if (not_transparent && (not_large_ws || !prune_large) && not_degrading) {
         return 1;
       }
       return 0;
@@ -372,7 +416,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     thrust::raw_pointer_cast(probs.data()),
     num_kept,
     num_dead,
-    0 // TODO: replace with real seed.
+    m_rng.next_uint() // TODO: replace with real seed.
   );
   thrust::device_vector<int> sampled_idxs(num_dead);
   thrust::transform(  // sampled_idxs = alive_indices.index_select(0, sampled_idxs_local);
@@ -404,34 +448,36 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     [
       scales = thrust::raw_pointer_cast(m_gaussians->scales().data()),
       sampled_idxs = thrust::raw_pointer_cast(sampled_idxs.data())
-    ] __device__ (int idx) { return exp(scales[sampled_idxs[idx]]); }
+    ] __device__ (int idx) { return activate_scale(scales[sampled_idxs[idx]]); }
   );
 
   // Count occurrences of each sampled index
   // Equivalent to:
   // auto ratios = torch::ones_like(opacities, torch::kInt32);
-  // ratios.index_add_(0, sampled_idxs, torch::ones_like(sampled_idxs, torch::kInt32));
-  thrust::device_vector<int> sampled_idxs_count(num_kept, 1);
-  index_add_kernel<<<(num_dead + 255) / 256, 256>>>(
-    thrust::raw_pointer_cast(sampled_idxs_count.data()),
-    thrust::raw_pointer_cast(sampled_idxs.data()),
-    1,
-    num_dead
-  );
-  //* ratios = ratios.index_select(0, sampled_idxs).contiguous();
   thrust::device_vector<int> ratios(num_dead);
-  thrust::transform(
-    thrust::make_counting_iterator<int>(0),
-    thrust::make_counting_iterator<int>(num_dead),
-    ratios.begin(),
-    [
-      cnt = thrust::raw_pointer_cast(sampled_idxs_count.data()),
-      sampled_idxs = thrust::raw_pointer_cast(sampled_idxs.data())
-    ] __device__ (int idx) { 
-      return ::min(cnt[sampled_idxs[idx]], max_binom_size);
-    }
-  );
-
+  { // ratios.index_add_(0, sampled_idxs, torch::ones_like(sampled_idxs, torch::kInt32));
+    thrust::device_vector<int> sampled_idxs_count(num_gaussians, 0);
+    thrust::for_each(
+      thrust::device, sampled_idxs.begin(), sampled_idxs.end(),
+      [
+        cnt = thrust::raw_pointer_cast(sampled_idxs_count.data())
+      ] __device__ (int idx) {
+        atomicAdd(cnt + idx, 1);
+      }
+    );
+    //* ratios = ratios.index_select(0, sampled_idxs).contiguous();
+    thrust::transform(
+      thrust::make_counting_iterator<int>(0),
+      thrust::make_counting_iterator<int>(num_dead),
+      ratios.begin(),
+      [
+        cnt = thrust::raw_pointer_cast(sampled_idxs_count.data()),
+        sampled_idxs = thrust::raw_pointer_cast(sampled_idxs.data())
+      ] __device__ (int idx) { 
+        return ::min(cnt[sampled_idxs[idx]] + 1, max_binom_size);
+      }
+    );
+  }
   // Call the CUDA relocation function from gsplat
   thrust::device_vector<float> new_opacities(num_dead);
   thrust::device_vector<vec3> new_scales(num_dead);
@@ -489,7 +535,6 @@ void MCMCStrategy::set_params(const json& config) {
   m_mcmc_params.from_json(config);
   
   // Update current noise lr with the new initial value
-  m_noise_lr = m_mcmc_params.noise_lr_init;
   m_rng.seed(m_params.seed);
 }
 
@@ -517,7 +562,6 @@ json MCMCStrategy::get_params() const {
 json MCMCParams::to_json() const {
   json j;
   j["noise_lr_init"] = noise_lr_init;
-  j["noise_lr_decay"] = noise_lr_decay;
   j["grow_ratio"] = grow_ratio;
   return j;
 }
@@ -525,9 +569,6 @@ json MCMCParams::to_json() const {
 void MCMCParams::from_json(const json& config) {
   if (config.contains("noise_lr_init")) {
     noise_lr_init = config["noise_lr_init"].get<float>();
-  }
-  if (config.contains("noise_lr_decay")) {
-    noise_lr_decay = config["noise_lr_decay"].get<float>();
   }
   if (config.contains("grow_ratio")) {
     grow_ratio = config["grow_ratio"].get<float>();

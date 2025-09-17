@@ -1,13 +1,25 @@
 #pragma once
-
+#include "tinygs/strategy/mcmc.hpp"
 #include "tinygs/optim/lr_scheduler.hpp"
 #include "tinygs/random/pcg32.hpp"
 #include "tinygs/strategy/strategy.hpp"
 namespace tinygs {
 
 struct MCMCParams {
-  float noise_lr_init = 1.6f; // 1e5 * 1.6e-4
-  float noise_lr_decay = 1.0f - 2.0e-4f; // after 5'000 step, decay to about 1/e~=0.36
+  /**
+   * @note The standard noise_lr_init is 5e+5, and the final noise_lr is calculated:
+   *          $$ noise_lr = noise_lr_init * mean3D_lr $$
+   *       and mean3D_lr = 1.6e-4
+   *       We use a different apporach: 
+   *        - Learning Rate of Optimizer $gamma$: 1.0, with exponential decay
+   *        - LR scaler $s$ for mean3D = 1.6e-4
+   *        - noise_lr_init controls the noise added to mean3D
+   *          $$ noise_lr = noise_lr_init * gamma $$
+   *       To match the original design, we set
+   *             noise_lr_init = 80 => 80 * 1 = 1.6e-4 * 1e+5
+   * 
+   */
+  float noise_lr_init = 80.0f; // 1e5 * 1.6e-4
   float grow_ratio = 1.05f;
 
   /// @brief Default constructor with default values
@@ -48,7 +60,6 @@ public:
 
 protected:
   MCMCParams m_mcmc_params;  ///< MCMC parameters
-  float m_noise_lr;          ///< Learning rate for adding noise
   pcg32 m_rng;               ///< Random number generator
 
 public:
@@ -58,7 +69,6 @@ public:
   void add_noise(const RasterizeContext& ctx);
   void add_new_gs(const RasterizeContext& ctx);
   void relocate(const RasterizeContext& ctx);
-
 };
 
 }  // namespace tinygs

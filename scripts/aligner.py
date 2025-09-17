@@ -69,7 +69,7 @@ class Aligner:
         )
 
         self.interval_removal = 1
-        self.downsampling = 1
+        self.downsampling = 4
 
     def run_ransac(self, points, cam: CameraExtrinsic, depth):
         aligner = DepthAlignment(max_trials=1000, stop_score=0.99)
@@ -191,9 +191,9 @@ class Aligner:
 
 if __name__ == "__main__":
 
-    # ID = '1751090600427'
+    ID = '1751090600427'
     # ID = "1747834320424"
-    ID = '1748422612463'
+    # ID = '1748422612463'
     PC_FILE = f"/data/accgs/{ID}/inputs/slam/points3D.txt"
     EXTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/images.txt"
     INTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/cameras.txt"

@@ -47,7 +47,10 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<LrSchedulerBase> lr_scheduler = create_lr_scheduler("exponential", opt);
   j["lr_scheduler"] = lr_scheduler->get_params();
 
-  j["loss"] = json::array({
+  std::shared_ptr<StrategyBase> strategy = create_strategy("default", gs3d, gs3d, opt);
+  j["strategy"] = strategy->get_params();
+
+  j["losses"] = json::array({
     json::object({
       {"type", "l1"}, {"weight", 0.8},
     }),
@@ -55,7 +58,7 @@ int main(int argc, char* argv[]) {
       {"type", "fused_ssim"}, {"weight", 0.2},
     }),
   });
-  j["metric"] = json::array({"psnr"});
+  j["metrics"] = json::array({"psnr"});
   j["input_pc_file"] = "YOUR_POINT_CLOUD.txt";
 
   Orchestrator t;

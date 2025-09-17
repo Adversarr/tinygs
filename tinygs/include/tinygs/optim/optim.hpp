@@ -74,6 +74,8 @@ public:
   std::shared_ptr<GPUGaussian3d> get_gaussians() const { return m_gaussians; }
   std::shared_ptr<GPUGaussian3d> get_gaussians_grad() const { return m_gaussians_grad; }
 
+  GaussianOptimizationParams get_optimization_params() const noexcept { return m_params; }
+
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   std::shared_ptr<GPUGaussian3d> m_gaussians_grad;

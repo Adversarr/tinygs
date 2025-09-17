@@ -90,7 +90,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
                            fmaxf(d_densification_info[i], 1.0f);
         if (grad > grow_grad && d_densification_info[i] > 0) {
           const float max_scale = max(activate_scale(d_scale[i]));
-          if (max_scale > grow_scale || true) { // is_large => split
+          if (max_scale > grow_scale) { // is_large => split
             d_grow_flags[i] = kSplit;
           } else {
             d_grow_flags[i] = kDuplicate;

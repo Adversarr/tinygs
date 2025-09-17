@@ -3,25 +3,25 @@
     "type": "simple"
   },
   "dataset": {
-    "extrinsics_file_path": "YOUR_EXTRINSICS_FILE_PATH",
-    "folder_path": "YOUR_FOLDER_PATH",
-    "intrinsics_file_path": "YOUR_INTRINSICS_FILE_PATH",
+    "extrinsics_file_path": "/data/accgs/1748422612463/inputs/traj_full.txt.bak",
+    "folder_path": "/data/accgs/1748422612463/inputs/images_480x640_1",
+    "intrinsics_file_path": "/data/accgs/1748422612463/inputs/slam/cameras.txt",
     "type": "png_folder"
   },
   "initializer": {
     "default_distance": 0.001,
-    "enable_radius_outlier_removal": true,
-    "init_opacity": 0.1,
+    "enable_radius_outlier_removal": false,
+    "init_opacity": 0.5,
     "init_scaling": 1.0,
     "min_distance": 1.0e-07,
     "nb_points": 16,
-    "num_neighbors": 4,
+    "num_neighbors": 3,
     "radius": 0.05,
     "sh_degree": 3,
     "type": "knn"
   },
-  "input_pc_file": "YOUR_POINT_CLOUD.txt",
-  "loss": [
+  "input_pc_file": "aligned_points/1748422612463.ply",
+  "losses": [
     {
       "type": "l1",
       "weight": 0.8
@@ -37,27 +37,41 @@
     "step_count": 0,
     "type": "exponential"
   },
-  "metric": [
+  "metrics": [
     "psnr"
   ],
   "optimizer": {
-    "beta1": 0.8999999761581421,
-    "beta2": 0.9990000128746033,
+    "beta1": 0.9,
+    "beta2": 0.999,
     "enable_adabound": false,
-    "epsilon": 9.99999993922529e-09,
+    "epsilon": 1.0e-8,
     "max_grad_1": 1.0,
-    "means_lr": 0.00015999999595806003,
-    "opacities_l1": 0.0,
-    "opacities_lr": 0.05000000074505806,
-    "rotations_lr": 0.0010000000474974513,
-    "scales_l1": 0.0,
-    "scales_lr": 0.004999999888241291,
-    "shs_lr": 0.0024999999441206455,
-    "skip_zero_grad": false,
+    "means_lr": 0.00016,
+    "opacities_l1": 0.01,
+    "opacities_lr": 0.05,
+    "rotations_lr": 0.001,
+    "scales_l1": 0.01,
+    "scales_lr": 0.005,
+    "shs_lr": 0.0025,
+    "skip_zero_grad": true,
     "type": "adam"
   },
   "rasterizer": {
-    "type": "default"
+    "type": "fastgs"
+  },
+  "strategy": {
+    "duplicate_grad_threshold": 0.0002,
+    "duplicate_scale_threshold": 0.01,
+    "end_refine": 15000,
+    "max_num_gaussians": 1000000,
+    "max_screen_size": 20,
+    "pruning_opacity_threshold": 0.005,
+    "pruning_scale_threshold": 0.1,
+    "refine_every": 100,
+    "reset_every": 3000,
+    "seed": 42,
+    "start_refine": 500,
+    "type": "mcmc"
   },
   "trainer": {
     "checkpoint_interval": 1000,
@@ -70,5 +84,5 @@
     "max_steps": 30000,
     "near_plane": 0.01,
     "sh_degree_interval": 1000
-}
+  }
 }
