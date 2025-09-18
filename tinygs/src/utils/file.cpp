@@ -86,4 +86,37 @@ std::vector<std::string> list_folder(const std::string& path, bool relative) {
     return entries;
 }
 
+void ensure(const std::string& path) {
+    // Validate input path
+    if (path.empty()) {
+        const std::string error_msg = "Path cannot be empty";
+        log_error(error_msg);
+        throw std::invalid_argument(error_msg);
+    }
+    
+    // Check if path already exists
+    if (std::filesystem::exists(path)) {
+        // If it exists but is not a directory, throw an error
+        if (!std::filesystem::is_directory(path)) {
+            const std::string error_msg = fmt::format("Path exists but is not a directory: {}", path);
+            log_error(error_msg);
+            throw std::runtime_error(error_msg);
+        }
+        
+        // Directory already exists, nothing to do
+        log_success("Directory already exists: {}", path);
+        return;
+    }
+    
+    // Create the directory recursively
+    try {
+        std::filesystem::create_directories(path);
+        log_success("Successfully created directory: {}", path);
+    } catch (const std::filesystem::filesystem_error& e) {
+        const std::string error_msg = fmt::format("Failed to create directory {}: {}", path, e.what());
+        log_error(error_msg);
+        throw std::runtime_error(error_msg);
+    }
+}
+
 }

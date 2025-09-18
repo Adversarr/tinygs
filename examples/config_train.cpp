@@ -16,50 +16,14 @@ using namespace tinygs;
 
 std::shared_ptr<Orchestrator> build(const std::string& config_path);
 
-void train(std::shared_ptr<Orchestrator> orchestrator);
-
-/**
- * @brief Convert rasterized GPU image to OpenCV Mat for visualization
- * 
- * @param rasterize_ctx Rasterization context containing the GPU image data
- * @return cv::Mat 8-bit BGR image suitable for OpenCV display
- */
-cv::Mat convert_rasterized_to_cvmat(const tinygs::RasterizeContext& rasterize_ctx) {
-  if (rasterize_ctx.fwd_output.image.data == nullptr) {
-    return cv::Mat();
-  }
-  
-  auto shape = rasterize_ctx.fwd_output.image.shape;
-  int width = shape.width, height = shape.height;
-
-  // Copy GPU rendered image to CPU for visualization
-  std::vector<float> cpu_image(height * width * 3);
-  cudaMemcpy(cpu_image.data(), rasterize_ctx.fwd_output.image.data, 
-             height * width * 3 * sizeof(float), cudaMemcpyDeviceToHost);
-  
-  // Convert float RGB to 8-bit BGR for OpenCV
-  cv::Mat img(height, width, CV_8UC3);
-  for (int y = 0; y < height; ++y) {
-    for (int x = 0; x < width; ++x) {
-      // Convert from CHW (RGB) to HWC (BGR)
-      int r_idx = y * width + x;                   // R channel offset
-      int g_idx = (height * width) + r_idx;        // G channel offset
-      int b_idx = (2 * height * width) + r_idx;    // B channel offset
-      
-      img.at<cv::Vec3b>(y, x)[0] = static_cast<uint8_t>(std::clamp(cpu_image[b_idx] * 255.0f, 0.0f, 255.0f));  // B
-      img.at<cv::Vec3b>(y, x)[1] = static_cast<uint8_t>(std::clamp(cpu_image[g_idx] * 255.0f, 0.0f, 255.0f));  // G
-      img.at<cv::Vec3b>(y, x)[2] = static_cast<uint8_t>(std::clamp(cpu_image[r_idx] * 255.0f, 0.0f, 255.0f));  // R
-    }
-  }
-  
-  return img;
-}
+void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize = false);
 
 int main(int argc, char** argv) {
   auto opts = cxxopts::Options("config_train", "Train model with config file.");
 
   opts.add_options()
     ("h,help", "Print help")
+    ("v,visualize", "Visualize training process", cxxopts::value<bool>()->default_value("false"))
     ("c,config", "Config file path", cxxopts::value<std::string>());
 
   auto result = opts.parse(argc, argv);
@@ -69,9 +33,11 @@ int main(int argc, char** argv) {
     return 0;
   }
 
+  auto visualize = result["visualize"].as<bool>();
+
   if (result.count("config")) {
     auto orchestrator = build(result["config"].as<std::string>());
-    train(orchestrator);
+    train(orchestrator, visualize);
   } else {
     std::cout << "Config file path is required." << std::endl;
     std::cout << opts.help() << std::endl;
@@ -213,12 +179,12 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   return orchestrator;
 }
 
-void train(std::shared_ptr<Orchestrator> orchestrator) {
+void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
   // TODO: a better way to get these
   auto gs3d = orchestrator->get_optimizer()->get_gaussians();
   auto grads = orchestrator->get_optimizer()->get_gaussians_grad();
   
-  orchestrator->set_post_step_callback([orchestrator, gs3d, grads] (const TrainingState& state) {
+  orchestrator->set_post_step_callback([orchestrator, gs3d, grads, visualize] (const TrainingState& state) {
     if (state.current_step % 100 != 0) {
       return;
     }
@@ -230,23 +196,19 @@ void train(std::shared_ptr<Orchestrator> orchestrator) {
     float psnr = metrics.empty() ? 0.0f : metrics[0];
     auto lr = orchestrator->get_optimizer()->get_lr();
 
-    log_info(
-        "step {} loss: {:.3e} psnr: {:.3f} time: {:.1f}ms/100step current_lr: {:.3e}",
-        state.current_step,
-        loss,
-        psnr,
-        duration.count() / (state.current_step / 100.0),
-        lr);
+    log_info("step {} loss: {:.3e} psnr: {:.3f} time: {:.1f}ms/100step current_lr: {:.3e}", state.current_step, loss,
+             psnr, duration.count() / (state.current_step / 100.0), lr);
 
     // Visualize RGB - copy rendered image from trainer's internal buffers
-    const auto& rasterize_ctx = orchestrator->get_rasterize_context();
-    cv::Mat img = convert_rasterized_to_cvmat(rasterize_ctx);
-    if (!img.empty()) {
-      cv::imshow("render", img);
+    if (visualize) {
+      cv::Mat img = orchestrator->to_opencv();
+      if (!img.empty()) {
+        cv::imshow("render", img);
 
-      if (char key = cv::waitKey(3); key == 27) {
-        orchestrator->stop_training();
-        std::cout << "ESC pressed - stopping training..." << std::endl;
+        if (char key = cv::waitKey(3); key == 27) {
+          orchestrator->stop_training();
+          std::cout << "ESC pressed - stopping training..." << std::endl;
+        }
       }
     }
   });

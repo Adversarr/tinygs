@@ -48,7 +48,7 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
   gpu_input.far = 100.0f; // Default far plane
   gpu_input.K = host_data.K;
   gpu_input.w2c = host_data.w2c;
-  
+  gpu_input.timestamp = host_data.timestamp;
   // Allocate GPU memory for the image if needed
   size_t image_size = gpu_input.height * gpu_input.width * host_data.image.shape.channel;
   m_gpu_memory.resize(image_size);

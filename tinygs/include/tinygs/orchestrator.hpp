@@ -3,6 +3,7 @@
 #include <chrono>
 #include <functional>
 #include <memory>
+#include <opencv2/core/mat.hpp>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,11 @@ struct OrchestratorConfig {
   // Rasterization parameters
   float near_plane = 0.01f;
   float far_plane = 100.0f;
+
+  // Validations
+  std::vector<size_t> test_steps{7'000, 30'000};
+  std::string out_dir;
+  bool export_rasterized = false;
 
   /// @brief Convert config to JSON
   json to_json() const;
@@ -120,7 +126,10 @@ public:
   TrainingState train();
 
   /// @brief Execute a single training step
-  void step();
+  void train_step();
+
+  /// @brief Execute a test step
+  void test_step();
 
   /// @brief Accumulate the loss
   float accumulate_loss();
@@ -158,6 +167,9 @@ public:
   void set_params(const json& j);
   /// @brief Get parameters as JSON
   json get_params() const;
+
+  /// @brief convert current rasterizer result to opencv mat
+  cv::Mat to_opencv() const;
 
 private:
   // Core training components
@@ -201,7 +213,7 @@ private:
   // Helper methods
 
   /// @brief Initialize GPU memory buffers
-  void initialize_buffers();
+  void initialize();
 
   /// @brief Compute current learning rate
   float compute_learning_rate() const;

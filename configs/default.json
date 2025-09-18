@@ -84,6 +84,9 @@
     "max_sh_degree": 3,
     "max_steps": 30000,
     "near_plane": 0.01,
-    "sh_degree_interval": 1000
+    "sh_degree_interval": 3000,
+    "test_steps": [1000, 7000, 30000],
+    "out_dir": "outputs",
+    "export_rasterized": false
   }
 }

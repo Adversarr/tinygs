@@ -15,4 +15,7 @@ std::vector<std::string> readlines(const std::string& path);
 /// @param relative Whether to return relative paths
 std::vector<std::string> list_folder(const std::string& path, bool relative = false);
 
+/// @brief Ensures the folder exists
+void ensure(const std::string& path);
+
 } // namespace tinygs

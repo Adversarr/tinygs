@@ -3,6 +3,7 @@
 #include <thrust/random.h>
 #include <thrust/transform_reduce.h>
 
+#include "tinygs/random/device.cuh"
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/strategy/default.hpp"
 #include "tinygs/utils/scope_timer.hpp"
@@ -158,19 +159,10 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   }
 
 
-  thrust::normal_distribution<float> dist(0.f, 1.f);
-  thrust::host_vector<float> host_scales(num_grows * 6);
-  thrust::generate(host_scales.begin(), host_scales.end(), [&] {
-    float u1 = 1 - m_rng.next_float();
-    float u2 = m_rng.next_float();
-    // Box-Muller transform with safety checks
-    const float epsilon = 1e-7f;
-    u1 = std::max(epsilon, std::min(1.0f - epsilon, u1)); // Ensure u1 is in (0,1)
-    const float noise = std::sqrt(-2.0f * std::log(u1)) * std::cos(2.0f * M_PI * u2);
-    return std::isfinite(noise) ? noise : 0.0f; // Return 0 if result is invalid
-  });
-
-  thrust::device_vector<float> device_scales = host_scales;
+  thrust::device_vector<float> device_scales(num_grows * 6);
+  generate_random_logistic(m_rng, num_grows * 6,
+                           thrust::raw_pointer_cast(device_scales.data()),
+                           (float)0.0, (float)1.0);
 
   // Do the duplicate and split.
   thrust::for_each(
@@ -191,7 +183,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
 
       rotations[target_idx] = rotations[src_idx];
       sh0[target_idx] = sh0[src_idx];
-      for (int i = 0; i <= 15; i++) {
+      for (int i = 0; i < 15; i++) {
         sh_rest[target_idx * 15 + i] = sh_rest[src_idx * 15 + i];
       }
       if (d_grow_flags[src_idx] == kDuplicate) {
@@ -236,13 +228,15 @@ void DefaultStrategy::prune(const RasterizeContext& /* ctx */) {
       [d_is_alive = is_alive.data(), d_opacity,                              //
        scale = thrust::raw_pointer_cast(m_gaussians->scales().data()),       //
        scene_scale = m_gaussians->scene_scale(),                             //
+       rotation = thrust::raw_pointer_cast(m_gaussians->rotations().data()), //
        pruning_scale_threshold = m_params.pruning_scale_threshold,           //
        prune_large = this_step() > m_params.reset_every,                     //
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) { //
         bool not_large_ws = max(activate_scale(scale[i])) < pruning_scale_threshold * scene_scale;
         bool not_transparent = activate_opacity(d_opacity[i]) > min_opacity;
+        bool not_degenerate = sum(abs(rotation[i])) > FLT_EPSILON;
 
-        if (not_transparent && (not_large_ws || !prune_large)) {
+        if (not_transparent && (not_large_ws || !prune_large) && not_degenerate) {
           d_is_alive[i] = 1;
         } else {
           d_is_alive[i] = 0;

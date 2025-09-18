@@ -10,6 +10,7 @@ struct GPUBatchInput {
   float near, far;
   mat3x3 K;
   mat4x4 w2c;
+  uuid_t timestamp;
 };
 
 struct GPUBatchOutput {
@@ -36,6 +37,7 @@ public:
   /// @brief Get next batch using default stream
   virtual GPUBatchInputOutput next() = 0;
 
+  /// @brief Reset the dataloader to its initial states
   virtual void reset();
 
   /**

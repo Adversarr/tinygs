@@ -21,6 +21,7 @@ from depth import DepthEstimator
 import cv2
 from tqdm import tqdm
 from collections import OrderedDict
+from argparse import ArgumentParser
 
 class Aligner:
     def __init__(
@@ -191,20 +192,29 @@ class Aligner:
         self.point_cloud_running.save_to_file(filename)
 
 if __name__ == "__main__":
+    # # ID = "1747834320424"
+    # ID = '1748422612463'
+    # # ID = '1751090600427'
+    # PC_FILE = f"/data/accgs/{ID}/inputs/slam/points3D.txt"
+    # EXTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/images.txt"
+    # INTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/cameras.txt"
+    # INPUT_FOLDER = f"/data/accgs/{ID}/inputs/images"
+    # VIDEO_INFO_FILE = f'/data/accgs/{ID}/inputs/videoInfo.txt'
 
-    # ID = "1747834320424"
-    ID = '1748422612463'
-    # ID = '1751090600427'
-    PC_FILE = f"/data/accgs/{ID}/inputs/slam/points3D.txt"
-    EXTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/images.txt"
-    INTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/cameras.txt"
-    INPUT_FOLDER = f"/data/accgs/{ID}/inputs/images"
-    VIDEO_INFO_FILE = f'/data/accgs/{ID}/inputs/videoInfo.txt'
-
-    DEPTH_FILE = "./depth_output.png"
-    OUT_PIX_FILE = "pixels_cam0.txt"
-    OUT_PLOT = "pixels_cam0.png"
-    Path("aligned_points").mkdir(exist_ok=True)
+    parser = ArgumentParser()
+    parser.add_argument("--root", type=str, help="Root directory of all scenes", default='/data/accgs')
+    parser.add_argument("--id", type=str, help="ID of the scene", default='1748422612463')
+    parser.add_argument("--out", type=str, help="Output file path", default='aligned_points/')
+    args = parser.parse_args()
+    ID = args.id
+    ROOT = args.root
+    PC_FILE = f"{ROOT}/{ID}/inputs/slam/points3D.txt"
+    EXTRIN_FILE = f"{ROOT}/{ID}/inputs/slam/images.txt"
+    INTRIN_FILE = f"{ROOT}/{ID}/inputs/slam/cameras.txt"
+    INPUT_FOLDER = f"{ROOT}/{ID}/inputs/images"
+    VIDEO_INFO_FILE = f"{ROOT}/{ID}/inputs/videoInfo.txt"
+    OUT_FILE = f"{args.out}/{ID}.ply"
+    Path(args.out).mkdir(exist_ok=True)
 
     # --- Load camera intrinsics ---
     camera_intrinsics = load_camera_intrinsics(INTRIN_FILE)
@@ -235,4 +245,4 @@ if __name__ == "__main__":
         camera_intrinsics,
     )
     aligner.run()
-    aligner.export(f"aligned_points/{ID}.ply")
+    aligner.export(OUT_FILE)
