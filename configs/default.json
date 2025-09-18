@@ -3,9 +3,9 @@
     "type": "simple"
   },
   "dataset": {
-    "extrinsics_file_path": "/data/accgs/1748422612463/inputs/slam/images.txt",
-    "folder_path": "/data/accgs/1748422612463/inputs/images/",
-    "intrinsics_file_path": "/data/accgs/1748422612463/inputs/slam/cameras.txt",
+    "extrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/images.txt",
+    "folder_path": "/data/yzr/Final/1747834320424/inputs/images/",
+    "intrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/cameras.txt",
     "extension": "png",
     "type": "png_folder"
   },
@@ -21,7 +21,7 @@
     "sh_degree": 3,
     "type": "knn"
   },
-  "input_pc_file": "aligned_points/1748422612463.ply",
+  "input_pc_file": "/data/yzr/Final/1747834320424/aligned_points/1747834320424.ply",
   "losses": [
     {
       "type": "l1",
@@ -85,8 +85,8 @@
     "max_steps": 30000,
     "near_plane": 0.01,
     "sh_degree_interval": 3000,
-    "test_steps": [1000, 7000, 30000],
+    "test_steps": [0, 3000, 7000, 30000],
     "out_dir": "outputs",
-    "export_rasterized": false
+    "export_rasterized": true
   }
 }

@@ -20,6 +20,7 @@ fi
 
 source .venv/bin/activate
 # run video_to_png
+mkdir -p $DATA_ROOT/$ID/inputs/images/
 ./build/$BUILDTYPE/examples/video_to_png -f $DATA_ROOT/$ID -i $ID -o $DATA_ROOT/$ID/inputs/images/
 if [ $? -ne 0 ]; then
     echo "Error: video_to_png failed"

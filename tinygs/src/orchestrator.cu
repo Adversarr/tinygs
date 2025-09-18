@@ -151,21 +151,21 @@ TrainingState Orchestrator::train() {
   m_state.start_time = std::chrono::steady_clock::now();
   m_state.last_log_time = m_state.start_time;
   m_state.should_stop = false;
-  
+
   while (!m_state.should_stop && m_state.current_step < m_config.max_steps) {
+    // Test step
+    if (std::find(m_config.test_steps.begin(), m_config.test_steps.end(),
+                  m_state.current_step) != m_config.test_steps.end()) {
+      log_info("Test step at step {}", m_state.current_step);
+      test_step();
+    }
+
     train_step();
     
     // Check for early stopping
     if (m_config.enable_early_stopping && should_early_stop()) {
       log_info("Early stopping triggered at step {}", m_state.current_step);
       break;
-    }
-
-    // Test step
-    if (std::find(m_config.test_steps.begin(), m_config.test_steps.end(),
-                  m_state.current_step) != m_config.test_steps.end()) {
-      log_info("Test step at step {}", m_state.current_step);
-      test_step();
     }
   }
   
