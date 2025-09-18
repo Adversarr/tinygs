@@ -10,6 +10,7 @@
 #include "fastgs_ours/backward.h"
 #include "fastgs_ours/forward.h"
 #include "fastgs_ours/helper_math.h"
+#include "rasterizer/fastgs_ours/rasterization_config.h"
 #include "tinygs/rasterizer/fastgs.hpp"
 #include "tinygs/cuda/vec.hpp"
 #include "utils/scope_timer.hpp"
@@ -55,7 +56,7 @@ FastGSRasterizer::FastGSRasterizer() {
 }
 
 void FastGSRasterizer::forward(const RasterizeContext& ctx) {
-  TINYGS_TIMER("FastGSRasterizer::forward");
+    TINYGS_TIMER("FastGSRasterizer::forward");
     if (!m_gaussians) {
         throw std::runtime_error("Gaussians not set");
     }
@@ -68,6 +69,11 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     m_impl->w2c.at(2) = {w2c[0][2], w2c[1][2], w2c[2][2], w2c[3][2]};
     m_impl->w2c.at(3) = {w2c[0][3], w2c[1][3], w2c[2][3], w2c[3][3]};
     m_impl->cam_position.at(0) = {c2w[3][0], c2w[3][1], c2w[3][2]};
+    
+    // if (!ctx.fwd_input.width % fast_gs::rasterization::config::tile_width == 0 ||
+    //     !ctx.fwd_input.height % fast_gs::rasterization::config::tile_height == 0) {
+    //   throw std::runtime_error("Image width and height must be multiples of tile size");
+    // }
 
     auto per_primitive_buffers_func = [this](size_t size) -> char * {
       return m_impl->alloc("per_primitive_buffers", size);

@@ -28,6 +28,8 @@ namespace fast_gs::rasterization::config {
   DEF int block_size_extract_instance_ranges = 256;
   DEF int block_size_extract_bucket_counts = 256;
   DEF int tile_width = 16;
+  DEF int tile_width_minus_1 = tile_width - 1;
+  DEF int tile_width_log2 = 4; // log2(16) = 4
   DEF int tile_height = 16;
   DEF int block_size_blend = tile_width * tile_height;
   DEF int n_sequential_threshold = 4;
