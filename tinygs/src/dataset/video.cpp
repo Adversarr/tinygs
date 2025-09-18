@@ -80,7 +80,7 @@ void VideoDataset::load() {
   m_camera_loader.resize_sensor(video_width, video_height);
 
   if (total_frames != m_timestamp_frame.size()) {
-    throw std::runtime_error("Video frame count does not match video info file: " + std::to_string(total_frames) + " != " + std::to_string(m_timestamp_frame.size()));
+    log_warning("Video frame count {} does not match lines in video info file {}.", total_frames, m_timestamp_frame.size());
   }
 
   log_info("Video properties: {}x{}, {} frames, {:.2f} fps", video_width, video_height, total_frames, fps);
@@ -106,8 +106,8 @@ void VideoDataset::load() {
     const uuid_t target_timestamp = camera_extrinsics[i].timestamp;
     const uuid_t target_video_frame_index = m_timestamp_frame.at(target_timestamp) - 1;
 
-    log_info("Load {}/{}: frame_idx={}, timestamp={}, video_frame_idx={}", i + 1, m_size,  //
-             camera_extrinsics[i].frame_idx, target_timestamp, target_video_frame_index);
+    log_debug("Load {}/{}: frame_idx={}, timestamp={}, video_frame_idx={}", i + 1, m_size,  //
+              camera_extrinsics[i].frame_idx, target_timestamp, target_video_frame_index);
 
     // Validate frame index is within video bounds
     if (target_video_frame_index >= static_cast<uint32_t>(total_frames)) {

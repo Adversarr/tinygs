@@ -172,3 +172,7 @@ target_compile_options(tinygs PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
 )
+
+if(TINYGS_ENABLE_PROFILE)
+    target_compile_options(tinygs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+endif()

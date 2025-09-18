@@ -42,6 +42,7 @@ project(tinygs
 option(TINYGS_BUILD_EXAMPLES "Build tinygs examples" ON)
 option(TINYGS_BUILD_TESTS "Build tinygs tests" OFF)
 option(TINYGS_BUILD_BENCHMARKS "Build tinygs benchmarks" ON)
+option(TINYGS_ENABLE_PROFILE "Enable profiling with nvtx" OFF)
 
 ### Dependencies
 include(${PROJECT_SOURCE_DIR}/cmake/dependencies.cmake)
