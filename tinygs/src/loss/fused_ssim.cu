@@ -1,6 +1,7 @@
 #include "cuda/gpu_memory.hpp"
 #include <cooperative_groups.h>
 #include <tinygs/loss/fused_ssim.hpp>
+#include <memory>
 
 namespace cg = cooperative_groups;
 
@@ -46,7 +47,8 @@ __device__ __forceinline__ float get_pix_value(
     if (x < 0 || x >= W || y < 0 || y >= H) {
         return 0.0f;
     }
-    return img[b * CH * H * W + c * H * W + y * W + x];
+    // HWC layout: [B, H, W, C]
+    return img[(((b * H) + y) * W + x) * CH + c];
 }
 
 // ------------------------------------------
@@ -253,7 +255,7 @@ __global__ void fusedssimCUDA(
 
                 float val = (C_ * D_) / (A * B);
 
-                int global_idx = bIdx * CH * num_pix + c * num_pix + pix_id;
+                int global_idx = ((bIdx * num_pix + pix_id) * CH) + c; // HWC indexing
                 ssim_map[global_idx] += (1 - val) * scale; // NOTE: 1 - ssim is loss
 
                 if (dm_dmu1) {
@@ -423,7 +425,7 @@ __global__ void fusedssim_backwardCUDA(
             // final accumulation
             float dL_dpix = sum0 + (2.f * p1) * sum1 + (p2) * sum2;
 
-            int out_idx = bIdx * CH * num_pix + c * num_pix + pix_id;
+            int out_idx = ((bIdx * num_pix + pix_id) * CH) + c; // HWC indexing
             dL_dimg1[out_idx] += -dL_dpix; // NOTE: (1 - ssim)
         }
         block.sync();

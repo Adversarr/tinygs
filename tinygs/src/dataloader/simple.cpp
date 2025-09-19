@@ -56,7 +56,6 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
   // Create GPU image structure
   Image gpu_image;
   gpu_image.shape = host_data.image.shape; // TODO: allow lower resolution.
-  gpu_image.format = ImageFormat::CHW;
   gpu_image.data_type = ImageDataType::Float32;
   gpu_image.data = m_gpu_memory.data();
 
@@ -65,12 +64,7 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
 
   // Prepare GPU batch output
   GPUBatchOutput gpu_output;
-  gpu_output.image = Image{
-    gpu_image.shape,
-    gpu_image.format,
-    gpu_image.data_type,
-    gpu_image.data
-  };
+  gpu_output.image = Image{gpu_image.shape, gpu_image.data_type, gpu_image.data};
 
   return GPUBatchInputOutput{gpu_input, gpu_output};
 }

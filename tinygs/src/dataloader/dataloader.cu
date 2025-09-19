@@ -46,18 +46,11 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
     throw std::runtime_error("Host memory is not allocated.");
   }
 
-  // For the DL based tasks, we only support CHW
-  if (gpu_data.format != ImageFormat::CHW || host_data.format != ImageFormat::CHW) {
-    throw std::runtime_error("Only CHW format is supported.");
-  }
-
   uint32_t height = gpu_data.shape.height;
   uint32_t width = gpu_data.shape.width;
   uint32_t channels = gpu_data.shape.channel;
   uint32_t total_elements = height * width * channels;
 
-
-  
   if (gpu_data.shape != host_data.shape) {
     throw std::runtime_error(fmt::format(
       "Image shape mismatch not supported: gpu_data.shape={}, "

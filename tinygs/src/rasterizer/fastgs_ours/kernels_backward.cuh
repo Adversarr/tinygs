@@ -261,22 +261,68 @@ namespace fast_gs::rasterization::kernels::backward {
         }
     }
 
+    inline __device__ void prefetch(const void* ptr) {
+        asm volatile("prefetch.global.L1 [%0];" :: "l"(ptr));
+    }
+
+    struct alignas(32) PerPixel {
+        float3 grad_color_pixel;
+        uint last_contributor;
+        float3 color_pixel_after;
+        float transmittance;
+    };
+
+    // static __forceinline__ __device__ PerPixel fast_copy_from_shm(const PerPixel *src) {
+    //     // uint64_t *dst_ptr = (uint64_t *)&dst;
+    //     // const uint64_t *src_ptr = (const uint64_t *)&src;
+    //     PerPixel dst;
+    //     unsigned long long saddr;
+    //     asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(src));
+    //     uint4& dst_first = *reinterpret_cast<uint4*>(&dst);
+    //     asm volatile("ld.shared.v4.u32 {%0, %1, %2, %3}, [%4];"
+    //         : "=r"(dst_first.x), "=r"(dst_first.y), "=r"(dst_first.z), "=r"(dst_first.w)
+    //         : "l"(saddr) : "memory");
+    //     uint4& dst_second = *(&dst_first + 1);
+    //     asm volatile("ld.shared.v4.u32 {%0, %1, %2, %3}, [%4+16];"
+    //         : "=r"(dst_second.x), "=r"(dst_second.y), "=r"(dst_second.z), "=r"(dst_second.w)
+    //         : "l"(saddr) : "memory");
+    //     return dst;
+    // }
+
+    static inline __device__ void fast_copy(PerPixel &dst,
+                                            const PerPixel &src) {
+      uint64_t *dst_ptr = (uint64_t *)&dst;
+      const uint64_t *src_ptr = (const uint64_t *)&src;
+#pragma unroll
+      for (int i = 0; i < 4; i++) {
+        dst_ptr[i] = src_ptr[i]; // nvcc will expand all these into two LDS.128 command
+      }
+    }
+
+    static inline __device__ void fast_zero(PerPixel &dst) {
+      uint64_t *dst_ptr = (uint64_t *)&dst;
+#pragma unroll
+      for (int i = 0; i < 4; i++) {
+        dst_ptr[i] = (uint64_t) 0;
+      }
+    }
+
     // based on https://github.com/humansensinglab/taming-3dgs/blob/fd0f7d9edfe135eb4eefd3be82ee56dada7f2a16/submodules/diff-gaussian-rasterization/cuda_rasterizer/backward.cu#L404
     __global__ void blend_backward_cu(
-        const uint2* tile_instance_ranges,
-        const uint* tile_bucket_offsets,
-        const uint* instance_primitive_indices,
-        const float2* primitive_mean2d,
-        const float4* primitive_conic_opacity,
-        const float3* primitive_color,
-        const float* grad_image,
-        const float* grad_alpha_map,
-        const float* image,
-        const float* alpha_map,
-        const uint* tile_max_n_contributions,
-        const uint* tile_n_contributions,
-        const uint* bucket_tile_index,
-        const float4* bucket_color_transmittance,
+        const uint2* __restrict__ tile_instance_ranges,
+        const uint* __restrict__ tile_bucket_offsets,
+        const uint* __restrict__ instance_primitive_indices,
+        const float2* __restrict__ primitive_mean2d,
+        const float4* __restrict__ primitive_conic_opacity,
+        const float3* __restrict__ primitive_color,
+        const float3* __restrict__ grad_image,
+        const float* __restrict__ grad_alpha_map,
+        const float3* __restrict__ image,
+        const float* __restrict__ alpha_map,
+        const uint* __restrict__ tile_max_n_contributions,
+        const uint* __restrict__ tile_n_contributions,
+        const uint* __restrict__ bucket_tile_index,
+        const float4* __restrict__ bucket_color_transmittance,
         float2* grad_mean2d,
         float* grad_conic,
         float* grad_raw_opacity,
@@ -312,6 +358,15 @@ namespace fast_gs::rasterization::kernels::backward {
         float opacity = 0.0f;
         float3 color = {0.0f, 0.0f, 0.0f};
         float3 color_grad_factor = {0.0f, 0.0f, 0.0f};
+        // helpers
+        const uint n_pixels = width * height;
+
+        // tile metadata
+        const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
+        const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_height};
+
+        bucket_color_transmittance += bucket_idx * config::block_size_blend;
+
         if (valid_primitive) {
             primitive_idx = instance_primitive_indices[instance_idx];
             mean2d = primitive_mean2d[primitive_idx];
@@ -328,8 +383,15 @@ namespace fast_gs::rasterization::kernels::backward {
                 color_grad_factor.z = 1.0f;
         }
 
-        // helpers
-        const uint n_pixels = width * height;
+        {
+          const uint pixel_idx =
+              width * (start_pixel_coords.y + (lane_idx / 2)) +
+              start_pixel_coords.x;
+          // image, bucket, grad_image
+          prefetch(image + pixel_idx);
+          prefetch(bucket_color_transmittance + lane_idx * 8);
+          prefetch(grad_image + pixel_idx);
+        }
 
         // gradient accumulation
         float2 dL_dmean2d_accum = {0.0f, 0.0f};
@@ -337,160 +399,110 @@ namespace fast_gs::rasterization::kernels::backward {
         float dL_draw_opacity_partial_accum = 0.0f;
         float3 dL_dcolor_accum = {0.0f, 0.0f, 0.0f};
 
-        // tile metadata
-        const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
-        const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_height};
+        alignas(32) PerPixel per_pixel_registers;
+        fast_zero(per_pixel_registers);
 
-        uint last_contributor = 0u;
-        float3 color_pixel_after = make_float3(0.0f, 0.0f, 0.0f);
-        float transmittance = 0.f;
-        float3 grad_color_pixel = make_float3(0.0f, 0.0f, 0.0f);
-        float grad_alpha_common = 0.f;
+        // shorter
+        auto& last_contributor = per_pixel_registers.last_contributor;
+        auto& color_pixel_after = per_pixel_registers.color_pixel_after;
+        auto& transmittance = per_pixel_registers.transmittance;
+        auto& grad_color_pixel = per_pixel_registers.grad_color_pixel;
 
-        bucket_color_transmittance += bucket_idx * config::block_size_blend;
-        // We manually perform the i == 0.
-        {
-            // which pixel index should this thread deal with?
-            const uint2 pixel_coords = {start_pixel_coords.x, start_pixel_coords.y};
+        __shared__ PerPixel cached_per_pixel[config::block_size_blend];
 
-            // leader thread loads values from shared memory into registers
-            if (valid_primitive && lane_idx == 0) {
-                const float4 color_transmittance = bucket_color_transmittance[0];
-                const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
-                last_contributor = tile_n_contributions[pixel_idx];
-                color_pixel_after = make_float3(
-                    image[pixel_idx], 
-                    image[n_pixels + pixel_idx],
-                    image[2 * n_pixels + pixel_idx]
-                ) - make_float3(color_transmittance);
-                transmittance = color_transmittance.w;
-
-                grad_color_pixel = make_float3(
-                    grad_image[pixel_idx],
-                    grad_image[n_pixels + pixel_idx],
-                    grad_image[2 * n_pixels + pixel_idx]
-                );
-
-                grad_alpha_common = grad_alpha_map[pixel_idx] * (1.0f - alpha_map[pixel_idx]);
-
-                if (tile_primitive_idx < last_contributor){
-                    const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y)) + 0.5f;
-                    const float2 delta = mean2d - pixel;
-                    const float3 delta_coefs = make_float3(delta.x * delta.x, delta.x * delta.y, delta.y * delta.y);
-                    const float sigma_over_2_gt = 0.5f * (conic.x * delta_coefs.x + conic.z * delta_coefs.z) + conic.y * delta_coefs.y;
-                    const float sigma_over_2 = fmaxf(sigma_over_2_gt, 0.0f); // ensures >= 0
-                    const float gaussian = expf(-sigma_over_2);
-                    const float alpha = fminf(opacity * gaussian, config::max_fragment_alpha);
-
-                    const float one_minus_alpha = 1.0f - alpha;
-                    const float blending_weight = transmittance * alpha;
-                    // color gradient
-                    const float3 dL_dcolor = blending_weight * grad_color_pixel * color_grad_factor;
-                    dL_dcolor_accum += dL_dcolor;
-                    color_pixel_after -= blending_weight * color;
-                    // alpha gradient
-                    const float one_minus_alpha_rcp = 1.0f / one_minus_alpha; // fast math will handle this automatically.
-                    const float dL_dalpha_from_color = dot(transmittance * color - color_pixel_after * one_minus_alpha_rcp, grad_color_pixel);
-                    const float dL_dalpha_from_alpha = grad_alpha_common * one_minus_alpha_rcp;
-                    const float dL_dalpha = dL_dalpha_from_color + dL_dalpha_from_alpha;
-                    // unactivated opacity gradient
-                    const float dL_draw_opacity_partial = alpha * dL_dalpha;
-                    dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
-                    // conic and mean2d gradient
-                    // const float gaussian_grad_helper = -alpha * dL_dalpha;
-                    const float gaussian_grad_helper = -dL_draw_opacity_partial;
-                    // const float3 dL_dconic = 0.5f * gaussian_grad_helper * make_float3(delta.x * delta.x, delta.x * delta.y, delta.y * delta.y);
-                    const float3 dL_dconic = 0.5f * gaussian_grad_helper * delta_coefs;
-                    dL_dconic_accum += dL_dconic;
-                    const float2 dL_dmean2d = gaussian_grad_helper * make_float2(
-                        conic.x * delta.x + conic.y * delta.y,
-                        conic.y * delta.x + conic.z * delta.y);
-                    dL_dmean2d_accum += dL_dmean2d;
-                    
-                    transmittance *= one_minus_alpha;
-                }
+        // Prefetch all the data into the shared memories, unroll 8 with stride 32 will handle everything properly.
+#pragma unroll 8
+        for (uint i = lane_idx; i < config::block_size_blend; i += 32) {
+            const uint2 pixel_coords = {start_pixel_coords.x | (i % config::tile_width),
+                                        start_pixel_coords.y | (i / config::tile_width)};
+            const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
+            const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
+            PerPixel local;
+            float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
+            if (is_valid) {
+                color_transmittance = bucket_color_transmittance[i];
+                local.last_contributor = tile_n_contributions[pixel_idx];
+                local.grad_color_pixel = grad_image[pixel_idx];
+                local.color_pixel_after = image[pixel_idx];
+                local.transmittance = color_transmittance.w;
             }
+            local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
+            fast_copy(cached_per_pixel[i], local);
         }
+
+        const uint lane_idx_uint = static_cast<uint>(lane_idx);
 
 // iterate over all pixels in the tile
 // Unrolling is not a good idea here.
-#pragma unroll
-        for (int i = 1; i < config::block_size_blend + 31; ++i) {
-            last_contributor = warp.shfl_up(last_contributor, 1);
-            color_pixel_after.x = warp.shfl_up(color_pixel_after.x, 1);
-            color_pixel_after.y = warp.shfl_up(color_pixel_after.y, 1);
-            color_pixel_after.z = warp.shfl_up(color_pixel_after.z, 1);
-            transmittance = warp.shfl_up(transmittance, 1);
-            grad_color_pixel.x = warp.shfl_up(grad_color_pixel.x, 1);
-            grad_color_pixel.y = warp.shfl_up(grad_color_pixel.y, 1);
-            grad_color_pixel.z = warp.shfl_up(grad_color_pixel.z, 1);
-            grad_alpha_common = warp.shfl_up(grad_alpha_common, 1);
+// #pragma unroll
+        for (uint ii = 0; ii < config::block_size_blend + 31; ii += 16) {
+#pragma unroll 16
+            for (uint j = 0; j < 16; ++j) {
+                const uint i = ii + j;
+                // which pixel index should this thread deal with?
+                const uint idx = i - lane_idx_uint; // overflow is ok, will much greater than the block size, and mark invalid
+                const uint2 pixel_coords = {
+                    start_pixel_coords.x | (idx & config::tile_width_minus_1),
+                    start_pixel_coords.y | (idx >> config::tile_width_log2)};
+                per_pixel_registers = warp.shfl_up(per_pixel_registers, 1);
 
-            // which pixel index should this thread deal with?
-            const int idx = i - static_cast<int>(lane_idx);
-            // NOTE: They are identical in all the valid path:
-            //   - if idx < 0: skip will be true
-            //   - if idx >= config::block_size_blend: skip will be true
-            //   - otherwise, identical.
-            const uint2 pixel_coords = {
-                // start_pixel_coords.x + idx % config::tile_width,
-                // start_pixel_coords.y + idx / config::tile_width
-                start_pixel_coords.x | (idx & config::tile_width_minus_1),
-                start_pixel_coords.y | (idx >> config::tile_width_log2)
-            };
-            const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;
-            const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
+                const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;
+                const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
 
-            // leader thread loads values from shared memory into registers
-            if (lane_idx == 0 && valid_general) {
-                // Alternative way, do not use the shared memory
-                const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
-                const float4 color_transmittance = bucket_color_transmittance[i];
-                last_contributor = tile_n_contributions[pixel_idx];
-                color_pixel_after = make_float3(image[pixel_idx], image[n_pixels + pixel_idx], image[2 * n_pixels + pixel_idx])
-                    - make_float3(color_transmittance);
-                transmittance = color_transmittance.w;
-                grad_color_pixel = make_float3(grad_image[pixel_idx], grad_image[n_pixels + pixel_idx], grad_image[2 * n_pixels + pixel_idx]);
-                grad_alpha_common = grad_alpha_map[pixel_idx] * (1.0f - alpha_map[pixel_idx]);
+                const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y)) + 0.5f;
+                const float2 delta = mean2d - pixel;
+                const float3 delta_coefs = make_float3(delta.x * delta.x, delta.x * delta.y, delta.y * delta.y);
+                const float sigma_over_2_gt = 0.5f * (conic.x * delta_coefs.x + conic.z * delta_coefs.z) + conic.y * delta_coefs.y;
+                const float sigma_over_2 = fmaxf(sigma_over_2_gt, 0.0f); // ensures >= 0
+                const float gaussian = __expf(-sigma_over_2);
+                // leader thread loads values from shared memory into registers
+                unsigned long long saddr;
+                asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel + i));
+                float4* dst_view = reinterpret_cast<float4*>(&per_pixel_registers);
+                float4* dst_view_next = dst_view + 1;
+                if (lane_idx == 0 && valid_general) {
+                    // asm this. fuck
+                    asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
+                        : "=f"(dst_view->x), "=f"(dst_view->y), "=f"(dst_view->z), "=f"(dst_view->w)
+                        : "l"(saddr));
+                    asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4+16];"
+                        : "=f"(dst_view_next->x), "=f"(dst_view_next->y), "=f"(dst_view_next->z), "=f"(dst_view_next->w)
+                        : "l"(saddr));
+                }
+                const bool skip = !valid_general || tile_primitive_idx >= last_contributor;
+                const float alpha_prepare = opacity * gaussian;
+                const float color_dot_grad_color_pixel = dot(color, grad_color_pixel);
+
+                float alpha = 0.f;
+                if (!skip) [[likely]] {
+                    alpha = fminf(alpha_prepare, config::max_fragment_alpha);
+                }
+
+                const float blending_weight = transmittance * alpha;
+                const float one_minus_alpha = 1.0f - alpha;
+                const float one_minus_alpha_rcp = 1.0f / one_minus_alpha;
+                // color gradient
+                const float3 dL_dcolor = blending_weight * grad_color_pixel * color_grad_factor;
+                dL_dcolor_accum += dL_dcolor;
+                color_pixel_after -= blending_weight * color;
+                const float color_pixel_after_dot_grad_color_pixel = dot(color_pixel_after, grad_color_pixel);
+                const float2 prepare_dl_dmean2d =
+                    make_float2(conic.x * delta.x + conic.y * delta.y,
+                                conic.y * delta.x + conic.z * delta.y);
+
+                // alpha gradient
+                const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel * one_minus_alpha_rcp;
+                const float dL_draw_opacity_partial = alpha * dL_dalpha_from_color;
+                dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
+
+                // conic and mean2d gradient
+                const float3 dL_dconic = -0.5f * dL_draw_opacity_partial * delta_coefs;
+                dL_dconic_accum += dL_dconic;
+                const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
+
+                dL_dmean2d_accum -= dL_dmean2d;
+                transmittance *= one_minus_alpha;
             }
-            const bool skip = !valid_general || idx < 0 || tile_primitive_idx >= last_contributor;
-
-            const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y)) + 0.5f;
-            const float2 delta = mean2d - pixel;
-            const float3 delta_coefs = make_float3(delta.x * delta.x, delta.x * delta.y, delta.y * delta.y);
-            const float sigma_over_2_gt = 0.5f * (conic.x * delta_coefs.x + conic.z * delta_coefs.z) + conic.y * delta_coefs.y;
-            const float sigma_over_2 = fmaxf(sigma_over_2_gt, 0.0f); // ensures >= 0
-            const float gaussian = expf(-sigma_over_2);
-            float alpha = fminf(opacity * gaussian, config::max_fragment_alpha);
-            float blending_weight = transmittance * alpha;
-            if (skip) {
-              alpha = blending_weight = 0.f;
-            }
-
-            const float one_minus_alpha = 1.0f - alpha;
-            const float one_minus_alpha_rcp = 1.0f / one_minus_alpha;
-            // color gradient
-            const float3 dL_dcolor = blending_weight * grad_color_pixel * color_grad_factor;
-            dL_dcolor_accum += dL_dcolor;
-            color_pixel_after -= blending_weight * color;
-
-            // alpha gradient
-            const float dL_dalpha_from_color = dot(transmittance * color - color_pixel_after * one_minus_alpha_rcp, grad_color_pixel);
-            const float dL_dalpha_from_alpha = grad_alpha_common * one_minus_alpha_rcp;
-            const float dL_dalpha = dL_dalpha_from_color + dL_dalpha_from_alpha;
-            // unactivated opacity gradient
-            const float dL_draw_opacity_partial = alpha * dL_dalpha;
-            dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
-
-            // conic and mean2d gradient
-            const float3 dL_dconic = -0.5f * dL_draw_opacity_partial * delta_coefs;
-            dL_dconic_accum += dL_dconic;
-            const float2 dL_dmean2d = dL_draw_opacity_partial * make_float2(
-                                                                 conic.x * delta.x + conic.y * delta.y,
-                                                                 conic.y * delta.x + conic.z * delta.y);
-            dL_dmean2d_accum -= dL_dmean2d;
-
-            transmittance *= one_minus_alpha;
         }
 
         // finally add the gradients using atomics

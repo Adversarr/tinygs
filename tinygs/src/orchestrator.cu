@@ -200,8 +200,9 @@ void Orchestrator::train_step() {
 
   // Create alpha gradient image
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
-  m_rasterize_ctx.grad_output.alpha = Image({shape.width, shape.height, 1}, ImageFormat::CHW, ImageDataType::Float32,
-                                            m_loss_buffer->data() + shape.width * shape.height * 3);
+  m_rasterize_ctx.grad_output.alpha =
+      Image({shape.width, shape.height, 1}, ImageDataType::Float32,
+            m_loss_buffer->data() + shape.width * shape.height * 3);
 
   // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
@@ -402,10 +403,10 @@ void Orchestrator::initialize() {
 
   ImageShape rgb_shape{width, height, 3};
   ImageShape alpha_shape{width, height, 1};
-  Image render_rgb = Image(rgb_shape, ImageFormat::CHW, ImageDataType::Float32, m_render_buffer->data());
-  Image render_alpha = Image(alpha_shape, ImageFormat::CHW, ImageDataType::Float32, m_render_buffer->data() + width * height * 3);
-  Image grad_rgb = Image(rgb_shape, ImageFormat::CHW, ImageDataType::Float32, m_image_grad_buffer->data());
-  Image grad_alpha = Image(alpha_shape, ImageFormat::CHW, ImageDataType::Float32, m_image_grad_buffer->data() + width * height * 3);
+  Image render_rgb = Image(rgb_shape, ImageDataType::Float32, m_render_buffer->data());
+  Image render_alpha = Image(alpha_shape, ImageDataType::Float32, m_render_buffer->data() + width * height * 3);
+  Image grad_rgb = Image(rgb_shape, ImageDataType::Float32, m_image_grad_buffer->data());
+  Image grad_alpha = Image(alpha_shape, ImageDataType::Float32, m_image_grad_buffer->data() + width * height * 3);
 
   // Setup rasterization context
   m_rasterize_ctx.inference = false; // Training mode
@@ -424,7 +425,7 @@ void Orchestrator::initialize() {
   m_rasterize_ctx.gaussians_grad = m_gradients;
 
   // Setup loss context
-  m_loss_ctx.loss = Image(shape, ImageFormat::CHW, ImageDataType::Float32, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(shape, ImageDataType::Float32, m_loss_buffer->data());
   // TODO: alpha is ignored for now
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
@@ -543,22 +544,21 @@ cv::Mat Orchestrator::to_opencv() const {
   CUDA_CHECK_THROW(
       cudaMemcpy(cpu_image.data(), m_rasterize_ctx.fwd_output.image.data,
                  height * width * 3 * sizeof(float), cudaMemcpyDeviceToHost));
-
   // Convert float RGB to 8-bit BGR for OpenCV
   cv::Mat img(height, width, CV_8UC3);
   for (int y = 0; y < height; ++y) {
     for (int x = 0; x < width; ++x) {
-      // Convert from CHW (RGB) to HWC (BGR)
-      const int r_idx = y * width + x;                   // R channel offset
-      const int g_idx = (height * width) + r_idx;        // G channel offset
-      const int b_idx = (2 * height * width) + r_idx;    // B channel offset
+      // Convert from HWC (RGB) to HWC (BGR)
+      const int pixel_offset = (y * width + x) * 3;
+      const int r_idx = pixel_offset;     // R channel offset
+      const int g_idx = pixel_offset + 1; // G channel offset 
+      const int b_idx = pixel_offset + 2; // B channel offset
       
       img.at<cv::Vec3b>(y, x)[0] = static_cast<uint8_t>(std::clamp(cpu_image[b_idx] * 255.0f, 0.0f, 255.0f));  // B
       img.at<cv::Vec3b>(y, x)[1] = static_cast<uint8_t>(std::clamp(cpu_image[g_idx] * 255.0f, 0.0f, 255.0f));  // G
       img.at<cv::Vec3b>(y, x)[2] = static_cast<uint8_t>(std::clamp(cpu_image[r_idx] * 255.0f, 0.0f, 255.0f));  // R
     }
   }
-  
   return img;
 }
 

@@ -133,18 +133,18 @@ void VideoDataset::load() {
       frame = resized_frame;
     }
 
-    // Convert from HWC to CHW format and BGR to RGB simultaneously
+    // Process frame in HWC format (RGB) - no format conversion needed
     uint8_t* dest_ptr = m_data + i * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
 
     // frame is in HWC format with 3 channels (BGR)
-    // dest_ptr should be in CHW format with 3 channels (RGB)
-    for (uint32_t c = 0; c < 3; ++c) {
-      for (uint32_t h = 0; h < m_image_shape.height; ++h) {
-        for (uint32_t w = 0; w < m_image_shape.width; ++w) {
+    // dest_ptr will be in HWC format with 3 channels (RGB) - convert BGR to RGB
+    for (uint32_t h = 0; h < m_image_shape.height; ++h) {
+      for (uint32_t w = 0; w < m_image_shape.width; ++w) {
+        for (uint32_t c = 0; c < 3; ++c) {
           // Source: HWC format with 3 channels (BGR)
           cv::Vec3b pixel = frame.at<cv::Vec3b>(h, w);
-          // Destination: CHW format with 3 channels (RGB) - convert BGR to RGB by reversing channel order
-          uint32_t dst_idx = c * m_image_shape.height * m_image_shape.width + h * m_image_shape.width + w;
+          // Destination: HWC format with 3 channels (RGB) - convert BGR to RGB by reversing channel order
+          uint32_t dst_idx = h * m_image_shape.width * m_image_shape.channel + w * m_image_shape.channel + c;
           dest_ptr[dst_idx] = pixel[2 - c]; // BGR to RGB: B(0)->R(2), G(1)->G(1), R(2)->B(0)
         }
       }
@@ -197,7 +197,6 @@ Data VideoDataset::operator[](size_t index) const {
   // Set up image data
   uint8_t* image_ptr = m_timestamp_data.at(timestamp);
   data.image.shape = image_shape();
-  data.image.format = ImageFormat::CHW;  // Converted to CHW format
   data.image.data_type = ImageDataType::UInt8;
   data.image.data = image_ptr;
 

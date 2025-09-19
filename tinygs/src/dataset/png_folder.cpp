@@ -15,7 +15,7 @@
 namespace tinygs {
 
 /**
- * @brief Load a single image and convert from RGBA/RGB HWC to RGB CHW format in uint8
+ * @brief Load a single image and convert from RGBA/RGB HWC to HWC format in uint8
  * @param index Index of the image in the dataset
  * @param image_path Path to the image file
  * @param data_buffer Pointer to the uint8_t buffer to store the image data
@@ -48,14 +48,14 @@ static void load_single_image(size_t index, const std::string& image_path, uint8
   uint8_t* img_data = (uint8_t*)img.data;
 
   // img_data is in RGBA HWC format (4 channels)
-  // dest_ptr should be in RGB CHW format (3 channels)
-  for (uint32_t c = 0; c < channels; ++c) {
-    for (uint32_t h = 0; h < expected_height; ++h) {
-      for (uint32_t w = 0; w < expected_width; ++w) {
+  // dest_ptr should be in RGB HWC format (3 channels)
+  for (uint32_t h = 0; h < expected_height; ++h) {
+    for (uint32_t w = 0; w < expected_width; ++w) {
+      for (uint32_t c = 0; c < channels; ++c) {
         // Source: HWC format with 4 channels (RGBA)
         uint32_t src_idx = h * expected_width * img.shape.channel + w * img.shape.channel + c;
-        // Destination: CHW format with 3 channels (RGB)
-        uint32_t dst_idx = c * expected_height * expected_width + h * expected_width + w;
+        // Destination: HWC format with 3 channels (RGB)
+        uint32_t dst_idx = h * expected_width * channels + w * channels + c;
         dest_ptr[dst_idx] = img_data[src_idx];
       }
     }
@@ -167,7 +167,6 @@ Data PngFolderDataset::operator[](size_t index) const {
   // Set up image data
   uint8_t* image_ptr = m_timestamp_data.at(extrin.timestamp);
   data.image.shape = image_shape();
-  data.image.format = ImageFormat::CHW;
   data.image.data_type = ImageDataType::UInt8;
   data.image.data = image_ptr;
 

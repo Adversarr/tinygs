@@ -59,7 +59,6 @@ private:
     io.output.image.shape.height = io.output.alpha.shape.height = height;
     io.output.image.shape.channel = 3;
     io.output.alpha.shape.channel = 1;
-    io.output.image.format = io.output.alpha.format = tinygs::ImageFormat::HWC;
     io.output.image.data = out_image.data();
     io.output.alpha.data = out_alpha.data();
     

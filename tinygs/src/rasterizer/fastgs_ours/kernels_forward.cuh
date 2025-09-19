@@ -370,7 +370,7 @@ namespace fast_gs::rasterization::kernels::forward {
         const float2* primitive_mean2d,
         const float4* primitive_conic_opacity,
         const float3* primitive_color,
-        float* image,
+        float3* image,
         float* alpha_map,
         uint* tile_max_n_contributions,
         uint* tile_n_contributions,
@@ -458,17 +458,9 @@ namespace fast_gs::rasterization::kernels::forward {
         }
         if (inside) {
             const int pixel_idx = width * pixel_coords.y + pixel_coords.x;
-            const int n_pixels = width * height;
-#ifndef NDEBUG
-            // Boundary checks for debug mode
-            assert(pixel_idx >= 0 && pixel_idx < n_pixels);
-            assert(pixel_idx + n_pixels >= 0 && pixel_idx + n_pixels < n_pixels * 2);
-            assert(pixel_idx + n_pixels * 2 >= 0 && pixel_idx + n_pixels * 2 < n_pixels * 3);
-#endif
+            // const int n_pixels = width * height;
             // store results
-            image[pixel_idx] = color_pixel.x;
-            image[pixel_idx + n_pixels] = color_pixel.y;
-            image[pixel_idx + n_pixels * 2] = color_pixel.z;
+            image[pixel_idx] = color_pixel;
             alpha_map[pixel_idx] = 1.0f - transmittance;
             tile_n_contributions[pixel_idx] = n_contributions;
         }

@@ -176,7 +176,7 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
         per_primitive_buffers.mean2d,
         per_primitive_buffers.conic_opacity,
         per_primitive_buffers.color,
-        image,
+        reinterpret_cast<float3*>(image),
         alpha,
         per_tile_buffers.max_n_contributions,
         per_tile_buffers.n_contributions,
