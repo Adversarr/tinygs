@@ -384,9 +384,7 @@ namespace fast_gs::rasterization::kernels::backward {
         }
 
         {
-          const uint pixel_idx =
-              width * (start_pixel_coords.y + (lane_idx / 2)) +
-              start_pixel_coords.x;
+          const uint pixel_idx = width * (start_pixel_coords.y + (lane_idx / 2)) + start_pixel_coords.x;
           // image, bucket, grad_image
           prefetch(image + pixel_idx);
           prefetch(bucket_color_transmittance + lane_idx * 8);
@@ -408,11 +406,15 @@ namespace fast_gs::rasterization::kernels::backward {
         auto& transmittance = per_pixel_registers.transmittance;
         auto& grad_color_pixel = per_pixel_registers.grad_color_pixel;
 
+        // 8kb, is very very large. we neeed to switch to another implementation.
         __shared__ PerPixel cached_per_pixel[config::block_size_blend];
+        const uint lane_idx_uint = static_cast<uint>(lane_idx);
 
         // Prefetch all the data into the shared memories, unroll 8 with stride 32 will handle everything properly.
+        // for (uint ii = lane_idx; ii < config::block_size_blend / 8; ii += 32) {
 #pragma unroll 8
-        for (uint i = lane_idx; i < config::block_size_blend; i += 32) {
+            for (uint j = 0; j < 8; ++j){
+            const uint i = lane_idx * 8 + j;
             const uint2 pixel_coords = {start_pixel_coords.x | (i % config::tile_width),
                                         start_pixel_coords.y | (i / config::tile_width)};
             const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
@@ -427,10 +429,9 @@ namespace fast_gs::rasterization::kernels::backward {
                 local.transmittance = color_transmittance.w;
             }
             local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
-            fast_copy(cached_per_pixel[i], local);
-        }
+            fast_copy(cached_per_pixel[i], local);}
+        // }
 
-        const uint lane_idx_uint = static_cast<uint>(lane_idx);
 
 // iterate over all pixels in the tile
 // Unrolling is not a good idea here.
@@ -455,6 +456,7 @@ namespace fast_gs::rasterization::kernels::backward {
                 const float sigma_over_2_gt = 0.5f * (conic.x * delta_coefs.x + conic.z * delta_coefs.z) + conic.y * delta_coefs.y;
                 const float sigma_over_2 = fmaxf(sigma_over_2_gt, 0.0f); // ensures >= 0
                 const float gaussian = __expf(-sigma_over_2);
+
                 // leader thread loads values from shared memory into registers
                 unsigned long long saddr;
                 asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel + i));
