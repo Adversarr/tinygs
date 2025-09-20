@@ -3,6 +3,8 @@
 #include <tinygs/loss/fused_ssim.hpp>
 #include <memory>
 
+#include "tinygs/cuda/vec.hpp"
+
 namespace cg = cooperative_groups;
 
 // ------------------------------------------
@@ -36,19 +38,21 @@ __constant__ float cGauss[11] = {
 #define CONV_X BLOCK_X
 #define CONV_Y SHARED_Y
 
+using namespace tinygs;
+
 // ------------------------------------------
 // Utility: Safe pixel fetch w/ zero padding
 // ------------------------------------------
-__device__ __forceinline__ float get_pix_value(
-    const float* img,
-    int b, int c, int y, int x,
-    int CH, int H, int W
+__device__ __forceinline__ vec3 get_pix_value2(
+    const vec3* img,
+    int y, int x,
+    int H, int W
 ) {
     if (x < 0 || x >= W || y < 0 || y >= H) {
-        return 0.0f;
+        return vec3(0.0f, 0.0f, 0.0f);
     }
     // HWC layout: [B, H, W, C]
-    return img[(((b * H) + y) * W + x) * CH + c];
+    return img[y * W + x];
 }
 
 // ------------------------------------------
@@ -59,19 +63,18 @@ __device__ __forceinline__ float get_pix_value(
 //  - Optionally writes partial derivatives
 //    to dm_dmu1, dm_dsigma1_sq, dm_dsigma12
 // ------------------------------------------
-__global__ void fusedssimCUDA(
+__global__ void fusedssimCUDA2(
     int H,
     int W,
-    int CH,
     float C1,
     float C2,
     float scale,
-    const float* __restrict__ img1, // pred
-    const float* __restrict__ img2, // target
-    float* __restrict__ ssim_map, // loss per pixel
-    float* __restrict__ dm_dmu1,
-    float* __restrict__ dm_dsigma1_sq,
-    float* __restrict__ dm_dsigma12
+    const vec3* __restrict__ img1, // pred
+    const vec3* __restrict__ img2, // target
+    vec3* __restrict__ ssim_map, // loss per pixel
+    vec3* __restrict__ dm_dmu1,
+    vec3* __restrict__ dm_dsigma1_sq,
+    vec3* __restrict__ dm_dsigma12
 ) {
     auto block = cg::this_thread_block();
     const int bIdx   = block.group_index().z;  // batch index
@@ -81,64 +84,116 @@ __global__ void fusedssimCUDA(
     const int num_pix = H * W;
 
     // Shared memory for the tile (img1, img2)
-    __shared__ float sTile[SHARED_Y][SHARED_X][2];
+    __shared__ vec3 sTile[SHARED_Y][SHARED_X][2]; // pad 2 pixel in x-axis.
     // After horizontal pass, store partial sums here
     // xconv[y][x] -> (sumX, sumX^2, sumY, sumY^2, sumXY)
-    __shared__ float xconv[CONV_Y][CONV_X][5];
+    __shared__ vec3 xconv[CONV_Y][CONV_X][5];
 
-    // Each block processes B x C sub-batches. We loop over channels:
-    for (int c = 0; c < CH; ++c) {
-        // ------------------------------------------------------------
-        // 1) Load (img1, img2) tile + halo into shared memory
-        // ------------------------------------------------------------
-        {
-            const int tileSize = SHARED_Y * SHARED_X;
-            const int threads = BLOCK_X * BLOCK_Y;
-            const int steps = (tileSize + threads - 1) / threads;
+    // ------------------------------------------------------------
+    // 1) Load (img1, img2) tile + halo into shared memory
+    // ------------------------------------------------------------
+    {
+        const float* img1_flt = (const float*)img1;
+        const float* img2_flt = (const float*)img2;
 
-            const int tileStartY = block.group_index().y * BLOCK_Y;
-            const int tileStartX = block.group_index().x * BLOCK_X;
+        constexpr int tileSize = SHARED_Y * SHARED_X; // total pixels in tile.
+        constexpr int threads = BLOCK_X * BLOCK_Y;    // launch threads per block.
+        
+        const int tileStartY = block.group_index().y * BLOCK_Y;
+        const int tileStartX = block.group_index().x * BLOCK_X;
 
-            for (int s = 0; s < steps; ++s) {
-                int tid = s * threads + block.thread_rank();
-                if (tid < tileSize) {
-                    int local_y = tid / SHARED_X;
-                    int local_x = tid % SHARED_X;
-                    int gy = tileStartY + local_y - HALO;
-                    int gx = tileStartX + local_x - HALO;
-
-                    float X = get_pix_value(img1, bIdx, c, gy, gx, CH, H, W);
-                    float Y = get_pix_value(img2, bIdx, c, gy, gx, CH, H, W);
-
-                    sTile[local_y][local_x][0] = X;
-                    sTile[local_y][local_x][1] = Y;
-                }
+        // now load is pixel by pixel.
+        constexpr int steps = (tileSize + threads - 1) / threads; // how much step should I use to load everything.
+        vec3 xs[steps], ys[steps]; // each thread load steps.
+#pragma unroll
+        for (int s = 0; s < steps; ++s) {
+            int tid = s * threads + block.thread_rank();
+            const int local_y = tid / SHARED_X;
+            const int local_x = tid % SHARED_X;
+            const int gy = tileStartY + local_y - HALO;
+            const int gx = tileStartX + local_x - HALO;
+            const bool valid = 0 <= gx && gx < W && 0 <= gy && gy < H;
+            const vec3 x = get_pix_value2(img1, gy, gx, H, W);
+            const vec3 y = get_pix_value2(img2, gy, gx, H, W);
+            xs[s] = x;
+            ys[s] = y;
+        }
+        // write to shared memory.
+        #pragma unroll
+        for (int s = 0; s < steps; ++s) {
+            int tid = s * threads + block.thread_rank();
+            if (tid < tileSize) {
+                const int local_y = tid / SHARED_X;
+                const int local_x = tid % SHARED_X;
+                sTile[local_y][local_x][0] = xs[s];
+                sTile[local_y][local_x][1] = ys[s];
             }
         }
-        block.sync();
+    }
+    block.sync();
 
-        // ------------------------------------------------------------
-        // 2) Horizontal convolution (11x1) in shared memory
-        //    We'll accumulate symmetrical pairs around center.
-        // ------------------------------------------------------------
+    // ------------------------------------------------------------
+    // 2) Horizontal convolution (11x1) in shared memory
+    //    We'll accumulate symmetrical pairs around center.
+    // ------------------------------------------------------------
+    {
+        int ly = threadIdx.y;
+        int lx = threadIdx.x + HALO;  // skip left halo
+
+        vec3 sumX {0.f};
+        vec3 sumX2{0.f};
+        vec3 sumY {0.f};
+        vec3 sumY2{0.f};
+        vec3 sumXY{0.f};
+
+        // #pragma unroll for those 5 pairs
+#pragma unroll
+        for (int d = 1; d <= HALO; ++d) {
+            float w = cGauss[HALO - d];
+            const vec3 Xleft  = sTile[ly][lx - d][0];
+            const vec3 Yleft  = sTile[ly][lx - d][1];
+            const vec3 Xright = sTile[ly][lx + d][0];
+            const vec3 Yright = sTile[ly][lx + d][1];
+
+            sumX  += (Xleft + Xright) * w;
+            sumX2 += ((Xleft * Xleft) + (Xright * Xright)) * w;
+            sumY  += (Yleft + Yright) * w;
+            sumY2 += ((Yleft * Yleft) + (Yright * Yright)) * w;
+            sumXY += ((Xleft * Yleft) + (Xright * Yright)) * w;
+        }
+        // center
         {
-            int ly = threadIdx.y;
-            int lx = threadIdx.x + HALO;  // skip left halo
+            const vec3 centerX = sTile[ly][lx][0];
+            const vec3 centerY = sTile[ly][lx][1];
+            float wc = cGauss[HALO];
+            sumX  += centerX * wc;
+            sumX2 += (centerX * centerX) * wc;
+            sumY  += centerY * wc;
+            sumY2 += (centerY * centerY) * wc;
+            sumXY += (centerX * centerY) * wc;
+        }
 
-            float sumX   = 0.f;
-            float sumX2  = 0.f;
-            float sumY   = 0.f;
-            float sumY2  = 0.f;
-            float sumXY  = 0.f;
+        // Write out partial sums
+        xconv[ly][threadIdx.x][0] = sumX;
+        xconv[ly][threadIdx.x][1] = sumX2;
+        xconv[ly][threadIdx.x][2] = sumY;
+        xconv[ly][threadIdx.x][3] = sumY2;
+        xconv[ly][threadIdx.x][4] = sumXY;
 
-            // #pragma unroll for those 5 pairs
+        // Possibly handle second row in same warp
+        int ly2 = ly + BLOCK_Y;
+        if (ly2 < CONV_Y) {
+            sumX   = vec3(0.f); sumX2  = vec3(0.f);
+            sumY   = vec3(0.f); sumY2  = vec3(0.f);
+            sumXY  = vec3(0.f);
+
 #pragma unroll
             for (int d = 1; d <= HALO; ++d) {
                 float w = cGauss[HALO - d];
-                float Xleft  = sTile[ly][lx - d][0];
-                float Yleft  = sTile[ly][lx - d][1];
-                float Xright = sTile[ly][lx + d][0];
-                float Yright = sTile[ly][lx + d][1];
+                const vec3 Xleft  = sTile[ly2][lx - d][0];
+                const vec3 Yleft  = sTile[ly2][lx - d][1];
+                const vec3 Xright = sTile[ly2][lx + d][0];
+                const vec3 Yright = sTile[ly2][lx + d][1];
 
                 sumX  += (Xleft + Xright) * w;
                 sumX2 += ((Xleft * Xleft) + (Xright * Xright)) * w;
@@ -148,131 +203,91 @@ __global__ void fusedssimCUDA(
             }
             // center
             {
-                float centerX = sTile[ly][lx][0];
-                float centerY = sTile[ly][lx][1];
+                const vec3 cx = sTile[ly2][lx][0];
+                const vec3 cy = sTile[ly2][lx][1];
                 float wc = cGauss[HALO];
-                sumX  += centerX * wc;
-                sumX2 += (centerX * centerX) * wc;
-                sumY  += centerY * wc;
-                sumY2 += (centerY * centerY) * wc;
-                sumXY += (centerX * centerY) * wc;
+                sumX  += cx * wc;
+                sumX2 += (cx * cx) * wc;
+                sumY  += cy * wc;
+                sumY2 += (cy * cy) * wc;
+                sumXY += (cx * cy) * wc;
             }
-
-            // Write out partial sums
-            xconv[ly][threadIdx.x][0] = sumX;
-            xconv[ly][threadIdx.x][1] = sumX2;
-            xconv[ly][threadIdx.x][2] = sumY;
-            xconv[ly][threadIdx.x][3] = sumY2;
-            xconv[ly][threadIdx.x][4] = sumXY;
-
-            // Possibly handle second row in same warp
-            int ly2 = ly + BLOCK_Y;
-            if (ly2 < CONV_Y) {
-                sumX   = 0.f; sumX2  = 0.f;
-                sumY   = 0.f; sumY2  = 0.f;
-                sumXY  = 0.f;
-
-#pragma unroll
-                for (int d = 1; d <= HALO; ++d) {
-                    float w = cGauss[HALO - d];
-                    float Xleft  = sTile[ly2][lx - d][0];
-                    float Yleft  = sTile[ly2][lx - d][1];
-                    float Xright = sTile[ly2][lx + d][0];
-                    float Yright = sTile[ly2][lx + d][1];
-
-                    sumX  += (Xleft + Xright) * w;
-                    sumX2 += ((Xleft * Xleft) + (Xright * Xright)) * w;
-                    sumY  += (Yleft + Yright) * w;
-                    sumY2 += ((Yleft * Yleft) + (Yright * Yright)) * w;
-                    sumXY += ((Xleft * Yleft) + (Xright * Yright)) * w;
-                }
-                // center
-                {
-                    float cx = sTile[ly2][lx][0];
-                    float cy = sTile[ly2][lx][1];
-                    float wc = cGauss[HALO];
-                    sumX  += cx * wc;
-                    sumX2 += (cx * cx) * wc;
-                    sumY  += cy * wc;
-                    sumY2 += (cy * cy) * wc;
-                    sumXY += (cx * cy) * wc;
-                }
-                xconv[ly2][threadIdx.x][0] = sumX;
-                xconv[ly2][threadIdx.x][1] = sumX2;
-                xconv[ly2][threadIdx.x][2] = sumY;
-                xconv[ly2][threadIdx.x][3] = sumY2;
-                xconv[ly2][threadIdx.x][4] = sumXY;
-            }
+            xconv[ly2][threadIdx.x][0] = sumX;
+            xconv[ly2][threadIdx.x][1] = sumX2;
+            xconv[ly2][threadIdx.x][2] = sumY;
+            xconv[ly2][threadIdx.x][3] = sumY2;
+            xconv[ly2][threadIdx.x][4] = sumXY;
         }
-        block.sync();
+    }
+    block.sync();
 
-        // ------------------------------------------------------------
-        // 3) Vertical convolution (1x11) + final SSIM
-        // ------------------------------------------------------------
-        {
-            int ly = threadIdx.y + HALO;
-            int lx = threadIdx.x;
+    // ------------------------------------------------------------
+    // 3) Vertical convolution (1x11) + final SSIM
+    // ------------------------------------------------------------
+    {
+        int ly = threadIdx.y + HALO;
+        int lx = threadIdx.x;
 
-            float out0 = 0.f, out1 = 0.f, out2 = 0.f, out3 = 0.f, out4 = 0.f;
+        vec3 out0 = vec3(0.f), out1 = vec3(0.f), out2 = vec3(0.f), out3 = vec3(0.f), out4 = vec3(0.f);
 
 #pragma unroll
-            for (int d = 1; d <= HALO; ++d) {
-                float w = cGauss[HALO - d];
-                float* top = xconv[ly - d][lx];
-                float* bot = xconv[ly + d][lx];
+        for (int d = 1; d <= HALO; ++d) {
+            float w = cGauss[HALO - d];
+            const vec3* top = xconv[ly - d][lx];
+            const vec3* bot = xconv[ly + d][lx];
 
-                out0 += (top[0] + bot[0]) * w;
-                out1 += (top[1] + bot[1]) * w;
-                out2 += (top[2] + bot[2]) * w;
-                out3 += (top[3] + bot[3]) * w;
-                out4 += (top[4] + bot[4]) * w;
-            }
-            // center
-            {
-                float wC = cGauss[HALO];
-                float* ctr = xconv[ly][lx];
-                out0 += ctr[0] * wC;
-                out1 += ctr[1] * wC;
-                out2 += ctr[2] * wC;
-                out3 += ctr[3] * wC;
-                out4 += ctr[4] * wC;
-            }
+            out0 += (top[0] + bot[0]) * w;
+            out1 += (top[1] + bot[1]) * w;
+            out2 += (top[2] + bot[2]) * w;
+            out3 += (top[3] + bot[3]) * w;
+            out4 += (top[4] + bot[4]) * w;
+        }
+        // center
+        {
+            float wC = cGauss[HALO];
+            const vec3* ctr = xconv[ly][lx];
+            out0 += ctr[0] * wC;
+            out1 += ctr[1] * wC;
+            out2 += ctr[2] * wC;
+            out3 += ctr[3] * wC;
+            out4 += ctr[4] * wC;
+        }
 
-            if (pix_x < W && pix_y < H) {
-                float mu1 = out0;
-                float mu2 = out2;
-                float mu1_sq = mu1 * mu1;
-                float mu2_sq = mu2 * mu2;
+        if (pix_x < W && pix_y < H) {
+            vec3 mu1 = out0;
+            vec3 mu2 = out2;
+            vec3 mu1_sq = mu1 * mu1;
+            vec3 mu2_sq = mu2 * mu2;
 
-                float sigma1_sq = out1 - mu1_sq;
-                float sigma2_sq = out3 - mu2_sq;
-                float sigma12   = out4 - mu1 * mu2;
+            vec3 sigma1_sq = out1 - mu1_sq;
+            vec3 sigma2_sq = out3 - mu2_sq;
+            vec3 sigma12   = out4 - mu1 * mu2;
 
-                float A = mu1_sq + mu2_sq + C1;
-                float B = sigma1_sq + sigma2_sq + C2;
-                float C_ = 2.f * mu1 * mu2 + C1;
-                float D_ = 2.f * sigma12 + C2;
+            vec3 A = mu1_sq + mu2_sq + C1;
+            vec3 B = sigma1_sq + sigma2_sq + C2;
+            vec3 C_ = 2.f * mu1 * mu2 + C1;
+            vec3 D_ = 2.f * sigma12 + C2;
 
-                float val = (C_ * D_) / (A * B);
+            vec3 val = (C_ * D_) / (A * B);
 
-                int global_idx = ((bIdx * num_pix + pix_id) * CH) + c; // HWC indexing
-                ssim_map[global_idx] += (1 - val) * scale; // NOTE: 1 - ssim is loss
+            // int global_idx = ((bIdx * num_pix + pix_id) * CH) + c; // HWC indexing
+            int global_idx = (pix_y * W + pix_x);
+            ssim_map[global_idx] += (1.0f - val) * scale; // NOTE: 1 - ssim is loss
 
-                if (dm_dmu1) {
-                    // partial derivatives
-                    float d_m_dmu1 = (
-                        (mu2 * 2.f * D_) / (A * B)
-                        - (mu2 * 2.f * C_) / (A * B)
-                        - (mu1 * 2.f * C_ * D_) / (A * A * B)
-                        + (mu1 * 2.f * C_ * D_) / (A * B * B)
-                    );
-                    float d_m_dsigma1_sq = (-C_ * D_) / (A * B * B);
-                    float d_m_dsigma12   = (2.f * C_) / (A * B);
+            if (dm_dmu1) {
+                // partial derivatives
+                const vec3 d_m_dmu1 = (
+                    (mu2 * 2.f * D_) / (A * B)
+                    - (mu2 * 2.f * C_) / (A * B)
+                    - (mu1 * 2.f * C_ * D_) / (A * A * B)
+                    + (mu1 * 2.f * C_ * D_) / (A * B * B)
+                );
+                vec3 d_m_dsigma1_sq = (-C_ * D_) / (A * B * B);
+                vec3 d_m_dsigma12   = (2.f * C_) / (A * B);
 
-                    dm_dmu1[global_idx]       = d_m_dmu1;
-                    dm_dsigma1_sq[global_idx] = d_m_dsigma1_sq;
-                    dm_dsigma12[global_idx]   = d_m_dsigma12;
-                }
+                dm_dmu1[global_idx]       = d_m_dmu1;
+                dm_dsigma1_sq[global_idx] = d_m_dsigma1_sq;
+                dm_dsigma12[global_idx]   = d_m_dsigma12;
             }
         }
     }
@@ -284,19 +299,16 @@ __global__ void fusedssimCUDA(
 //    (dm_dmu1, dm_dsigma1_sq, dm_dsigma12)
 //    and dL/dmap (the gradient from above).
 // ------------------------------------------
-__global__ void fusedssim_backwardCUDA(
+__global__ void fusedssim_backwardCUDA2(
     int H,
     int W,
-    int CH,
-    float C1,
-    float C2,
     float scale,
-    const float* __restrict__ img1,
-    const float* __restrict__ img2,
-    float* __restrict__ dL_dimg1, // out: dL/dpred
-    const float* __restrict__ dm_dmu1,
-    const float* __restrict__ dm_dsigma1_sq,
-    const float* __restrict__ dm_dsigma12
+    const vec3* __restrict__ img1,
+    const vec3* __restrict__ img2,
+    vec3* __restrict__ dL_dimg1, // out: dL/dpred
+    const vec3* __restrict__ dm_dmu1,
+    const vec3* __restrict__ dm_dsigma1_sq,
+    const vec3* __restrict__ dm_dsigma12
 ) {
     auto block = cg::this_thread_block();
 
@@ -308,14 +320,13 @@ __global__ void fusedssim_backwardCUDA(
 
     // Shared memory for the fused data:
     // [0]: dm_dmu1*dL, [1]: dm_dsigma1_sq*dL, [2]: dm_dsigma12*dL
-    __shared__ float sData[3][SHARED_Y][SHARED_X];
-    __shared__ float sScratch[CONV_Y][CONV_X][3];
+    __shared__ vec3 sData[SHARED_Y][SHARED_X][3];
+    __shared__ vec3 sScratch[CONV_Y][CONV_X][3];
 
-    for (int c = 0; c < CH; ++c) {
-        float p1 = 0.f, p2 = 0.f;
+        vec3 p1 = vec3(0.f), p2 = vec3(0.f);
         if (pix_x < W && pix_y < H) {
-            p1 = get_pix_value(img1, bIdx, c, pix_y, pix_x, CH, H, W);
-            p2 = get_pix_value(img2, bIdx, c, pix_y, pix_x, CH, H, W);
+            p1 = get_pix_value2(img1, pix_y, pix_x, H, W);
+            p2 = get_pix_value2(img2, pix_y, pix_x, H, W);
         }
 
         // (1) Load + fuse multiplication
@@ -324,29 +335,27 @@ __global__ void fusedssim_backwardCUDA(
             const int start_x = block.group_index().x * BLOCK_X;
 
             int tid = threadIdx.y * blockDim.x + threadIdx.x;
-            int warp_id = tid / 32;
-            int lane_id = tid % 32;
-            int totalThreads = BLOCK_X * BLOCK_Y;
-            int num_warps = (totalThreads + 31) / 32;
+            int warp_id = tid / 32; // 0-7
+            int lane_id = tid % 32; // 0-32
+            constexpr int totalThreads = BLOCK_X * BLOCK_Y;
+            constexpr int num_warps = (totalThreads + 31) / 32;
 
             for (int row = warp_id; row < SHARED_Y; row += num_warps) {
-                int gy = start_y + row - HALO;
-                for (int col = lane_id; col < SHARED_X; col += 32) {
-                    int gx = start_x + col - HALO;
-
-                    // float chain = get_pix_value(dL_dmap,      bIdx, c, gy, gx, CH, H, W);
-                    float dL_dmap = (
+                if (lane_id < SHARED_X) {
+                    int gy = start_y + row - HALO;
+                    int gx = start_x + lane_id - HALO;
+                    const float dL_dmap = (
                         gx >= HALO && gx < W - HALO && gy >= HALO && gy < H - HALO ? 
                         scale : 0.0f
                     );
 
-                    float vmu   = get_pix_value(dm_dmu1,      bIdx, c, gy, gx, CH, H, W);
-                    float vs1   = get_pix_value(dm_dsigma1_sq,bIdx, c, gy, gx, CH, H, W);
-                    float vs12  = get_pix_value(dm_dsigma12,  bIdx, c, gy, gx, CH, H, W);
+                    const vec3 vmu   = get_pix_value2(dm_dmu1,       gy, gx, H, W);
+                    const vec3 vs1   = get_pix_value2(dm_dsigma1_sq, gy, gx, H, W);
+                    const vec3 vs12  = get_pix_value2(dm_dsigma12,   gy, gx, H, W);
 
-                    sData[0][row][col] = vmu  * dL_dmap;
-                    sData[1][row][col] = vs1  * dL_dmap;
-                    sData[2][row][col] = vs12 * dL_dmap;
+                    sData[row][lane_id][0] = vmu  * dL_dmap;
+                    sData[row][lane_id][1] = vs1  * dL_dmap;
+                    sData[row][lane_id][2] = vs12 * dL_dmap;
                 }
             }
         }
@@ -360,18 +369,18 @@ __global__ void fusedssim_backwardCUDA(
             for (int pass = 0; pass < 2; ++pass) {
                 int yy = ly + pass * BLOCK_Y;
                 if (yy < CONV_Y) {
-                    float accum0 = 0.f, accum1 = 0.f, accum2 = 0.f;
+                    vec3 accum0 = vec3(0.f), accum1 = vec3(0.f), accum2 = vec3(0.f);
 
 #pragma unroll
                     for (int d = 1; d <= HALO; ++d) {
                         float w = cGauss[HALO - d];
-                        float left0  = sData[0][yy][lx - d];
-                        float left1  = sData[1][yy][lx - d];
-                        float left2  = sData[2][yy][lx - d];
+                        vec3 left0  = sData[yy][lx - d][0];
+                        vec3 left1  = sData[yy][lx - d][1];
+                        vec3 left2  = sData[yy][lx - d][2];
 
-                        float right0 = sData[0][yy][lx + d];
-                        float right1 = sData[1][yy][lx + d];
-                        float right2 = sData[2][yy][lx + d];
+                        vec3 right0 = sData[yy][lx + d][0];
+                        vec3 right1 = sData[yy][lx + d][1];
+                        vec3 right2 = sData[yy][lx + d][2];
 
                         accum0 += (left0 + right0) * w;
                         accum1 += (left1 + right1) * w;
@@ -380,9 +389,9 @@ __global__ void fusedssim_backwardCUDA(
                     // center
                     {
                         float wc = cGauss[HALO];
-                        float c0 = sData[0][yy][lx];
-                        float c1 = sData[1][yy][lx];
-                        float c2 = sData[2][yy][lx];
+                        vec3 c0 = sData[yy][lx][0];
+                        vec3 c1 = sData[yy][lx][1];
+                        vec3 c2 = sData[yy][lx][2];
                         accum0 += c0 * wc;
                         accum1 += c1 * wc;
                         accum2 += c2 * wc;
@@ -401,13 +410,13 @@ __global__ void fusedssim_backwardCUDA(
             int ly = threadIdx.y + HALO;
             int lx = threadIdx.x;
 
-            float sum0 = 0.f, sum1 = 0.f, sum2 = 0.f;
+            vec3 sum0 = vec3(0.f), sum1 = vec3(0.f), sum2 = vec3(0.f);
 
 #pragma unroll
             for (int d = 1; d <= HALO; ++d) {
                 float w = cGauss[HALO - d];
-                float* top = sScratch[ly - d][lx];
-                float* bot = sScratch[ly + d][lx];
+                const vec3* const top = sScratch[ly - d][lx];
+                const vec3* const bot = sScratch[ly + d][lx];
 
                 sum0 += (top[0] + bot[0]) * w;
                 sum1 += (top[1] + bot[1]) * w;
@@ -416,20 +425,20 @@ __global__ void fusedssim_backwardCUDA(
             // center
             {
                 float wc = cGauss[HALO];
-                float* ctr = sScratch[ly][lx];
+                const vec3* const ctr = sScratch[ly][lx];
                 sum0 += ctr[0] * wc;
                 sum1 += ctr[1] * wc;
                 sum2 += ctr[2] * wc;
             }
 
             // final accumulation
-            float dL_dpix = sum0 + (2.f * p1) * sum1 + (p2) * sum2;
+            vec3 dL_dpix = sum0 + (2.f * p1) * sum1 + (p2) * sum2;
 
-            int out_idx = ((bIdx * num_pix + pix_id) * CH) + c; // HWC indexing
-            dL_dimg1[out_idx] += -dL_dpix; // NOTE: (1 - ssim)
+            // int out_idx = ((bIdx * num_pix + pix_id) * CH) + c; // HWC indexing
+            // dL_dimg1[out_idx] += -dL_dpix[0]; // NOTE: (1 - ssim)
+            dL_dimg1[pix_id] += -1.0f * dL_dpix; // NOTE: (1 - ssim)
         }
         block.sync();
-    }
 }
 
 namespace tinygs {
@@ -475,21 +484,43 @@ void FusedSSIMLoss::evaluate(LossContext ctx) {
     float* grad = static_cast<float*>(ctx.grad.data);
 
     if (ctx.grad) {
-      fusedssimCUDA<<<grid, block, 0, ctx.stream>>>( //
-          H, W, CH, m_c1, m_c2, actual_scale,        //
-          pred, targ, loss,                          //
-          m_impl->dm_dmu1.data(), m_impl->dm_dsigma1_sq.data(),
-          m_impl->dm_dsigma12.data());
+    //   fusedssimCUDA<<<grid, block, 0, ctx.stream>>>( //
+    //       H, W, CH, m_c1, m_c2, actual_scale,        //
+    //       pred, targ, loss,                          //
+    //       m_impl->dm_dmu1.data(), m_impl->dm_dsigma1_sq.data(),
+    //       m_impl->dm_dsigma12.data());
 
-      fusedssim_backwardCUDA<<<grid, block, 0, ctx.stream>>>( //
-          H, W, CH, m_c1, m_c2, actual_scale,                 //
-          pred, targ, grad,                                   //
-          m_impl->dm_dmu1.data(), m_impl->dm_dsigma1_sq.data(),
-          m_impl->dm_dsigma12.data());
+      fusedssimCUDA2<<<grid, block, 0, ctx.stream>>>(
+          H, W, m_c1, m_c2, actual_scale,
+          reinterpret_cast<const vec3*>(pred),
+          reinterpret_cast<const vec3*>(targ),
+          reinterpret_cast<vec3*>(loss),
+          reinterpret_cast<vec3*>(m_impl->dm_dmu1.data()),
+          reinterpret_cast<vec3*>(m_impl->dm_dsigma1_sq.data()),
+          reinterpret_cast<vec3*>(m_impl->dm_dsigma12.data()));
+
+
+    //   fusedssim_backwardCUDA<<<grid, block, 0, ctx.stream>>>( //
+    //       H, W, CH, m_c1, m_c2, actual_scale,                 //
+    //       pred, targ, grad,                                   //
+    //       m_impl->dm_dmu1.data(), m_impl->dm_dsigma1_sq.data(),
+    //       m_impl->dm_dsigma12.data());
+
+
+      fusedssim_backwardCUDA2<<<grid, block, 0, ctx.stream>>>(
+          H, W, actual_scale,
+          reinterpret_cast<const vec3*>(pred),
+          reinterpret_cast<const vec3*>(targ),
+          reinterpret_cast<vec3*>(grad),                                   //
+          reinterpret_cast<const vec3*>(m_impl->dm_dmu1.data()),
+          reinterpret_cast<const vec3*>(m_impl->dm_dsigma1_sq.data()),
+          reinterpret_cast<const vec3*>(m_impl->dm_dsigma12.data()));
     } else {
-      fusedssimCUDA<<<grid, block, 0, ctx.stream>>>( //
-          H, W, CH, m_c1, m_c2, actual_scale,        //
-          pred, targ, loss,                          //
+      fusedssimCUDA2<<<grid, block, 0, ctx.stream>>>(
+          H, W, m_c1, m_c2, actual_scale,
+          reinterpret_cast<const vec3*>(pred),
+          reinterpret_cast<const vec3*>(targ),
+          reinterpret_cast<vec3*>(loss),
           nullptr, nullptr, nullptr);
     }
 }
