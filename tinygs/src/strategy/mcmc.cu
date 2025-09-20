@@ -146,12 +146,20 @@ __global__ void add_noise_kernel(
     means[idx_3d + 2] += noise_factor * transformed_noise.z;
 }
 
+struct MCMCStrategy::Impl {
+  pcg32 rng;
+  cudaStream_t generate_random_stream;
+};
+
 MCMCStrategy::MCMCStrategy(
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer
 ) : StrategyBase(gaussians, gaussians_grad, optimizer) {
   init_binom();
+
+  m_impl = std::make_unique<Impl>();
+  CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&m_impl->generate_random_stream, cudaStreamNonBlocking));
 }
 
 
@@ -168,21 +176,21 @@ void MCMCStrategy::step_impl(const RasterizeContext& ctx) {
 
 void MCMCStrategy::reset() {}
 
-void MCMCStrategy::add_noise(const RasterizeContext& /* ctx */) {
+void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
   // TODO: this is simpler than expected.
   TINYGS_TIMER("MCMCStrategy::add_noise");
   size_t num_gaussians = m_gaussians->size();
   if (num_gaussians == 0) return;
 
-  thrust::device_vector<float> noise(3 * num_gaussians);
+  GPUBuffer<float> noise(ctx.stream, num_gaussians * 3);
   generate_random_logistic<float>(
     m_rng,
     noise.size(),
-    thrust::raw_pointer_cast(noise.data()),
+    noise.data(),
     0.0f, 1.0f
   ); // TODO: fuse the two kernels.
 
-  add_noise_kernel<<<(num_gaussians + 255) / 256, 256>>>(
+  add_noise_kernel<<<(num_gaussians + 255) / 256, 256, 0, ctx.stream>>>(
     num_gaussians,
     thrust::raw_pointer_cast(m_gaussians->opacities().data()),
     reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
@@ -191,6 +199,7 @@ void MCMCStrategy::add_noise(const RasterizeContext& /* ctx */) {
     reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
     m_mcmc_params.noise_lr_init * m_optimizer->get_lr()
   );
+  cudaStreamSynchronize(ctx.stream);
 }
 
 void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {

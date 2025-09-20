@@ -62,6 +62,9 @@ protected:
   MCMCParams m_mcmc_params;  ///< MCMC parameters
   pcg32 m_rng;               ///< Random number generator
 
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
+
 public:
   // NOTE: MCMC use relocate instead of pruning.
   // void prune(const RasterizeContext& ctx);
