@@ -407,36 +407,42 @@ namespace fast_gs::rasterization::kernels::backward {
         auto& grad_color_pixel = per_pixel_registers.grad_color_pixel;
 
         // 8kb, is very very large. we neeed to switch to another implementation.
-        __shared__ PerPixel cached_per_pixel[config::block_size_blend];
+        // __shared__ PerPixel cached_per_pixel[config::block_size_blend];
+        __shared__ PerPixel cached_per_pixel[32];
         const uint lane_idx_uint = static_cast<uint>(lane_idx);
-
-        // Prefetch all the data into the shared memories, unroll 8 with stride 32 will handle everything properly.
-        // for (uint ii = lane_idx; ii < config::block_size_blend / 8; ii += 32) {
-#pragma unroll 8
-            for (uint j = 0; j < 8; ++j){
-            const uint i = lane_idx * 8 + j;
-            const uint2 pixel_coords = {start_pixel_coords.x | (i % config::tile_width),
-                                        start_pixel_coords.y | (i / config::tile_width)};
-            const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
-            const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
-            PerPixel local;
-            float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
-            if (is_valid) {
-                color_transmittance = bucket_color_transmittance[i];
-                local.last_contributor = tile_n_contributions[pixel_idx];
-                local.grad_color_pixel = grad_image[pixel_idx];
-                local.color_pixel_after = image[pixel_idx];
-                local.transmittance = color_transmittance.w;
-            }
-            local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
-            fast_copy(cached_per_pixel[i], local);}
-        // }
-
 
 // iterate over all pixels in the tile
 // Unrolling is not a good idea here.
-// #pragma unroll
+#pragma unroll 2
         for (uint ii = 0; ii < config::block_size_blend + 31; ii += 16) {
+            if (ii % 32 == 0 /*  && ii < config::block_size_blend */) { // fetch data
+                const uint i = ii + lane_idx_uint;
+                const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
+                                            start_pixel_coords.y | (i >> config::tile_width_log2)};
+                const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
+                const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
+                PerPixel local;
+                float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
+                if (is_valid) {
+                    color_transmittance = bucket_color_transmittance[i];
+                    local.last_contributor = tile_n_contributions[pixel_idx];
+                    local.grad_color_pixel = grad_image[pixel_idx];
+                    local.color_pixel_after = image[pixel_idx];
+                    local.transmittance = color_transmittance.w;
+                }
+                local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
+                fast_copy(cached_per_pixel[lane_idx], local);
+            } else if (ii % 16 == 0) {
+                // odd. prefetch
+                const uint i = ii + lane_idx_uint;
+                const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
+                                            start_pixel_coords.y | (i >> config::tile_width_log2)};
+                const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
+                prefetch(image + pixel_idx);
+                prefetch(bucket_color_transmittance + i);
+                prefetch(grad_image + pixel_idx);
+            }
+
 #pragma unroll 16
             for (uint j = 0; j < 16; ++j) {
                 const uint i = ii + j;
@@ -459,7 +465,7 @@ namespace fast_gs::rasterization::kernels::backward {
 
                 // leader thread loads values from shared memory into registers
                 unsigned long long saddr;
-                asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel + i));
+                asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel + i % 32));
                 float4* dst_view = reinterpret_cast<float4*>(&per_pixel_registers);
                 float4* dst_view_next = dst_view + 1;
                 if (lane_idx == 0 && valid_general) {
