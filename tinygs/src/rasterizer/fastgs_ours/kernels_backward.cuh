@@ -12,6 +12,7 @@
 #include "kernel_utils.cuh"
 #include "rasterization_config.h"
 #include "utils.h"
+#include "tinygs/common.hpp"
 #include <cooperative_groups.h>
 #include <cstdint>
 namespace cg = cooperative_groups;
@@ -301,10 +302,8 @@ namespace fast_gs::rasterization::kernels::backward {
         const float2* __restrict__ primitive_mean2d,
         const float4* __restrict__ primitive_conic_opacity,
         const float3* __restrict__ primitive_color,
-        const float3* __restrict__ grad_image,
-        const float* __restrict__ grad_alpha_map,
-        const float3* __restrict__ image,
-        const float* __restrict__ alpha_map,
+        const float* __restrict__ grad_image,
+        const float* __restrict__ image,
         const uint* __restrict__ tile_max_n_contributions,
         const uint* __restrict__ tile_n_contributions,
         const uint* __restrict__ bucket_tile_index,
@@ -322,6 +321,10 @@ namespace fast_gs::rasterization::kernels::backward {
         auto warp = cg::tiled_partition<32>(block);
         const uint lane_idx = warp.thread_rank();
         const uint warp_idx = block.thread_rank() / 32;
+        const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+        const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+        const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
+
         assert(warp_idx < config::blend_bwd_n_warps);
         const uint bucket_idx = (block.group_index().x * config::blend_bwd_n_warps) + warp_idx;
 
@@ -347,8 +350,6 @@ namespace fast_gs::rasterization::kernels::backward {
         float opacity = 0.0f;
         float3 color = {0.0f, 0.0f, 0.0f};
         float3 color_grad_factor = {0.0f, 0.0f, 0.0f};
-        // helpers
-        const uint n_pixels = width * height;
 
         // tile metadata
         const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
@@ -372,13 +373,6 @@ namespace fast_gs::rasterization::kernels::backward {
                 color_grad_factor.z = 1.0f;
         }
 
-        {
-          const uint pixel_idx = width * (start_pixel_coords.y + (lane_idx / 2)) + start_pixel_coords.x;
-          // image, bucket, grad_image
-          prefetch(image + pixel_idx);
-          prefetch(bucket_color_transmittance + lane_idx * 8);
-          prefetch(grad_image + pixel_idx);
-        }
 
         // gradient accumulation
         float2 dL_dmean2d_accum = {0.0f, 0.0f};
@@ -399,6 +393,13 @@ namespace fast_gs::rasterization::kernels::backward {
         auto& cached_per_pixel = cached_per_pixel_all[warp_idx];
         const uint lane_idx_uint = static_cast<uint>(lane_idx);
 
+        const float* grad_image_0 = grad_image;
+        const float* grad_image_1 = grad_image + channel_stride;
+        const float* grad_image_2 = grad_image + channel_stride * 2;
+        const float* image_0 = image;
+        const float* image_1 = image + channel_stride;
+        const float* image_2 = image + channel_stride * 2;
+
 // iterate over all pixels in the tile
 // Unrolling is not a good idea here.
 #pragma unroll 2
@@ -408,14 +409,22 @@ namespace fast_gs::rasterization::kernels::backward {
                 const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
                                             start_pixel_coords.y | (i >> config::tile_width_log2)};
                 const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
+                const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
+                    /* row */ pixel_coords.y,
+                    /* col */ pixel_coords.x,
+                    width_in_tile);
                 const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
                 PerPixel local;
                 float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
                 if (is_valid) {
                     color_transmittance = bucket_color_transmittance[i];
-                    local.last_contributor = tile_n_contributions[pixel_idx];
-                    local.grad_color_pixel = grad_image[pixel_idx];
-                    local.color_pixel_after = image[pixel_idx];
+                    local.last_contributor = tile_n_contributions[pixel_idx]; // logical pixel index.
+                    local.grad_color_pixel = make_float3(grad_image_0[physical_pixel_idx],
+                                    grad_image_1[physical_pixel_idx],
+                                    grad_image_2[physical_pixel_idx]);
+                    local.color_pixel_after = make_float3(image_0[physical_pixel_idx],
+                                    image_1[physical_pixel_idx],
+                                    image_2[physical_pixel_idx]);
                     local.transmittance = color_transmittance.w;
                 }
                 local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);

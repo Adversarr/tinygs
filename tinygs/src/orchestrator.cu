@@ -540,21 +540,24 @@ cv::Mat Orchestrator::to_opencv() const {
   
   auto shape = m_rasterize_ctx.fwd_output.image.shape;
   int width = shape.width, height = shape.height;
+  auto pad_width = shape.padded_width();
+  auto channel_stride = shape.padded_height() * pad_width;
 
   // Copy GPU rendered image to CPU for visualization
-  std::vector<float> cpu_image(height * width * 3);
+  std::vector<float> cpu_image(shape.padded_size());
   CUDA_CHECK_THROW(
       cudaMemcpy(cpu_image.data(), m_rasterize_ctx.fwd_output.image.data,
-                 height * width * 3 * sizeof(float), cudaMemcpyDeviceToHost));
+                 shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
   // Convert float RGB to 8-bit BGR for OpenCV
   cv::Mat img(height, width, CV_8UC3);
   for (int y = 0; y < height; ++y) {
     for (int x = 0; x < width; ++x) {
       // Convert from HWC (RGB) to HWC (BGR)
-      const int pixel_offset = (y * width + x) * 3;
-      const int r_idx = pixel_offset;     // R channel offset
-      const int g_idx = pixel_offset + 1; // G channel offset 
-      const int b_idx = pixel_offset + 2; // B channel offset
+      // const int pixel_offset = (y * width + x) * 3;
+      const int pixel_offset = get_linear_index(y, x, pad_width);
+      const int r_idx = pixel_offset + 0 * channel_stride; // R channel offset
+      const int g_idx = pixel_offset + 1 * channel_stride; // G channel offset 
+      const int b_idx = pixel_offset + 2 * channel_stride; // B channel offset
       
       img.at<cv::Vec3b>(y, x)[0] = static_cast<uint8_t>(std::clamp(cpu_image[b_idx] * 255.0f, 0.0f, 255.0f));  // B
       img.at<cv::Vec3b>(y, x)[1] = static_cast<uint8_t>(std::clamp(cpu_image[g_idx] * 255.0f, 0.0f, 255.0f));  // G

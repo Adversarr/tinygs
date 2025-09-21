@@ -19,6 +19,20 @@ struct ImageShape {
   TINYGS_HOST_DEVICE bool operator!=(const ImageShape& other) const noexcept {
     return !(*this == other);
   }
+
+  TINYGS_HOST_DEVICE uint32_t size() const noexcept {
+    return width * height * channel;
+  }
+
+  TINYGS_HOST_DEVICE uint32_t tiled_width() const noexcept { return (width + kImageTileMask) >> kImageTileLog2; }
+
+  TINYGS_HOST_DEVICE uint32_t tiled_height() const noexcept { return (height + kImageTileMask) >> kImageTileLog2; }
+
+  TINYGS_HOST_DEVICE uint32_t padded_width() const noexcept { return tiled_width() << kImageTileLog2; }
+
+  TINYGS_HOST_DEVICE uint32_t padded_height() const noexcept { return tiled_height() << kImageTileLog2; }
+
+  TINYGS_HOST_DEVICE uint32_t padded_size() const noexcept { return padded_width() * padded_height() * channel; }
 };
 
 inline std::string to_string(const ImageShape& shape) {
@@ -42,7 +56,7 @@ struct Image {
   }
 
   TINYGS_HOST_DEVICE uint32_t size() const noexcept {
-    return shape.width * shape.height * shape.channel;
+    return shape.size();
   }
 };
 

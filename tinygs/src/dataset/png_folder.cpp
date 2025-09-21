@@ -16,7 +16,7 @@
 namespace tinygs {
 
 /**
- * @brief Load a single image and convert from RGBA/RGB HWC to HWC format in uint8
+ * @brief Load a single image and convert from RGBA/RGB HWC to CHW+Tiled format in uint8
  * @param index Index of the image in the dataset
  * @param image_path Path to the image file
  * @param data_buffer Pointer to the uint8_t buffer to store the image data
@@ -45,19 +45,23 @@ static void load_single_image(size_t index, const std::string& image_path, uint8
                              + ", Got: " + std::to_string(img.shape.width) + "x" + std::to_string(img.shape.height));
   }
 
-  uint8_t* dest_ptr = data_buffer + index * expected_height * expected_width * channels;
+  uint8_t* dest_ptr = data_buffer + index * img.shape.padded_size();
   uint8_t* img_data = (uint8_t*)img.data;
 
+  auto total_pix = img.shape.padded_width() * img.shape.padded_height();
+
   // img_data is in RGBA HWC format (4 channels)
-  // dest_ptr should be in RGB HWC format (3 channels)
-  for (uint32_t h = 0; h < expected_height; ++h) {
-    for (uint32_t w = 0; w < expected_width; ++w) {
-      for (uint32_t c = 0; c < channels; ++c) {
+  // dest_ptr should be in RGB CHW format (3 channels) + tiled.
+  for (uint32_t c = 0; c < channels; ++c) {
+    for (uint32_t h = 0; h < expected_height; ++h) {
+      for (uint32_t w = 0; w < expected_width; ++w) {
+        const auto dst_pix_idx = get_linear_index_tiled(h, w, img.shape.tiled_width());
         // Source: HWC format with 4 channels (RGBA)
         uint32_t src_idx = h * expected_width * img.shape.channel + w * img.shape.channel + c;
-        // Destination: HWC format with 3 channels (RGB)
-        uint32_t dst_idx = h * expected_width * channels + w * channels + c;
-        dest_ptr[dst_idx] = img_data[src_idx];
+        // Destination: CHW format with 3 channels (RGB)
+        // uint32_t dst_idx = h * expected_width * channels + w * channels + c;
+        // dest_ptr[dst_idx] = img_data[src_idx];
+        dest_ptr[c * total_pix + dst_pix_idx] = img_data[src_idx];
       }
     }
   }
@@ -111,14 +115,16 @@ void PngFolderDataset::load() {
     throw std::runtime_error("Only 3 (RGB) or 4 (RGBA) channels are supported now.");
   }
 
+  const size_t per_image = m_image_shape.padded_size();
+
   // Allocate pinned memory for all images
-  const size_t total_size = m_size * m_image_shape.height * m_image_shape.width * m_image_shape.channel * sizeof(uint8_t);
+  const size_t total_size = m_size * per_image * sizeof(uint8_t);
   CUDA_CHECK_THROW(cudaMallocHost(&m_data, total_size));
 
   // Load all images into memory
 #pragma omp parallel for
   for (size_t i = 0; i < m_size; ++i) {
-    uuid_t timestamp = m_camera_loader.get_camera_extrinsics()[i].timestamp;
+    uuid_t timestamp = m_camera_loader.get_camera_extrinsics().at(i).timestamp;
     std::string image_path = get_image(timestamp, m_extension, m_folder_path);
     load_single_image(i, image_path, m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
   }
@@ -127,7 +133,7 @@ void PngFolderDataset::load() {
   // uuid to data_pointer
   for (size_t i = 0; i < m_size; ++i) {
     uuid_t timestamp = m_camera_loader.get_camera_extrinsics()[i].timestamp;
-    m_timestamp_data[timestamp] = m_data + i * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
+    m_timestamp_data[timestamp] = m_data + i * per_image;
   }
 
   log_info("Loaded {} images with resolution={}x{} (inferred from first image). (consumed {:.6f} GiB in {:.6f} sec.)",

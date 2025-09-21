@@ -43,7 +43,7 @@ __global__ void l1_kernel(int N, const float *__restrict__ pred,
 
 
 void L1Loss::evaluate(LossContext ctx) {
-  int n = ctx.pred.size();
+  int n = ctx.pred.shape.padded_size();
   NVTX3_FUNC_RANGE();
 
   const float actual_scale = ctx.scale / n;

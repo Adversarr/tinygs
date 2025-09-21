@@ -356,5 +356,54 @@ TINYGS_HOST_DEVICE inline float logit(const float x) {
   return -logf(1.0f / (fminf(fmaxf(x, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
 }
 
+// AoSoA for images.
+constexpr uint32_t kImageTile      = 8;
+constexpr uint32_t kImageTileLog2  = 3;  // log2(8) = 3
+constexpr uint32_t kImageTileMask  = kImageTile - 1; // 0b111
+
+TINYGS_HOST_DEVICE inline uint32_t get_tile_x(uint32_t j) {
+  return j >> kImageTileLog2;
+}
+
+TINYGS_HOST_DEVICE inline uint32_t get_tile_y(uint32_t i) {
+  return i >> kImageTileLog2;
+}
+
+// Get pixel position within a tile
+TINYGS_HOST_DEVICE inline uint32_t get_intra_x(uint32_t j) {
+  return j & kImageTileMask;
+}
+
+TINYGS_HOST_DEVICE inline uint32_t get_intra_y(uint32_t i) {
+  return i & kImageTileMask;
+}
+
+// Calculate linear index of tile
+TINYGS_HOST_DEVICE inline uint32_t get_tile_index_tiled(uint32_t i, uint32_t j, uint32_t tiled_width) {
+  return get_tile_y(i) * tiled_width + get_tile_x(j);
+}
+
+TINYGS_HOST_DEVICE inline uint32_t get_tile_index(uint32_t i, uint32_t j, uint32_t width) {
+  return get_tile_index_tiled(i, j, width >> kImageTileLog2);
+}
+
+
+// Calculate linear offset within a tile
+TINYGS_HOST_DEVICE inline uint32_t get_offset_in_tile(uint32_t i, uint32_t j) {
+  return (get_intra_y(i) << kImageTileLog2) + get_intra_x(j);
+}
+
+// Final: Get linear index from (i,j) coordinates
+TINYGS_HOST_DEVICE inline uint32_t get_linear_index_tiled(uint32_t i, uint32_t j, uint32_t tiled_width) {
+  const uint32_t tile_idx = get_tile_index_tiled(i, j, tiled_width);
+  const uint32_t offset_in_tile = get_offset_in_tile(i, j);
+  return (tile_idx << (2 * kImageTileLog2)) + offset_in_tile;
+}
+
+TINYGS_HOST_DEVICE inline uint32_t get_linear_index(uint32_t i, uint32_t j, uint32_t width) {
+  const uint32_t tile_idx = get_tile_index(i, j, width);
+  const uint32_t offset_in_tile = get_offset_in_tile(i, j);
+  return (tile_idx << (2 * kImageTileLog2)) + offset_in_tile;
+}
 
 } // namespace tinygs

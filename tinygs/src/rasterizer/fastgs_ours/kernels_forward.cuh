@@ -11,6 +11,8 @@
 #include "utils.h"
 #include <cooperative_groups.h>
 #include <cstdint>
+#include "tinygs/common.hpp"
+
 namespace cg = cooperative_groups;
 
 namespace fast_gs::rasterization::kernels::forward {
@@ -370,7 +372,7 @@ namespace fast_gs::rasterization::kernels::forward {
         const float2* primitive_mean2d,
         const float4* primitive_conic_opacity,
         const float3* primitive_color,
-        float3* image,
+        float* image,
         float* alpha_map,
         uint* tile_max_n_contributions,
         uint* tile_n_contributions,
@@ -388,13 +390,17 @@ namespace fast_gs::rasterization::kernels::forward {
         const bool inside = pixel_coords.x < width && pixel_coords.y < height;
         const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y)) + 0.5f;
 
+        const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+        const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+        const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
+
         const uint tile_idx = group_index.y * grid_width + group_index.x;
-        
+
         // Early return if tile is out of bounds
         if (tile_idx >= n_tiles) {
             return;
         }
-        
+
         const uint2 tile_range = tile_instance_ranges[tile_idx];
         const int n_points_total = tile_range.y - tile_range.x;
 
@@ -457,11 +463,20 @@ namespace fast_gs::rasterization::kernels::forward {
             }
         }
         if (inside) {
-            const int pixel_idx = width * pixel_coords.y + pixel_coords.x;
+            const int pixel_idx = width * pixel_coords.y + pixel_coords.x; // logical.
+            const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
+                    /* row */ pixel_coords.y,
+                    /* col */ pixel_coords.x,
+                    width_in_tile);
             // const int n_pixels = width * height;
             // store results
-            image[pixel_idx] = color_pixel;
-            alpha_map[pixel_idx] = 1.0f - transmittance;
+            image[physical_pixel_idx] = color_pixel.x;
+            image[physical_pixel_idx + channel_stride] = color_pixel.y;
+            image[physical_pixel_idx + 2 * channel_stride] = color_pixel.z;
+            alpha_map[physical_pixel_idx] = 1.0f - transmittance;
+
+            // image[pixel_idx] = color_pixel;
+            // alpha_map[pixel_idx] = 1.0f - transmittance;
             tile_n_contributions[pixel_idx] = n_contributions;
         }
 
