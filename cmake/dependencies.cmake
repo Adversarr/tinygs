@@ -31,6 +31,12 @@ CPMAddPackage(
     "JSON_Install ON"
 )
 
+CPMAddPackage(
+    NAME NVTX
+    GITHUB_REPOSITORY NVIDIA/NVTX
+    GIT_TAG v3.3.0-c-cpp
+    GIT_SHALLOW TRUE)
+
 # Mathematics library
 CPMAddPackage(
  NAME glm

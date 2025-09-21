@@ -3,7 +3,7 @@
 #include <thrust/random.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/uninitialized_copy.h>
-
+#include <nvtx3/nvtx3.hpp>
 #include "rasterizer/3dgs_accel/auxiliary.h"
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/random/multinomial.hpp"

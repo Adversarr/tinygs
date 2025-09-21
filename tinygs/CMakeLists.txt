@@ -105,6 +105,7 @@ target_link_libraries(tinygs
         nlohmann_json::nlohmann_json
         OpenMP::OpenMP_CXX
         glm::glm
+        nvtx3-cpp
         # OpenCV
         ${OpenCV_LIBS}
 )
