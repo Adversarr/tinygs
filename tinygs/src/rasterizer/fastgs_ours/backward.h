@@ -47,6 +47,7 @@ namespace fast_gs::rasterization {
         const float fx,
         const float fy,
         const float cx,
-        const float cy);
+        const float cy,
+        cudaStream_t stream);
 
 }

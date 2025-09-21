@@ -5,6 +5,8 @@
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/optim/adamw.hpp"
 
+#include <nvtx3/nvtx3.hpp>
+
 namespace tinygs {
 
 __constant__ float learning_rates[12]; // 3mean 1opa 4rot 3scale 1sh
@@ -224,6 +226,7 @@ __global__ void launch_gaussian_adam_step_AoS(
 
 
 void AdamW::step(float scale) {
+  NVTX3_FUNC_RANGE();
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
   const int blocks = 64;
   const int grid = (m_gaussians->size() + blocks - 1) / blocks;
@@ -257,6 +260,8 @@ void AdamW::step(float scale) {
     gradient_scale,
     m_global_lr
   );
+
+  maybe_sync();
 }
 
 AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad) :
@@ -397,13 +402,6 @@ __global__ void reset_adamw_state_kernel(
   fast_zero(inout + gaussian_idx * 2);
   fast_zero(inout + gaussian_idx * 2 + 1);
 }
-
-// __global__ void reset_adamw_state_kernel_all(AosGaussianAdam* inout, size_t num_states) {
-//   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
-//   if (idx >= num_states) return;
-//   // Zero out the entire state at this index
-//   fast_zero(inout + idx);
-// }
 
 void AdamW::reset() {
   size_t num_gaussians = m_gaussians->size();

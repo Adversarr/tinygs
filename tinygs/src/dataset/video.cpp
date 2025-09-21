@@ -4,6 +4,7 @@
 
 #include <chrono>
 #include <fstream>
+#include <nvtx3/nvtx3.hpp>
 #include <opencv2/opencv.hpp>
 #include <stdexcept>
 
@@ -51,7 +52,7 @@ VideoDataset::VideoDataset(const std::string &video_file_path,
 }
 
 void VideoDataset::load() {
-  TINYGS_TIMER("VideoDataset::load");
+  NVTX3_FUNC_RANGE();
   auto start = std::chrono::steady_clock::now();
 
   // Initialize camera loader with stored paths

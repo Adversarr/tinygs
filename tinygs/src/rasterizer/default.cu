@@ -10,6 +10,7 @@
 #include "tinygs/cuda/vec.hpp"
 #include "tinygs/rasterizer/default.hpp"
 #include "utils/scope_timer.hpp"
+#include <nvtx3/nvtx3.hpp>
 
 namespace tinygs {
 
@@ -60,7 +61,7 @@ struct DefaultRasterizer::Impl {
   }
 
   char* alloc(const std::string& name, size_t size) {
-    TINYGS_TIMER("DefaultRasterizer::Impl::alloc");
+    NVTX3_FUNC_RANGE();
     auto& buffer = temp_buffers[name];
     if (buffer.size() < size) {
       buffer.resize(size);
@@ -78,7 +79,7 @@ DefaultRasterizer::DefaultRasterizer() {
 }
 
 void DefaultRasterizer::forward(const RasterizeContext& ctx) {
-  TINYGS_TIMER("DefaultRasterizer::forward");
+  NVTX3_FUNC_RANGE();
   if (!m_gaussians) {
     throw std::runtime_error("Gaussians not set");
   }
@@ -208,7 +209,7 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
 DefaultRasterizer::~DefaultRasterizer() {}
 
 void DefaultRasterizer::backward(const RasterizeContext& ctx) {
-  TINYGS_TIMER("DefaultRasterizer::backward");
+  NVTX3_FUNC_RANGE();
 
   uint32_t num_gaussians = m_gaussians->size();
 

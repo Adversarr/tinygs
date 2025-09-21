@@ -1,6 +1,7 @@
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/loss/l1.hpp"
 #include <cuda_fp16.h>
+#include <nvtx3/nvtx3.hpp>
 
 namespace tinygs {
 
@@ -43,6 +44,8 @@ __global__ void l1_kernel(int N, const float *__restrict__ pred,
 
 void L1Loss::evaluate(LossContext ctx) {
   int n = ctx.pred.size();
+  NVTX3_FUNC_RANGE();
+
   const float actual_scale = ctx.scale / n;
   linear_kernel(l1_kernel, 0, ctx.stream, n,
     static_cast<const float*>(ctx.pred.data),
@@ -50,6 +53,7 @@ void L1Loss::evaluate(LossContext ctx) {
     static_cast<float*>(ctx.loss.data),
     static_cast<float*>(ctx.grad.data),
     actual_scale);
+  tinygs::maybe_sync(ctx.stream);
 }
 
 } // namespace tinygs

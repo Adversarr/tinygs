@@ -9,6 +9,7 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <numeric>
+#include <nvtx3/nvtx3.hpp>
 #include <random>
 
 #include "cuda/common_host.hpp"
@@ -142,7 +143,7 @@ vec3 KnnInitialization::rgb_to_sh(const vec3& rgb) const {
 }
 
 void KnnInitialization::initialize(const PointCloud& pointcloud) {
-  TINYGS_TIMER("KnnInitialization::initialize");
+  NVTX3_FUNC_RANGE();
   const auto& positions = pointcloud.points;
   const auto& colors = pointcloud.colors;
 

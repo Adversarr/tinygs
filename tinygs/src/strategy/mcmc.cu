@@ -178,7 +178,7 @@ void MCMCStrategy::reset() {}
 
 void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
   // TODO: this is simpler than expected.
-  TINYGS_TIMER("MCMCStrategy::add_noise");
+  NVTX3_FUNC_RANGE();
   size_t num_gaussians = m_gaussians->size();
   if (num_gaussians == 0) return;
 
@@ -203,7 +203,7 @@ void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
 }
 
 void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
-  TINYGS_TIMER("MCMCStrategy::add_new_gs");
+  NVTX3_FUNC_RANGE();
   // Expand exponentially.
   const int num_gaussians = m_gaussians->size();
   const int target_size = std::min(
@@ -346,7 +346,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
 MCMCStrategy::~MCMCStrategy() = default;
 
 void MCMCStrategy::relocate(const RasterizeContext& ctx) {
-  TINYGS_TIMER("MCMCStrategy::relocate");
+  NVTX3_FUNC_RANGE();
   size_t num_gaussians = m_gaussians->size();
   thrust::device_vector<float> opacities(num_gaussians);
   thrust::transform(

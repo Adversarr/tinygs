@@ -4,6 +4,9 @@
 
 #pragma once
 
+// blend_backward based on
+// https://github.com/humansensinglab/taming-3dgs/blob/fd0f7d9edfe135eb4eefd3be82ee56dada7f2a16/submodules/diff-gaussian-rasterization/cuda_rasterizer/backward.cu#L404
+
 #include "buffer_utils.h"
 #include "helper_math.h"
 #include "kernel_utils.cuh"
@@ -272,23 +275,6 @@ namespace fast_gs::rasterization::kernels::backward {
         float transmittance;
     };
 
-    // static __forceinline__ __device__ PerPixel fast_copy_from_shm(const PerPixel *src) {
-    //     // uint64_t *dst_ptr = (uint64_t *)&dst;
-    //     // const uint64_t *src_ptr = (const uint64_t *)&src;
-    //     PerPixel dst;
-    //     unsigned long long saddr;
-    //     asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(src));
-    //     uint4& dst_first = *reinterpret_cast<uint4*>(&dst);
-    //     asm volatile("ld.shared.v4.u32 {%0, %1, %2, %3}, [%4];"
-    //         : "=r"(dst_first.x), "=r"(dst_first.y), "=r"(dst_first.z), "=r"(dst_first.w)
-    //         : "l"(saddr) : "memory");
-    //     uint4& dst_second = *(&dst_first + 1);
-    //     asm volatile("ld.shared.v4.u32 {%0, %1, %2, %3}, [%4+16];"
-    //         : "=r"(dst_second.x), "=r"(dst_second.y), "=r"(dst_second.z), "=r"(dst_second.w)
-    //         : "l"(saddr) : "memory");
-    //     return dst;
-    // }
-
     static inline __device__ void fast_copy(PerPixel &dst,
                                             const PerPixel &src) {
       uint64_t *dst_ptr = (uint64_t *)&dst;
@@ -307,7 +293,7 @@ namespace fast_gs::rasterization::kernels::backward {
       }
     }
 
-    // based on https://github.com/humansensinglab/taming-3dgs/blob/fd0f7d9edfe135eb4eefd3be82ee56dada7f2a16/submodules/diff-gaussian-rasterization/cuda_rasterizer/backward.cu#L404
+    
     __global__ void blend_backward_cu(
         const uint2* __restrict__ tile_instance_ranges,
         const uint* __restrict__ tile_bucket_offsets,
@@ -333,11 +319,14 @@ namespace fast_gs::rasterization::kernels::backward {
         const uint height,
         const uint grid_width) {
         auto block = cg::this_thread_block();
-        const uint bucket_idx = block.group_index().x;
-        if (bucket_idx >= n_buckets)
-            return;
         auto warp = cg::tiled_partition<32>(block);
         const uint lane_idx = warp.thread_rank();
+        const uint warp_idx = block.thread_rank() / 32;
+        assert(warp_idx < config::blend_bwd_n_warps);
+        const uint bucket_idx = (block.group_index().x * config::blend_bwd_n_warps) + warp_idx;
+
+        if (bucket_idx >= n_buckets)
+            return;
 
         const uint tile_idx = bucket_tile_index[bucket_idx];
         const uint2 tile_instance_range = tile_instance_ranges[tile_idx];
@@ -406,9 +395,8 @@ namespace fast_gs::rasterization::kernels::backward {
         auto& transmittance = per_pixel_registers.transmittance;
         auto& grad_color_pixel = per_pixel_registers.grad_color_pixel;
 
-        // 8kb, is very very large. we neeed to switch to another implementation.
-        // __shared__ PerPixel cached_per_pixel[config::block_size_blend];
-        __shared__ PerPixel cached_per_pixel[32];
+        __shared__ PerPixel cached_per_pixel_all[config::blend_bwd_n_warps][32];
+        auto& cached_per_pixel = cached_per_pixel_all[warp_idx];
         const uint lane_idx_uint = static_cast<uint>(lane_idx);
 
 // iterate over all pixels in the tile

@@ -3,6 +3,7 @@
 #include "tinygs/utils/scope_timer.hpp"
 #include "tinygs/dataloader/simple.hpp"
 #include <algorithm>
+#include <nvtx3/nvtx3.hpp>
 
 namespace tinygs {
 
@@ -39,7 +40,7 @@ __global__ static void convert_u8_float_packed4(
 
 void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
                                   const Image &host_data) {
-  TINYGS_TIMER("DataLoaderBase::transfer_gpu");
+  NVTX3_FUNC_RANGE();
   if (gpu_data.data == nullptr) {
     throw std::runtime_error("GPU memory is not allocated.");
   } else if (host_data.data == nullptr) {

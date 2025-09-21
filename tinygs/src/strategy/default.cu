@@ -7,6 +7,7 @@
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/strategy/default.hpp"
 #include "tinygs/utils/scope_timer.hpp"
+#include "nvtx3/nvtx3.hpp"
 
 namespace tinygs {
 
@@ -20,7 +21,7 @@ DefaultStrategy::DefaultStrategy(
 DefaultStrategy::~DefaultStrategy() = default;
 
 void reset_opacity(const std::shared_ptr<GPUGaussian3d>& gaussians, float min_opacity_threshold) {
-  TINYGS_TIMER("DefaultStrategy::reset_opacity");
+  NVTX3_FUNC_RANGE();
 
   thrust::for_each(
     thrust::device,
@@ -33,7 +34,7 @@ void reset_opacity(const std::shared_ptr<GPUGaussian3d>& gaussians, float min_op
 }
 
 void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
-  TINYGS_TIMER("DefaultStrategy::step");
+  NVTX3_FUNC_RANGE();
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<float>>(num_gaussians * 2);

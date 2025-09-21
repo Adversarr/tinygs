@@ -1,6 +1,7 @@
 // https://github.com/MrNeRF/gaussian-splatting-cuda
 
 #include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
@@ -37,7 +38,7 @@ struct FastGSRasterizer::Impl {
   }
 
   char* alloc(const std::string &name, size_t size) { 
-    TINYGS_TIMER("FastGSRasterizer::Impl::alloc");
+    NVTX3_FUNC_RANGE();
     auto& buffer = temp_buffers[name];
     if (size > buffer.size()) {
       buffer.resize(size);
@@ -56,7 +57,7 @@ FastGSRasterizer::FastGSRasterizer() {
 }
 
 void FastGSRasterizer::forward(const RasterizeContext& ctx) {
-    TINYGS_TIMER("FastGSRasterizer::forward");
+    NVTX3_FUNC_RANGE();
     if (!m_gaussians) {
         throw std::runtime_error("Gaussians not set");
     }
@@ -140,16 +141,15 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
 }
 
 void FastGSRasterizer::backward(const RasterizeContext &params) {
-  TINYGS_TIMER("FastGSRasterizer::backward");
+  NVTX3_FUNC_RANGE();
   if (!m_gaussians || !params.gaussians_grad) {
     throw std::runtime_error("Gaussians or gradient gaussians not set");
   }
   const auto n_gaussians = m_gaussians->size();
   char* grad_mean2d_helper = m_impl->alloc("grad_mean2d_helper", sizeof(float2) * n_gaussians);
   char* grad_conic_helper = m_impl->alloc("grad_conic_helper", sizeof(float3) * n_gaussians);
-  CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, cudaStreamDefault));
-  CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, cudaStreamDefault));
-  CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
+  CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, params.stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, params.stream));
 
   float fx = params.fwd_input.K[0][0];
   float fy = params.fwd_input.K[1][1];
@@ -208,7 +208,8 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* fx */ fx,
     /* fy */ fy,
     /* cx */ cx,
-    /* cy */ cy
+    /* cy */ cy,
+    /* stream */ params.stream
   );
 }
 

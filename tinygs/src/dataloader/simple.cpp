@@ -1,6 +1,8 @@
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/cuda/common_host.hpp"
 #include <random>
+#include <nvtx3/nvtx3.hpp>
+
 namespace tinygs {
 
 SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataLoaderBase(dataset), m_current_index(0) {
@@ -70,6 +72,8 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
 }
 
 GPUBatchInputOutput SimpleDataLoader::next() {
+  NVTX3_FUNC_RANGE();
+
   auto r = next(cudaStreamDefault);
   CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
   return std::move(r);

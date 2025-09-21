@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 
 #include <chrono>
+#include <nvtx3/nvtx3.hpp>
 #include <stdexcept>
 
 #include "tinygs/core/camera.hpp"
@@ -82,7 +83,7 @@ static inline std::string get_image(uuid_t timestamp, const std::string& extensi
 }
 
 void PngFolderDataset::load() {
-  TINYGS_TIMER("PngFolderDataset::load");
+  NVTX3_FUNC_RANGE();
   auto start = std::chrono::steady_clock::now();
   
   // Initialize camera loader with stored paths

@@ -7,6 +7,7 @@
 
 #include "./happly.h"
 #include "tinygs/utils/scope_timer.hpp"
+#include "nvtx3/nvtx3.hpp"
 
 namespace tinygs {
 
@@ -14,7 +15,7 @@ namespace tinygs {
 static constexpr float RGB_NORMALIZATION_FACTOR = 255.0f;
 
 PointCloud load_from_colmap(const std::string &filename) {
-  TINYGS_TIMER("load_from_colmap_file");
+  NVTX3_FUNC_RANGE();
   PointCloud pointcloud;
   std::ifstream file(filename);
 

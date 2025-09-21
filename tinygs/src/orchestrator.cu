@@ -3,6 +3,7 @@
 #include <thrust/transform_reduce.h>
 #include <cuda_runtime.h>
 #include <opencv2/opencv.hpp>
+#include <nvtx3/nvtx3.hpp>
 
 #include <algorithm>
 #include <iomanip>
@@ -173,6 +174,7 @@ TrainingState Orchestrator::train() {
 }
 
 void Orchestrator::train_step() {
+  NVTX3_FUNC_RANGE();
   // Pre-step callback
   if (m_pre_step_callback) {
     m_pre_step_callback(m_state);
@@ -243,7 +245,7 @@ void Orchestrator::train_step() {
 }
 
 void Orchestrator::test_step() {
-  TINYGS_TIMER("Orchestrator::test_step");
+  NVTX3_FUNC_RANGE();
 
   m_dataloader->reset(); // reset the permutation.
   std::string out_dir = m_config.out_dir + "/" + std::to_string(m_state.current_step);

@@ -442,4 +442,14 @@ inline void parallel_for_gpu_soa(size_t n_elements, uint32_t n_dims, F&& fun) {
 }
 #endif
 
+// Optional sync to make NVTX ranges cover GPU time (may affect perf)
+#ifndef TINYGS_NVTX_SYNC
+#define TINYGS_NVTX_SYNC 0
+#endif
+inline void maybe_sync(cudaStream_t s = 0) {
+#if TINYGS_NVTX_SYNC
+  cudaStreamSynchronize(s);
+#endif
+}
+
 }

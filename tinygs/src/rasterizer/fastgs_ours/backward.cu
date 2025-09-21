@@ -4,14 +4,16 @@
 
 #include "backward.h"
 #include "buffer_utils.h"
+#include "tinygs/cuda/common_host.hpp"
 #include "helper_math.h"
 #include "kernels_backward.cuh"
 #include "rasterization_config.h"
 #include "utils.h"
 #include <cub/cub.cuh>
 #include <functional>
+#include "nvtx_gs.h"
 
-void fast_gs::rasterization::backward(
+void fast_gs::rasterization::backward( 
     const float* grad_image,
     const float* grad_alpha,
     const float* image,
@@ -49,7 +51,12 @@ void fast_gs::rasterization::backward(
     const float fx,
     const float fy,
     const float cx,
-    const float cy) {
+    const float cy,
+    cudaStream_t stream
+ ) {
+    using namespace gs_nvtx;
+    GS_FUNC_RANGE();
+
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
     const int n_tiles = grid.x * grid.y;
 
@@ -60,57 +67,68 @@ void fast_gs::rasterization::backward(
     per_primitive_buffers.primitive_indices.selector = primitive_primitive_indices_selector;
     per_instance_buffers.primitive_indices.selector = instance_primitive_indices_selector;
 
-    kernels::backward::blend_backward_cu<<<n_buckets, 32>>>(
-        per_tile_buffers.instance_ranges,
-        per_tile_buffers.bucket_offsets,
-        per_instance_buffers.primitive_indices.Current(),
-        per_primitive_buffers.mean2d,
-        per_primitive_buffers.conic_opacity,
-        per_primitive_buffers.color,
-        reinterpret_cast<const float3*>(grad_image),
-        grad_alpha,
-        reinterpret_cast<const float3*>(image),
-        alpha,
-        per_tile_buffers.max_n_contributions,
-        per_tile_buffers.n_contributions,
-        per_bucket_buffers.tile_index,
-        per_bucket_buffers.color_transmittance,
-        grad_mean2d_helper,
-        grad_conic_helper,
-        grad_opacities_raw,
-        grad_sh_coefficients_0, // used to store intermediate gradients
-        n_buckets,
-        n_primitives,
-        width,
-        height,
-        grid.x);
-    CHECK_CUDA(config::debug, "blend_backward")
+    {
+        GS_RANGE_SCOPE(m_blend_backward, C_RED, catK(), n_buckets);
+        const int grids = div_round_up(n_buckets, config::blend_bwd_n_warps);
+        const int blocks = 32 * config::blend_bwd_n_warps;
+        kernels::backward::blend_backward_cu<<<grids, blocks>>>(
+            per_tile_buffers.instance_ranges,
+            per_tile_buffers.bucket_offsets,
+            per_instance_buffers.primitive_indices.Current(),
+            per_primitive_buffers.mean2d,
+            per_primitive_buffers.conic_opacity,
+            per_primitive_buffers.color,
+            reinterpret_cast<const float3*>(grad_image),
+            grad_alpha,
+            reinterpret_cast<const float3*>(image),
+            alpha,
+            per_tile_buffers.max_n_contributions,
+            per_tile_buffers.n_contributions,
+            per_bucket_buffers.tile_index,
+            per_bucket_buffers.color_transmittance,
+            grad_mean2d_helper,
+            grad_conic_helper,
+            grad_opacities_raw,
+            grad_sh_coefficients_0, // used to store intermediate gradients
+            n_buckets,
+            n_primitives,
+            width,
+            height,
+            grid.x);
+        CHECK_CUDA(config::debug, "blend_backward");
+        tinygs::maybe_sync(); // 可选：定义 -DTINYGS_NVTX_SYNC=1 时同步
+    }
 
-    kernels::backward::preprocess_backward_cu<<<div_round_up(n_primitives, config::block_size_preprocess_backward), config::block_size_preprocess_backward>>>(
-        means,
-        scales_raw,
-        rotations_raw,
-        sh_coefficients_rest,
-        w2c,
-        cam_position,
-        per_primitive_buffers.n_touched_tiles,
-        grad_mean2d_helper,
-        grad_conic_helper,
-        grad_means,
-        grad_scales_raw,
-        grad_rotations_raw,
-        grad_sh_coefficients_0,
-        grad_sh_coefficients_rest,
-        grad_w2c,
-        densification_info,
-        n_primitives,
-        active_sh_bases,
-        total_bases_sh_rest,
-        static_cast<float>(width),
-        static_cast<float>(height),
-        fx,
-        fy,
-        cx,
-        cy);
-    CHECK_CUDA(config::debug, "preprocess_backward")
+    {
+        GS_RANGE_SCOPE(m_preprocess_backward, C_BLUE, catK(), n_primitives);
+        kernels::backward::preprocess_backward_cu<<<div_round_up(n_primitives, config::block_size_preprocess_backward),
+                                                    config::block_size_preprocess_backward>>>(
+            means,
+            scales_raw,
+            rotations_raw,
+            sh_coefficients_rest,
+            w2c,
+            cam_position,
+            per_primitive_buffers.n_touched_tiles,
+            grad_mean2d_helper,
+            grad_conic_helper,
+            grad_means,
+            grad_scales_raw,
+            grad_rotations_raw,
+            grad_sh_coefficients_0,
+            grad_sh_coefficients_rest,
+            grad_w2c,
+            densification_info,
+            n_primitives,
+            active_sh_bases,
+            total_bases_sh_rest,
+            static_cast<float>(width),
+            static_cast<float>(height),
+            fx,
+            fy,
+            cx,
+            cy);
+        CHECK_CUDA(config::debug, "preprocess_backward");
+        tinygs::maybe_sync();
+    }
 }

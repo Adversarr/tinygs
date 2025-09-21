@@ -34,6 +34,8 @@ namespace fast_gs::rasterization::config {
   DEF int block_size_blend = tile_width * tile_height;   // 256
   DEF int block_size_blend_mask = block_size_blend - 1;  // 255
   DEF int n_sequential_threshold = 4;
+
+  DEF int blend_bwd_n_warps = 4; // number of warps per block
 } // namespace fast_gs::rasterization::config
 
 namespace config = fast_gs::rasterization::config;

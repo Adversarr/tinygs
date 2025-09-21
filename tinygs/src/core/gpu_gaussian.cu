@@ -8,11 +8,12 @@
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "utils/scope_timer.hpp"
+#include <nvtx3/nvtx3.hpp>
 
 namespace tinygs {
 
 void GPUGaussian3d::copy_from_host(const Gaussian3d& gaussians) {
-  TINYGS_TIMER("GPUGaussian3d::copy_from_host");
+  NVTX3_FUNC_RANGE();
   const size_t num_gaussians = gaussians.means.size();
 
   // Resize device vectors
@@ -34,7 +35,7 @@ void GPUGaussian3d::copy_from_host(const Gaussian3d& gaussians) {
 }
 
 void GPUGaussian3d::copy_to_host(Gaussian3d& gaussians) {
-  TINYGS_TIMER("GPUGaussian3d::copy_to_host");
+  NVTX3_FUNC_RANGE();
   const size_t num_gaussians = m_means.size();
 
   // Resize host container vectors

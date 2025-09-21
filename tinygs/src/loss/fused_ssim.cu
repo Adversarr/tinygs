@@ -2,6 +2,7 @@
 #include <cooperative_groups.h>
 #include <tinygs/loss/fused_ssim.hpp>
 #include <memory>
+#include <nvtx3/nvtx3.hpp>
 
 #include "tinygs/cuda/vec.hpp"
 
@@ -466,8 +467,14 @@ FusedSSIMLoss::~FusedSSIMLoss() = default;
 FusedSSIMLoss::FusedSSIMLoss() {
   m_impl = std::make_unique<Impl>();
 }
+struct m_domain { static constexpr char const* name{"fused_ssim"}; };
+struct m_fused_ssim_fwd { static constexpr char const* message{"forward"}; };
+struct m_fused_ssim_bwd { static constexpr char const* message{"backward"}; };
+using regstr = nvtx3::registered_string_in<m_domain>;
+using range  = nvtx3::scoped_range_in<m_domain>;
 
 void FusedSSIMLoss::evaluate(LossContext ctx) {
+    NVTX3_FUNC_RANGE();
     int H = ctx.pred.shape.height;
     int W = ctx.pred.shape.width;
     int CH = ctx.pred.shape.channel;
@@ -484,44 +491,47 @@ void FusedSSIMLoss::evaluate(LossContext ctx) {
     float* grad = static_cast<float*>(ctx.grad.data);
 
     if (ctx.grad) {
-    //   fusedssimCUDA<<<grid, block, 0, ctx.stream>>>( //
-    //       H, W, CH, m_c1, m_c2, actual_scale,        //
-    //       pred, targ, loss,                          //
-    //       m_impl->dm_dmu1.data(), m_impl->dm_dsigma1_sq.data(),
-    //       m_impl->dm_dsigma12.data());
+      {
+        auto msg = regstr::get<m_fused_ssim_fwd>();
+        nvtx3::event_attributes attr(msg, nvtx3::payload{total});
+        range range(attr);
 
-      fusedssimCUDA2<<<grid, block, 0, ctx.stream>>>(
-          H, W, m_c1, m_c2, actual_scale,
-          reinterpret_cast<const vec3*>(pred),
-          reinterpret_cast<const vec3*>(targ),
-          reinterpret_cast<vec3*>(loss),
-          reinterpret_cast<vec3*>(m_impl->dm_dmu1.data()),
-          reinterpret_cast<vec3*>(m_impl->dm_dsigma1_sq.data()),
-          reinterpret_cast<vec3*>(m_impl->dm_dsigma12.data()));
+        fusedssimCUDA2<<<grid, block, 0, ctx.stream>>>(
+            H, W, m_c1, m_c2, actual_scale,
+            reinterpret_cast<const vec3 *>(pred),
+            reinterpret_cast<const vec3 *>(targ),
+            reinterpret_cast<vec3 *>(loss),
+            reinterpret_cast<vec3 *>(m_impl->dm_dmu1.data()),
+            reinterpret_cast<vec3 *>(m_impl->dm_dsigma1_sq.data()),
+            reinterpret_cast<vec3 *>(m_impl->dm_dsigma12.data()));
+        tinygs::maybe_sync(ctx.stream);
+      }
+      {
+        auto msg = regstr::get<m_fused_ssim_bwd>();
+        nvtx3::event_attributes attr(msg, nvtx3::payload{total});
+        range range(attr);
 
-
-    //   fusedssim_backwardCUDA<<<grid, block, 0, ctx.stream>>>( //
-    //       H, W, CH, m_c1, m_c2, actual_scale,                 //
-    //       pred, targ, grad,                                   //
-    //       m_impl->dm_dmu1.data(), m_impl->dm_dsigma1_sq.data(),
-    //       m_impl->dm_dsigma12.data());
-
-
-      fusedssim_backwardCUDA2<<<grid, block, 0, ctx.stream>>>(
-          H, W, actual_scale,
-          reinterpret_cast<const vec3*>(pred),
-          reinterpret_cast<const vec3*>(targ),
-          reinterpret_cast<vec3*>(grad),                                   //
-          reinterpret_cast<const vec3*>(m_impl->dm_dmu1.data()),
-          reinterpret_cast<const vec3*>(m_impl->dm_dsigma1_sq.data()),
-          reinterpret_cast<const vec3*>(m_impl->dm_dsigma12.data()));
+        fusedssim_backwardCUDA2<<<grid, block, 0, ctx.stream>>>(
+            H, W, actual_scale,
+            reinterpret_cast<const vec3*>(pred),
+            reinterpret_cast<const vec3*>(targ),
+            reinterpret_cast<vec3*>(grad),                                   //
+            reinterpret_cast<const vec3*>(m_impl->dm_dmu1.data()),
+            reinterpret_cast<const vec3*>(m_impl->dm_dsigma1_sq.data()),
+            reinterpret_cast<const vec3*>(m_impl->dm_dsigma12.data()));
+        tinygs::maybe_sync(ctx.stream);
+      }
     } else {
+      auto msg = regstr::get<m_fused_ssim_fwd>();
+      nvtx3::event_attributes attr(msg, nvtx3::payload{total});
+      range range(attr);
       fusedssimCUDA2<<<grid, block, 0, ctx.stream>>>(
           H, W, m_c1, m_c2, actual_scale,
           reinterpret_cast<const vec3*>(pred),
           reinterpret_cast<const vec3*>(targ),
           reinterpret_cast<vec3*>(loss),
           nullptr, nullptr, nullptr);
+      tinygs::maybe_sync(ctx.stream);
     }
 }
 

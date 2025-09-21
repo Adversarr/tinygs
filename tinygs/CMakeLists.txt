@@ -175,4 +175,5 @@ target_compile_options(tinygs PRIVATE
 
 if(TINYGS_ENABLE_PROFILE)
     target_compile_options(tinygs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
+    target_compile_definitions(tinygs PRIVATE TINYGS_NVTX_SYNC=1)
 endif()
