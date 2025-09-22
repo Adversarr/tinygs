@@ -46,6 +46,7 @@ struct m_scan_buckets        { static constexpr char const* message{"scan_bucket
 struct m_blend               { static constexpr char const* message{"blend"}; };
 struct m_blend_backward      { static constexpr char const* message{"blend_backward"}; };
 struct m_preprocess_backward { static constexpr char const* message{"preprocess_backward"}; };
+struct m_reduce_w2c_grad     { static constexpr char const* message{"reduce_w2c_grad"}; };
 struct m_memset_per_tile     { static constexpr char const* message{"memset_per_tile"}; };
 struct m_memset_per_prim     { static constexpr char const* message{"memset_per_primitive"}; };
 struct m_copy_counts_d2h     { static constexpr char const* message{"copy_counts_d2h"}; };

@@ -13,6 +13,199 @@
 #include <functional>
 #include "nvtx_gs.h"
 
+#include <cuda.h>
+#include <cuda_runtime.h>
+
+#define WARP_SIZE 32
+template <const int kWarpSize = WARP_SIZE>
+__device__ __forceinline__ float warp_reduce_sum_f32(float val) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    val += __shfl_xor_sync(0xffffffff, val, mask);
+  }
+  return val;
+}
+
+template <const int kWarpSize = WARP_SIZE>
+__device__ __forceinline__ float4 warp_reduce_sum_f4(float4 v) {
+#pragma unroll
+  for (int mask = kWarpSize >> 1; mask >= 1; mask >>= 1) {
+    v.x += __shfl_xor_sync(0xffffffff, v.x, mask);
+    v.y += __shfl_xor_sync(0xffffffff, v.y, mask);
+    v.z += __shfl_xor_sync(0xffffffff, v.z, mask);
+    v.w += __shfl_xor_sync(0xffffffff, v.w, mask);
+  }
+  return v;
+}
+
+/*
+AoS in-place:
+a: [N,16] (4x4 flattened, row-major). Results written to matrix at out_idx (16 elements).
+*/
+template <int NUM_THREADS = 256>
+__global__ void reduce_sum_4x4_aos_inplace_f32x4_kernel(float* __restrict__ a,
+                                                        int N) {
+  constexpr int out_idx = 0;
+  int tid = threadIdx.x;
+  int lane = tid % WARP_SIZE;
+  int warp = tid / WARP_SIZE;
+  constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
+
+  __shared__ float4 smem[NUM_WARPS][4];
+
+  float4 s0 = make_float4(0.f, 0.f, 0.f, 0.f);
+  float4 s1 = make_float4(0.f, 0.f, 0.f, 0.f);
+  float4 s2 = make_float4(0.f, 0.f, 0.f, 0.f);
+  float4 s3 = make_float4(0.f, 0.f, 0.f, 0.f);
+
+  int idx = blockIdx.x * blockDim.x + tid;
+  int stride = gridDim.x * blockDim.x;
+
+  for (int i = idx; i < N; i += stride) {
+    if (i == out_idx) continue; // Skip output slot
+    const float* base = a + i * 16;
+    float4 r0 = *reinterpret_cast<const float4*>(base +  0);
+    float4 r1 = *reinterpret_cast<const float4*>(base +  4);
+    float4 r2 = *reinterpret_cast<const float4*>(base +  8);
+    float4 r3 = *reinterpret_cast<const float4*>(base + 12);
+    s0.x += r0.x; s0.y += r0.y; s0.z += r0.z; s0.w += r0.w;
+    s1.x += r1.x; s1.y += r1.y; s1.z += r1.z; s1.w += r1.w;
+    s2.x += r2.x; s2.y += r2.y; s2.z += r2.z; s2.w += r2.w;
+    s3.x += r3.x; s3.y += r3.y; s3.z += r3.z; s3.w += r3.w;
+  }
+
+  s0 = warp_reduce_sum_f4<WARP_SIZE>(s0);
+  s1 = warp_reduce_sum_f4<WARP_SIZE>(s1);
+  s2 = warp_reduce_sum_f4<WARP_SIZE>(s2);
+  s3 = warp_reduce_sum_f4<WARP_SIZE>(s3);
+
+  if (lane == 0) {
+    smem[warp][0] = s0;
+    smem[warp][1] = s1;
+    smem[warp][2] = s2;
+    smem[warp][3] = s3;
+  }
+  __syncthreads();
+
+  if (warp == 0) {
+    float4 t0 = (lane < NUM_WARPS) ? smem[lane][0] : make_float4(0,0,0,0);
+    float4 t1 = (lane < NUM_WARPS) ? smem[lane][1] : make_float4(0,0,0,0);
+    float4 t2 = (lane < NUM_WARPS) ? smem[lane][2] : make_float4(0,0,0,0);
+    float4 t3 = (lane < NUM_WARPS) ? smem[lane][3] : make_float4(0,0,0,0);
+
+    t0 = warp_reduce_sum_f4<NUM_WARPS>(t0);
+    t1 = warp_reduce_sum_f4<NUM_WARPS>(t1);
+    t2 = warp_reduce_sum_f4<NUM_WARPS>(t2);
+    t3 = warp_reduce_sum_f4<NUM_WARPS>(t3);
+
+    if (lane == 0) {
+      float* out = a + out_idx * 16;
+      atomicAdd(&out[ 0], t0.x); atomicAdd(&out[ 1], t0.y);
+      atomicAdd(&out[ 2], t0.z); atomicAdd(&out[ 3], t0.w);
+      atomicAdd(&out[ 4], t1.x); atomicAdd(&out[ 5], t1.y);
+      atomicAdd(&out[ 6], t1.z); atomicAdd(&out[ 7], t1.w);
+      atomicAdd(&out[ 8], t2.x); atomicAdd(&out[ 9], t2.y);
+      atomicAdd(&out[10], t2.z); atomicAdd(&out[11], t2.w);
+      atomicAdd(&out[12], t3.x); atomicAdd(&out[13], t3.y);
+      atomicAdd(&out[14], t3.z); atomicAdd(&out[15], t3.w);
+    }
+  }
+}
+
+/*
+SoA in-place scalar version:
+a: [16, N], results written back to out_pos of each channel.
+grid.y = 16
+*/
+template <int NUM_THREADS = 256>
+__global__ void reduce_sum_4x4_soa_inplace_f32_kernel(float* __restrict__ a,
+                                                      int N,
+                                                      int out_pos) {
+  int c = blockIdx.y; // Channel 0..15
+  float* base = a + c * N;
+
+  int tid = threadIdx.x;
+  int idx = blockIdx.x * blockDim.x + tid;
+  int stride = gridDim.x * blockDim.x;
+
+  constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
+  __shared__ float smem[NUM_WARPS];
+
+  float sum = 0.f;
+  for (int i = idx; i < N; i += stride) {
+    if (i == out_pos) continue; // Skip output slot
+    sum += base[i];
+  }
+
+  int warp = tid / WARP_SIZE;
+  int lane = tid % WARP_SIZE;
+  sum = warp_reduce_sum_f32<WARP_SIZE>(sum);
+  if (lane == 0) smem[warp] = sum;
+  __syncthreads();
+
+  sum = (lane < NUM_WARPS) ? smem[lane] : 0.f;
+  if (warp == 0) {
+    sum = warp_reduce_sum_f32<NUM_WARPS>(sum);
+    if (lane == 0) atomicAdd(&base[out_pos], sum);
+  }
+}
+
+/*
+SoA in-place vectorized version (skips out_pos component):
+Channel start address must be 16B aligned. N arbitrary (handles tail and out_pos quad).
+grid.y = 16
+*/
+template <int NUM_THREADS = 256>
+__global__ void reduce_sum_4x4_soa_inplace_f32x4_kernel(float* __restrict__ a,
+                                                        int N,
+                                                        int out_pos) {
+  int c = blockIdx.y;
+  float* base = a + c * N;
+
+  int tid = threadIdx.x;
+  int idx4 = blockIdx.x * blockDim.x + tid; // Index with stride 4
+  int stride4 = gridDim.x * blockDim.x;
+
+  constexpr int NUM_WARPS = (NUM_THREADS + WARP_SIZE - 1) / WARP_SIZE;
+  __shared__ float smem[NUM_WARPS];
+
+  float sum = 0.f;
+  int N4 = N / 4;
+
+  for (int i4 = idx4; i4 < N4; i4 += stride4) {
+    int base_i = i4 * 4;
+    const float4 v = *reinterpret_cast<const float4*>(base + base_i);
+    // If out_pos falls in current quad, skip corresponding component
+    if (out_pos >= base_i && out_pos < base_i + 4) {
+      int off = out_pos - base_i;
+      if (off != 0) sum += v.x;
+      if (off != 1) sum += v.y;
+      if (off != 2) sum += v.z;
+      if (off != 3) sum += v.w;
+    } else {
+      sum += (v.x + v.y + v.z + v.w);
+    }
+  }
+
+  // Handle tail
+  int tail_start = N4 * 4 + (blockIdx.x * blockDim.x + tid);
+  for (int i = tail_start; i < N; i += stride4) {
+    if (i == out_pos) continue;
+    sum += base[i];
+  }
+
+  int warp = tid / WARP_SIZE;
+  int lane = tid % WARP_SIZE;
+  sum = warp_reduce_sum_f32<WARP_SIZE>(sum);
+  if (lane == 0) smem[warp] = sum;
+  __syncthreads();
+
+  sum = (lane < NUM_WARPS) ? smem[lane] : 0.f;
+  if (warp == 0) {
+    sum = warp_reduce_sum_f32<NUM_WARPS>(sum);
+    if (lane == 0) atomicAdd(&base[out_pos], sum);
+  }
+}
 void fast_gs::rasterization::backward( 
     const float* grad_image,
     const float* grad_alpha,
@@ -37,6 +230,7 @@ void fast_gs::rasterization::backward(
     float2* grad_mean2d_helper,
     float* grad_conic_helper,
     float4* grad_w2c,
+    float4* grad_w2c_per_gs,
     float* densification_info,
     const int n_primitives,
     const int n_visible_primitives,
@@ -115,7 +309,7 @@ void fast_gs::rasterization::backward(
             grad_rotations_raw,
             grad_sh_coefficients_0,
             grad_sh_coefficients_rest,
-            grad_w2c,
+            grad_w2c_per_gs,
             densification_info,
             n_primitives,
             active_sh_bases,
@@ -127,6 +321,20 @@ void fast_gs::rasterization::backward(
             cx,
             cy);
         CHECK_CUDA(config::debug, "preprocess_backward");
+        tinygs::maybe_sync();
+    }
+
+    {
+        GS_RANGE_SCOPE(m_reduce_w2c_grad, C_GREEN, catK(), n_primitives);
+        using float16 = float[16];
+        const int grids = div_round_up(n_primitives, 256);
+        const int blocks = 256;
+        reduce_sum_4x4_aos_inplace_f32x4_kernel<<<grids, blocks>>>(
+            reinterpret_cast<float*>(grad_w2c_per_gs),
+            n_primitives);
+        cudaMemcpy(grad_w2c, grad_w2c_per_gs, 16 * sizeof(float), cudaMemcpyDeviceToDevice);
+
+        CHECK_CUDA(config::debug, "reduce_sum_4x4_aos_inplace_f32x4");
         tinygs::maybe_sync();
     }
 }

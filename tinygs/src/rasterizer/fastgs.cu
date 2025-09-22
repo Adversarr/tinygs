@@ -70,11 +70,6 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     m_impl->w2c.at(2) = {w2c[0][2], w2c[1][2], w2c[2][2], w2c[3][2]};
     m_impl->w2c.at(3) = {w2c[0][3], w2c[1][3], w2c[2][3], w2c[3][3]};
     m_impl->cam_position.at(0) = {c2w[3][0], c2w[3][1], c2w[3][2]};
-    
-    // if (!ctx.fwd_input.width % fast_gs::rasterization::config::tile_width == 0 ||
-    //     !ctx.fwd_input.height % fast_gs::rasterization::config::tile_height == 0) {
-    //   throw std::runtime_error("Image width and height must be multiples of tile size");
-    // }
 
     auto per_primitive_buffers_func = [this](size_t size) -> char * {
       return m_impl->alloc("per_primitive_buffers", size);
@@ -148,6 +143,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   const auto n_gaussians = m_gaussians->size();
   char* grad_mean2d_helper = m_impl->alloc("grad_mean2d_helper", sizeof(float2) * n_gaussians);
   char* grad_conic_helper = m_impl->alloc("grad_conic_helper", sizeof(float3) * n_gaussians);
+  char* grad_w2c_per_gs = m_impl->alloc("grad_w2c_per_gs", sizeof(float4) * 4 * n_gaussians);
   CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, params.stream));
   CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, params.stream));
 
@@ -194,6 +190,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* grad_mean2d_helper */  reinterpret_cast<float2*>(grad_mean2d_helper),
     /* grad_conic_helper */ reinterpret_cast<float*>(grad_conic_helper),
     /* grad_w2c */ m_impl->w2c_grad.data(),
+    /* grad_w2c_per_gs */ reinterpret_cast<float4*>(grad_w2c_per_gs),
     /* densification_info */ densification_info,
     /* n_primitives */ n_gaussians,
     /* n_visible_primitives */ m_impl->n_visible_primitives,
