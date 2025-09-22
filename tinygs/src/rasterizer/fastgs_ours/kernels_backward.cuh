@@ -294,7 +294,7 @@ namespace fast_gs::rasterization::kernels::backward {
       }
     }
 
-    
+
     __global__ void blend_backward_cu(
         const uint2* __restrict__ tile_instance_ranges,
         const uint* __restrict__ tile_bucket_offsets,
@@ -321,9 +321,6 @@ namespace fast_gs::rasterization::kernels::backward {
         auto warp = cg::tiled_partition<32>(block);
         const uint lane_idx = warp.thread_rank();
         const uint warp_idx = block.thread_rank() / 32;
-        const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
-        const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
-        const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
 
         assert(warp_idx < config::blend_bwd_n_warps);
         const uint bucket_idx = (block.group_index().x * config::blend_bwd_n_warps) + warp_idx;
@@ -392,19 +389,17 @@ namespace fast_gs::rasterization::kernels::backward {
         __shared__ PerPixel cached_per_pixel_all[config::blend_bwd_n_warps][32];
         auto& cached_per_pixel = cached_per_pixel_all[warp_idx];
         const uint lane_idx_uint = static_cast<uint>(lane_idx);
-
-        const float* grad_image_0 = grad_image;
-        const float* grad_image_1 = grad_image + channel_stride;
-        const float* grad_image_2 = grad_image + channel_stride * 2;
-        const float* image_0 = image;
-        const float* image_1 = image + channel_stride;
-        const float* image_2 = image + channel_stride * 2;
+        unsigned long long saddr;
+        asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel));
 
 // iterate over all pixels in the tile
 // Unrolling is not a good idea here.
-#pragma unroll 2
+// #pragma unroll 2
         for (uint ii = 0; ii < config::block_size_blend + 31; ii += 16) {
             if (ii % 32 == 0 /*  && ii < config::block_size_blend */) { // fetch data
+                const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+                const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+                const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
                 const uint i = ii + lane_idx_uint;
                 const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
                                             start_pixel_coords.y | (i >> config::tile_width_log2)};
@@ -419,12 +414,12 @@ namespace fast_gs::rasterization::kernels::backward {
                 if (is_valid) {
                     color_transmittance = bucket_color_transmittance[i];
                     local.last_contributor = tile_n_contributions[pixel_idx]; // logical pixel index.
-                    local.grad_color_pixel = make_float3(grad_image_0[physical_pixel_idx],
-                                    grad_image_1[physical_pixel_idx],
-                                    grad_image_2[physical_pixel_idx]);
-                    local.color_pixel_after = make_float3(image_0[physical_pixel_idx],
-                                    image_1[physical_pixel_idx],
-                                    image_2[physical_pixel_idx]);
+                    local.grad_color_pixel = make_float3(grad_image[physical_pixel_idx],
+                                    grad_image[physical_pixel_idx + channel_stride],
+                                    grad_image[physical_pixel_idx + channel_stride * 2]);
+                    local.color_pixel_after = make_float3(image[physical_pixel_idx],
+                                    image[physical_pixel_idx + channel_stride],
+                                    image[physical_pixel_idx + channel_stride * 2]);
                     local.transmittance = color_transmittance.w;
                 }
                 local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
@@ -440,7 +435,7 @@ namespace fast_gs::rasterization::kernels::backward {
                 prefetch(grad_image + pixel_idx);
             }
 
-#pragma unroll 16
+// #pragma unroll 16
             for (uint j = 0; j < 16; ++j) {
                 const uint i = ii + j;
                 // which pixel index should this thread deal with?
@@ -453,26 +448,24 @@ namespace fast_gs::rasterization::kernels::backward {
                 const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;
                 const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
 
-                const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y)) + 0.5f;
-                const float2 delta = mean2d - pixel;
+                const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y));
+                const float2 delta = (mean2d - 0.5f) - pixel;
                 const float3 delta_coefs = make_float3(delta.x * delta.x, delta.x * delta.y, delta.y * delta.y);
                 const float sigma_over_2_gt = 0.5f * (conic.x * delta_coefs.x + conic.z * delta_coefs.z) + conic.y * delta_coefs.y;
                 const float sigma_over_2 = fmaxf(sigma_over_2_gt, 0.0f); // ensures >= 0
                 const float gaussian = __expf(-sigma_over_2);
 
                 // leader thread loads values from shared memory into registers
-                unsigned long long saddr;
-                asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel + i % 32));
-                float4* dst_view = reinterpret_cast<float4*>(&per_pixel_registers);
-                float4* dst_view_next = dst_view + 1;
                 if (lane_idx == 0 && valid_general) {
+                    float4* dst_view = reinterpret_cast<float4*>(&per_pixel_registers);
+                    float4* dst_view_next = dst_view + 1;
                     // asm this. fuck
                     asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
                         : "=f"(dst_view->x), "=f"(dst_view->y), "=f"(dst_view->z), "=f"(dst_view->w)
-                        : "l"(saddr));
+                        : "l"(saddr + (i % 32) * sizeof(PerPixel)));
                     asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4+16];"
                         : "=f"(dst_view_next->x), "=f"(dst_view_next->y), "=f"(dst_view_next->z), "=f"(dst_view_next->w)
-                        : "l"(saddr));
+                        : "l"(saddr + (i % 32) * sizeof(PerPixel)));
                 }
                 const bool skip = !valid_general || tile_primitive_idx >= last_contributor;
                 const float alpha_prepare = opacity * gaussian;
@@ -485,7 +478,6 @@ namespace fast_gs::rasterization::kernels::backward {
 
                 const float blending_weight = transmittance * alpha;
                 const float one_minus_alpha = 1.0f - alpha;
-                const float one_minus_alpha_rcp = 1.0f / one_minus_alpha;
                 // color gradient
                 const float3 dL_dcolor = blending_weight * grad_color_pixel * color_grad_factor;
                 dL_dcolor_accum += dL_dcolor;
@@ -496,7 +488,7 @@ namespace fast_gs::rasterization::kernels::backward {
                                 conic.y * delta.x + conic.z * delta.y);
 
                 // alpha gradient
-                const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel * one_minus_alpha_rcp;
+                const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel / one_minus_alpha;
                 const float dL_draw_opacity_partial = alpha * dL_dalpha_from_color;
                 dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
 
