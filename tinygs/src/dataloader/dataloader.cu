@@ -2,6 +2,7 @@
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 #include "tinygs/dataloader/simple.hpp"
+#include "tinygs/dataloader/async.hpp"
 #include <algorithm>
 #include <nvtx3/nvtx3.hpp>
 
@@ -112,6 +113,8 @@ std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_
 
   if (lower_dataloader_type == "simple") {
     return std::make_unique<SimpleDataLoader>(dataset);
+  } else if (lower_dataloader_type == "async") {
+    return std::make_unique<AsyncDataLoader>(dataset);
   } else {
     throw std::runtime_error("Unknown dataloader type: " + dataloader_type);
   }

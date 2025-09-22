@@ -1,6 +1,6 @@
 {
   "dataloader": {
-    "type": "simple"
+    "type": "async"
   },
   "dataset": {
     "extrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/images.txt",

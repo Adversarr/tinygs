@@ -2,6 +2,7 @@
 #include <iostream>
 #include <tinygs/core/camera.hpp>
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/dataloader/async.hpp"
 #include "tinygs/dataset/png_folder.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/dataloader/simple.hpp"
@@ -31,5 +32,16 @@ void benchmark_simple_loader(benchmark::State& state) {
   }
 }
 
+void benchmark_async_loader(benchmark::State& state) {
+  auto& dataset = create_test_dataset();
+  tinygs::AsyncDataLoader loader(dataset);
+
+  // Benchmark the data loading
+  for (auto _ : state) {
+    auto data = loader.next();
+    benchmark::DoNotOptimize(data);
+  }
+}
 
 BENCHMARK(benchmark_simple_loader);
+BENCHMARK(benchmark_async_loader);

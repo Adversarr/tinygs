@@ -15,6 +15,7 @@ set(TINYGS_SOURCES
     # Dataloader
     "src/dataloader/dataloader.cu"
     "src/dataloader/simple.cpp"
+    "src/dataloader/async.cpp"
     
     # Dataset
     "src/dataset/dataset.cpp"

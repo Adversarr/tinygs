@@ -30,10 +30,6 @@ public:
 
   virtual ~DataLoaderBase() = default;
 
-  /// @brief Get next batch of data ready for compute
-  /// @param stream CUDA stream for asynchronous transfers
-  virtual GPUBatchInputOutput next(cudaStream_t stream) = 0;
-
   /// @brief Get next batch using default stream
   virtual GPUBatchInputOutput next() = 0;
 
