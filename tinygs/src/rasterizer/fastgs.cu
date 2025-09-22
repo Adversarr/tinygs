@@ -23,6 +23,13 @@ struct FastGSRasterizer::Impl {
   GPUMemory<float4> w2c_grad;      // [4, 4]
   GPUMemory<float3> cam_position;  // [3, ]
   size_t num_gaussians;
+  cudaStream_t helper_stream;
+  char* zero_copy = nullptr;
+
+  // CUDA events for synchronization
+  cudaEvent_t memset_per_tile_done;
+  cudaEvent_t copy_n_instances_done;
+  cudaEvent_t preprocess_done;
 
   // 3. helper
   int n_visible_primitives, n_instances, n_buckets;
@@ -35,6 +42,20 @@ struct FastGSRasterizer::Impl {
     w2c = GPUMemory<float4>(4, true);
     w2c_grad = GPUMemory<float4>(4, true);
     cam_position = GPUMemory<float3>(1, true);
+    CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&helper_stream, cudaStreamNonBlocking));
+    CUDA_CHECK_THROW(cudaHostAlloc(&zero_copy, 1024, cudaHostAllocMapped)); // more than sufficient.
+    CUDA_CHECK_THROW(cudaEventCreateWithFlags(&memset_per_tile_done, cudaEventDisableTiming));
+    CUDA_CHECK_THROW(cudaEventCreateWithFlags(&copy_n_instances_done, cudaEventDisableTiming));
+    CUDA_CHECK_THROW(cudaEventCreateWithFlags(&preprocess_done, cudaEventDisableTiming));
+  }
+
+
+  ~Impl() {
+    CUDA_CHECK_PRINT(cudaEventDestroy(memset_per_tile_done));
+    CUDA_CHECK_PRINT(cudaEventDestroy(copy_n_instances_done));
+    CUDA_CHECK_PRINT(cudaEventDestroy(preprocess_done));
+    CUDA_CHECK_PRINT(cudaFreeHost(zero_copy));
+    CUDA_CHECK_PRINT(cudaStreamDestroy(helper_stream));
   }
 
   char* alloc(const std::string &name, size_t size) { 
@@ -53,7 +74,6 @@ struct FastGSRasterizer::Impl {
 
 FastGSRasterizer::FastGSRasterizer() {
     m_impl = std::make_unique<Impl>();
-    // m_impl->arena = m_memory_arena;
 }
 
 void FastGSRasterizer::forward(const RasterizeContext& ctx) {
@@ -127,7 +147,13 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* cx */ cx,
             /* cy */ cy,
             /* near */ ctx.fwd_input.near,
-            /* far */ ctx.fwd_input.far);
+            /* far */ ctx.fwd_input.far,
+            /* major_stream */ ctx.stream,
+            /* helper_stream */ m_impl->helper_stream,
+            /* zero_copy */ m_impl->zero_copy,
+            /* memset_per_tile_done */ m_impl->memset_per_tile_done,
+            /* copy_n_instances_done */ m_impl->copy_n_instances_done,
+            /* preprocess_done */ m_impl->preprocess_done);
     m_impl->n_visible_primitives = n_visible_primitives;
     m_impl->n_instances = n_instances;
     m_impl->n_buckets = n_buckets;

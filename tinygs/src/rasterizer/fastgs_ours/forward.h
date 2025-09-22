@@ -35,6 +35,12 @@ namespace fast_gs::rasterization {
         const float cx,
         const float cy,
         const float near,
-        const float far);
+        const float far,
+        cudaStream_t major_stream,
+        cudaStream_t helper_stream,
+        char* zero_copy,
+        cudaEvent_t memset_per_tile_done,
+        cudaEvent_t copy_n_instances_done,
+        cudaEvent_t preprocess_done);
 
 }
