@@ -18,14 +18,15 @@
 
 namespace tinygs {
 
-struct ManagedBlock {
+struct PoseBlock {
   alignas(64) mat4x4 w2c;
   alignas(64) float3 cam_position;
   alignas(64) mat4x4 w2c_grad;
 };
 
 struct FastGSRasterizer::Impl {
-  GPUMemory<ManagedBlock> managed_block;  // Contains w2c, w2c_grad, and cam_position
+  PoseBlock* host_block;
+  GPUMemory<PoseBlock> device_block;  // Contains w2c, w2c_grad, and cam_position
   size_t num_gaussians;
   cudaStream_t helper_stream;
   char* zero_copy = nullptr;
@@ -43,7 +44,8 @@ struct FastGSRasterizer::Impl {
   std::map<std::string, thrust::device_vector<char>> temp_buffers;
 
   Impl() : num_gaussians(0) {
-    managed_block = GPUMemory<ManagedBlock>(1, true);
+    device_block = GPUMemory<PoseBlock>(1, /*managed=*/ true);
+    cudaHostAlloc(&host_block, sizeof(PoseBlock), cudaHostAllocMapped);
     CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&helper_stream, cudaStreamNonBlocking));
     CUDA_CHECK_THROW(cudaHostAlloc(&zero_copy, 1024, cudaHostAllocMapped)); // more than sufficient.
     CUDA_CHECK_THROW(cudaEventCreateWithFlags(&memset_per_tile_done, cudaEventDisableTiming));
@@ -53,6 +55,7 @@ struct FastGSRasterizer::Impl {
 
 
   ~Impl() {
+    cudaFreeHost(host_block);
     CUDA_CHECK_PRINT(cudaEventDestroy(memset_per_tile_done));
     CUDA_CHECK_PRINT(cudaEventDestroy(copy_n_instances_done));
     CUDA_CHECK_PRINT(cudaEventDestroy(preprocess_done));
@@ -87,8 +90,14 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     const mat4x4 &w2c = ctx.fwd_input.w2c;
     mat4x4 c2w = inverse(w2c);
 
-    m_impl->managed_block.at(0).w2c = glm::transpose(w2c);
-    m_impl->managed_block.at(0).cam_position = {c2w[3][0], c2w[3][1], c2w[3][2]};
+    // Copy w2c and cam_position to host memory
+    m_impl->host_block->w2c = glm::transpose(w2c);
+    m_impl->host_block->cam_position = {c2w[3][0], c2w[3][1], c2w[3][2]};
+
+    // Copy host memory to device memory
+    cudaMemcpyAsync(m_impl->device_block.data(), m_impl->host_block,
+                    sizeof(PoseBlock), cudaMemcpyHostToDevice,
+                    ctx.stream);
 
     auto per_primitive_buffers_func = [this](size_t size) -> char * {
       return m_impl->alloc("per_primitive_buffers", size);
@@ -132,8 +141,8 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* opacities */ thrust::raw_pointer_cast(opacities.data()),
             /* sh_coeffs */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_0.data())),
             /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_rest.data())),
-            /* w2c */ reinterpret_cast<const float4*>(&m_impl->managed_block.at(0).w2c),
-            /* cam_position */ &m_impl->managed_block.at(0).cam_position,
+            /* w2c */ reinterpret_cast<const float4*>(&m_impl->device_block.at(0).w2c),
+            /* cam_position */ &m_impl->device_block.at(0).cam_position,
             /* image */ static_cast<float*>(ctx.fwd_output.image.data),
             /* alpha */ static_cast<float*>(ctx.fwd_output.alpha.data),
             /* n_primitives */ m_gaussians->size(),
@@ -171,7 +180,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   char* grad_w2c_per_gs = m_impl->alloc("grad_w2c_per_gs", sizeof(float4) * 4 * n_gaussians);
   CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, params.stream));
   CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, params.stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(&m_impl->managed_block.at(0).w2c_grad, 0, sizeof(mat4x4), params.stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(&m_impl->device_block.at(0).w2c_grad, 0, sizeof(mat4x4), params.stream));
 
   float fx = params.fwd_input.K[0][0];
   float fy = params.fwd_input.K[1][1];
@@ -200,8 +209,8 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* scales */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
     /* rotations */ reinterpret_cast<const float4*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
     /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data())),
-    /* w2c */ reinterpret_cast<const float4*>(&m_impl->managed_block.at(0).w2c),
-    /* cam_position */ &m_impl->managed_block.at(0).cam_position,
+    /* w2c */ reinterpret_cast<const float4*>(&m_impl->device_block.at(0).w2c),
+    /* cam_position */ &m_impl->device_block.at(0).cam_position,
     /* per_primitive_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_primitive_buffers"].data()),
     /* per_tile_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_tile_buffers"].data()),
     /* per_instance_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_instance_buffers"].data()),
@@ -214,7 +223,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* grad_sh_coeffs_rest */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(sh_coeffs_rest_grad.data())),
     /* grad_mean2d_helper */  reinterpret_cast<float2*>(grad_mean2d_helper),
     /* grad_conic_helper */ reinterpret_cast<float*>(grad_conic_helper),
-    /* grad_w2c */ reinterpret_cast<float4*>(&m_impl->managed_block.at(0).w2c_grad),
+    /* grad_w2c */ reinterpret_cast<float4*>(&m_impl->device_block.at(0).w2c_grad),
     /* grad_w2c_per_gs */ reinterpret_cast<float4*>(grad_w2c_per_gs),
     /* densification_info */ densification_info,
     /* n_primitives */ n_gaussians,

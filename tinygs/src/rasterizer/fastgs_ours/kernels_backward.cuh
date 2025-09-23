@@ -424,13 +424,19 @@ namespace fast_gs::rasterization::kernels::backward {
                 fast_copy(cached_per_pixel[lane_idx], local);
             } else if (ii % 16 == 0) {
                 // odd. prefetch
-                const uint i = ii + lane_idx_uint;
+                const uint i = ii + lane_idx_uint + 16;
+                const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+                const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+                const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
                 const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
                                             start_pixel_coords.y | (i >> config::tile_width_log2)};
-                const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
-                prefetch(image + pixel_idx);
+                const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
+                    /* row */ pixel_coords.y,
+                    /* col */ pixel_coords.x,
+                    width_in_tile);
+                prefetch(image + physical_pixel_idx);
                 prefetch(bucket_color_transmittance + i);
-                prefetch(grad_image + pixel_idx);
+                prefetch(grad_image + physical_pixel_idx);
             }
 
 // #pragma unroll 16

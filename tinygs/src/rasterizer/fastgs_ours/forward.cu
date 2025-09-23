@@ -197,7 +197,7 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
             grid.x,
             n_visible_primitives);
         CHECK_CUDA(config::debug, "create_instances");
-        tinygs::maybe_sync();
+        tinygs::maybe_sync(major_stream);
     }
 
     {
