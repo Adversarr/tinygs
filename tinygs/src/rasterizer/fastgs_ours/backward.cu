@@ -265,7 +265,7 @@ void fast_gs::rasterization::backward(
         GS_RANGE_SCOPE(m_blend_backward, C_RED, catK(), n_buckets);
         const int grids = div_round_up(n_buckets, config::blend_bwd_n_warps);
         const int blocks = 32 * config::blend_bwd_n_warps;
-        kernels::backward::blend_backward_cu<<<grids, blocks>>>(
+        kernels::backward::blend_backward_cu<<<grids, blocks, 0, stream>>>(
             per_tile_buffers.instance_ranges,
             per_tile_buffers.bucket_offsets,
             per_instance_buffers.primitive_indices.Current(),
@@ -288,13 +288,13 @@ void fast_gs::rasterization::backward(
             height,
             grid.x);
         CHECK_CUDA(config::debug, "blend_backward");
-        tinygs::maybe_sync(); // 可选：定义 -DTINYGS_NVTX_SYNC=1 时同步
+        tinygs::maybe_sync(stream);
     }
 
     {
         GS_RANGE_SCOPE(m_preprocess_backward, C_BLUE, catK(), n_primitives);
         kernels::backward::preprocess_backward_cu<<<div_round_up(n_primitives, config::block_size_preprocess_backward),
-                                                    config::block_size_preprocess_backward>>>(
+                                                    config::block_size_preprocess_backward, 0, stream>>>(
             means,
             scales_raw,
             rotations_raw,
@@ -321,7 +321,7 @@ void fast_gs::rasterization::backward(
             cx,
             cy);
         CHECK_CUDA(config::debug, "preprocess_backward");
-        tinygs::maybe_sync();
+        tinygs::maybe_sync(stream);
     }
 
     {
@@ -329,12 +329,14 @@ void fast_gs::rasterization::backward(
         using float16 = float[16];
         const int grids = div_round_up(n_primitives, 256);
         const int blocks = 256;
-        reduce_sum_4x4_aos_inplace_f32x4_kernel<<<grids, blocks>>>(
+        reduce_sum_4x4_aos_inplace_f32x4_kernel<<<grids, blocks, 0, stream>>>(
             reinterpret_cast<float*>(grad_w2c_per_gs),
             n_primitives);
-        cudaMemcpy(grad_w2c, grad_w2c_per_gs, 16 * sizeof(float), cudaMemcpyDeviceToDevice);
+        CUDA_CHECK_THROW(cudaMemcpyAsync(grad_w2c, grad_w2c_per_gs,
+                                         16 * sizeof(float),
+                                         cudaMemcpyDeviceToDevice, stream));
 
         CHECK_CUDA(config::debug, "reduce_sum_4x4_aos_inplace_f32x4");
-        tinygs::maybe_sync();
+        tinygs::maybe_sync(stream);
     }
 }
