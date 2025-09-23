@@ -25,7 +25,6 @@ set(TINYGS_SOURCES
     # Initialization
     "src/initialization/initialization.cpp"
     "src/initialization/knn.cpp"
-    "src/initialization/nanoflann.hpp"
     "src/initialization/random.cpp"
     
     # Loss functions
@@ -72,13 +71,11 @@ set(TINYGS_SOURCES
     "src/utils/stbi_wrapper.cpp"
 )
 
-# Create main library (following tiny-cuda-nn patterns)
+# Create main library
 add_library(tinygs STATIC ${TINYGS_SOURCES})
-
-# Set library alias for consistency
 add_library(tinygs::tinygs ALIAS tinygs)
 
-# Set target properties (enhanced following tiny-cuda-nn patterns)
+# Standards and CUDA properties
 set_target_properties(tinygs PROPERTIES
     CXX_STANDARD 20
     CXX_STANDARD_REQUIRED ON
@@ -89,8 +86,6 @@ set_target_properties(tinygs PROPERTIES
     CUDA_RESOLVE_DEVICE_SYMBOLS ON
     POSITION_INDEPENDENT_CODE ON
     CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}"
-    VERSION ${PROJECT_VERSION}
-    SOVERSION ${PROJECT_VERSION_MAJOR}
 )
 
 # Link libraries (organized following tiny-cuda-nn patterns)
@@ -111,10 +106,6 @@ target_link_libraries(tinygs
         ${OpenCV_LIBS}
 )
 
-target_compile_definitions(tinygs
-    PUBLIC
-        SPDLOG_ACTIVE_LEVEL=0
-)
 
 if(TARGET stb)
     target_link_libraries(tinygs PUBLIC stb)
@@ -137,45 +128,78 @@ target_include_directories(tinygs
         ${OpenCV_INCLUDE_DIRS}
 )
 
-# Compiler definitions (following tiny-cuda-nn patterns)
+# SPDLOG_LEVEL_TRACE    0
+# SPDLOG_LEVEL_DEBUG    1
+# SPDLOG_LEVEL_INFO     2
+
+# Config-dependent definitions
+# - Define NDEBUG for Release/RelWithDebInfo (available to both NVCC and host)
+# - Set spdlog compile-time log level based on configuration
 target_compile_definitions(tinygs
     PUBLIC
-        TINYGS_MIN_GPU_ARCH=${MIN_GPU_ARCH}
-    PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:__CUDA_NO_HALF_OPERATORS__>
-        $<$<COMPILE_LANGUAGE:CUDA>:__CUDA_NO_HALF_CONVERSIONS__>
-        $<$<COMPILE_LANGUAGE:CUDA>:__CUDA_NO_BFLOAT16_CONVERSIONS__>
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:NDEBUG>
+        $<$<CONFIG:Debug>:SPDLOG_ACTIVE_LEVEL=0>
+        $<$<CONFIG:RelWithDebInfo>:SPDLOG_ACTIVE_LEVEL=1>
+        $<$<CONFIG:Release>:SPDLOG_ACTIVE_LEVEL=2>
 )
 
-# Compiler-specific flags (enhanced following tiny-cuda-nn patterns)
-if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    target_compile_options(tinygs PRIVATE
-        $<$<COMPILE_LANGUAGE:CXX>:$<$<CONFIG:Release>:-O3;-DNDEBUG;-march=native;-mtune=native>>
-        $<$<COMPILE_LANGUAGE:CXX>:$<$<CONFIG:Debug>:-O0;-g;-Wall;-Wextra;-Wpedantic>>
-    )
-endif()
-
-# CUDA compiler flags (following tiny-cuda-nn patterns)
+# MSVC/Non-MSVC specific options
 if(MSVC)
     target_compile_options(tinygs PRIVATE
-        $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/bigobj>
+        $<$<COMPILE_LANGUAGE:CXX>:/bigobj>
     )
+    # Note: Add /DNOMINMAX in definitions if needed
 else()
+    if (TINYGS_ENABLE_NATIVE)
+        target_compile_options(tinygs PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:-march=native>
+            $<$<COMPILE_LANGUAGE:CXX>:-mtune=native>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-march=native>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-mtune=native>
+        )
+    endif()
+
+    # Host-side warning/aliasing rules (native CXX; passed to host compiler via -Xcompiler for CUDA)
     target_compile_options(tinygs PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:-Wno-float-conversion>
+        $<$<COMPILE_LANGUAGE:CXX>:-fno-strict-aliasing>
+
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-Wno-float-conversion>
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=-fno-strict-aliasing>
+
         $<$<COMPILE_LANGUAGE:CUDA>:-Xcudafe=--diag_suppress=unrecognized_gcc_pragma>
-        $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>
     )
 endif()
 
-# Essential CUDA flags for modern C++ and performance
+# CUDA-specific options
 target_compile_options(tinygs PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
     $<$<COMPILE_LANGUAGE:CUDA>:--expt-relaxed-constexpr>
 )
 
-if(TINYGS_ENABLE_PROFILE)
-    target_compile_options(tinygs PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
-    target_compile_definitions(tinygs PRIVATE TINYGS_NVTX_SYNC=1)
+if (TINYGS_ENABLE_FAST_MATH)
+    target_compile_options(tinygs PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math>
+        # Note: For host-side fast math (risky): $<$<COMPILE_LANGUAGE:CXX>:-ffast-math>
+    )
 endif()
+
+# CUDA device-side feature toggles (change to PUBLIC if common headers depend on these switches)
+target_compile_definitions(tinygs PRIVATE
+    $<$<COMPILE_LANGUAGE:CUDA>:__CUDA_NO_HALF_OPERATORS__>
+    $<$<COMPILE_LANGUAGE:CUDA>:__CUDA_NO_HALF_CONVERSIONS__>
+    $<$<COMPILE_LANGUAGE:CUDA>:__CUDA_NO_BFLOAT16_CONVERSIONS__>
+)
+
+if (TINYGS_ENABLE_PROFILE)
+    target_compile_options(tinygs PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>
+    )
+endif()
+
+if (TINYGS_ENABLE_NVTX_SYNC)
+    target_compile_definitions(tinygs PUBLIC TINYGS_NVTX_SYNC=1)
+endif()
+
+# Other public defs
+target_compile_definitions(tinygs PUBLIC "TINYGS_MIN_GPU_ARCH=${MIN_GPU_ARCH}")

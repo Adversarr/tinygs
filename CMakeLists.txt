@@ -42,7 +42,10 @@ project(tinygs
 option(TINYGS_BUILD_EXAMPLES "Build tinygs examples" ON)
 option(TINYGS_BUILD_TESTS "Build tinygs tests" OFF)
 option(TINYGS_BUILD_BENCHMARKS "Build tinygs benchmarks" ON)
-option(TINYGS_ENABLE_PROFILE "Enable profiling with nvtx" OFF)
+option(TINYGS_ENABLE_PROFILE "Enable profiling with lineinfo" OFF)
+option(TINYGS_ENABLE_NVTX_SYNC "Enable operation sync to get accurate nvtx range" OFF)
+option(TINYGS_ENABLE_NATIVE "Enable native optimizations" ON)
+option(TINYGS_ENABLE_FAST_MATH "Enable fast math optimizations" ON)
 
 ### Dependencies
 include(${PROJECT_SOURCE_DIR}/cmake/dependencies.cmake)
