@@ -18,6 +18,7 @@ namespace fast_gs::rasterization::config {
   DEF float dilation = 0.3f;
   DEF float min_alpha_threshold_rcp = 255.0f;
   DEF float min_alpha_threshold = 1.0f / min_alpha_threshold_rcp; // 0.00392156862
+  DEF float min_alpha_threshold_deactivated = -5.537334267018537f; // log(255 - 1.0)
   DEF float max_fragment_alpha = 0.999f;                          // 0.99f in original 3dgs
   DEF float transmittance_threshold = 1e-4f;
   // block size constants
@@ -33,7 +34,7 @@ namespace fast_gs::rasterization::config {
   DEF int tile_height = 16;
   DEF int block_size_blend = tile_width * tile_height;   // 256
   DEF int block_size_blend_mask = block_size_blend - 1;  // 255
-  DEF int n_sequential_threshold = 4;
+  DEF int n_sequential_threshold = 8;
 
   DEF int blend_bwd_n_warps = 8; // number of warps per block
 } // namespace fast_gs::rasterization::config

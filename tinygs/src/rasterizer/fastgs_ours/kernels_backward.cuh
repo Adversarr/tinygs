@@ -19,510 +19,576 @@ namespace cg = cooperative_groups;
 
 namespace fast_gs::rasterization::kernels::backward {
 
-    __global__ void preprocess_backward_cu(
-        const float3* means,
-        const float3* raw_scales,
-        const float4* raw_rotations,
-        const float3* sh_coefficients_rest,
-        const float4* w2c,
-        const float3* cam_position,
-        const uint* primitive_n_touched_tiles,
-        const float2* grad_mean2d,
-        const float* grad_conic,
-        float3* grad_means,
-        float3* grad_raw_scales,
-        float4* grad_raw_rotations,
-        float3* grad_sh_coefficients_0,
-        float3* grad_sh_coefficients_rest,
-        float4* grad_w2c_per_gs,
-        float* densification_info,
-        const uint n_primitives,
-        const uint active_sh_bases,
-        const uint total_bases_sh_rest,
-        const float w,
-        const float h,
-        const float fx,
-        const float fy,
-        const float cx,
-        const float cy) {
-        auto primitive_idx = cg::this_grid().thread_rank();
-        if (primitive_idx >= n_primitives || primitive_n_touched_tiles[primitive_idx] == 0)
-            return;
-
-        // load 3d mean
-        const float3 mean3d = means[primitive_idx];
-
-        // sh evaluation backward
-        const float3 dL_dmean3d_from_color = convert_sh_to_color_backward(
-            sh_coefficients_rest, grad_sh_coefficients_0, grad_sh_coefficients_rest,
-            mean3d, cam_position[0],
-            primitive_idx, active_sh_bases, total_bases_sh_rest);
-
-        const float4 w2c_r3 = w2c[2];
-        const float depth = w2c_r3.x * mean3d.x + w2c_r3.y * mean3d.y + w2c_r3.z * mean3d.z + w2c_r3.w;
-        const float4 w2c_r1 = w2c[0];
-        const float x = (w2c_r1.x * mean3d.x + w2c_r1.y * mean3d.y + w2c_r1.z * mean3d.z + w2c_r1.w) / depth;
-        const float4 w2c_r2 = w2c[1];
-        const float y = (w2c_r2.x * mean3d.x + w2c_r2.y * mean3d.y + w2c_r2.z * mean3d.z + w2c_r2.w) / depth;
-
-        // compute 3d covariance from raw scale and rotation
-        const float3 raw_scale = raw_scales[primitive_idx];
-        const float3 variance = make_float3(expf(2.0f * raw_scale.x), expf(2.0f * raw_scale.y), expf(2.0f * raw_scale.z));
-        auto [qr, qx, qy, qz] = raw_rotations[primitive_idx];
-        const float qrr_raw = qr * qr, qxx_raw = qx * qx, qyy_raw = qy * qy, qzz_raw = qz * qz;
-        const float q_norm_sq = qrr_raw + qxx_raw + qyy_raw + qzz_raw;
-        const float qxx = 2.0f * qxx_raw / q_norm_sq, qyy = 2.0f * qyy_raw / q_norm_sq, qzz = 2.0f * qzz_raw / q_norm_sq;
-        const float qxy = 2.0f * qx * qy / q_norm_sq, qxz = 2.0f * qx * qz / q_norm_sq, qyz = 2.0f * qy * qz / q_norm_sq;
-        const float qrx = 2.0f * qr * qx / q_norm_sq, qry = 2.0f * qr * qy / q_norm_sq, qrz = 2.0f * qr * qz / q_norm_sq;
-        const mat3x3 rotation = {
-            1.0f - (qyy + qzz), qxy - qrz, qry + qxz,
-            qrz + qxy, 1.0f - (qxx + qzz), qyz - qrx,
-            qxz - qry, qrx + qyz, 1.0f - (qxx + qyy)};
-        const mat3x3 rotation_scaled = {
-            rotation.m11 * variance.x, rotation.m12 * variance.y, rotation.m13 * variance.z,
-            rotation.m21 * variance.x, rotation.m22 * variance.y, rotation.m23 * variance.z,
-            rotation.m31 * variance.x, rotation.m32 * variance.y, rotation.m33 * variance.z};
-        const mat3x3_triu cov3d{
-            rotation_scaled.m11 * rotation.m11 + rotation_scaled.m12 * rotation.m12 + rotation_scaled.m13 * rotation.m13,
-            rotation_scaled.m11 * rotation.m21 + rotation_scaled.m12 * rotation.m22 + rotation_scaled.m13 * rotation.m23,
-            rotation_scaled.m11 * rotation.m31 + rotation_scaled.m12 * rotation.m32 + rotation_scaled.m13 * rotation.m33,
-            rotation_scaled.m21 * rotation.m21 + rotation_scaled.m22 * rotation.m22 + rotation_scaled.m23 * rotation.m23,
-            rotation_scaled.m21 * rotation.m31 + rotation_scaled.m22 * rotation.m32 + rotation_scaled.m23 * rotation.m33,
-            rotation_scaled.m31 * rotation.m31 + rotation_scaled.m32 * rotation.m32 + rotation_scaled.m33 * rotation.m33,
-        };
-
-        // ewa splatting gradient helpers
-        const float clip_left = (-0.15f * w - cx) / fx;
-        const float clip_right = (1.15f * w - cx) / fx;
-        const float clip_top = (-0.15f * h - cy) / fy;
-        const float clip_bottom = (1.15f * h - cy) / fy;
-        const float tx = clamp(x, clip_left, clip_right);
-        const float ty = clamp(y, clip_top, clip_bottom);
-        const float j11 = fx / depth;
-        const float j13 = -j11 * tx;
-        const float j22 = fy / depth;
-        const float j23 = -j22 * ty;
-        const float3 jw_r1 = make_float3(
-            j11 * w2c_r1.x + j13 * w2c_r3.x,
-            j11 * w2c_r1.y + j13 * w2c_r3.y,
-            j11 * w2c_r1.z + j13 * w2c_r3.z);
-        const float3 jw_r2 = make_float3(
-            j22 * w2c_r2.x + j23 * w2c_r3.x,
-            j22 * w2c_r2.y + j23 * w2c_r3.y,
-            j22 * w2c_r2.z + j23 * w2c_r3.z);
-        const float3 jwc_r1 = make_float3(
-            jw_r1.x * cov3d.m11 + jw_r1.y * cov3d.m12 + jw_r1.z * cov3d.m13,
-            jw_r1.x * cov3d.m12 + jw_r1.y * cov3d.m22 + jw_r1.z * cov3d.m23,
-            jw_r1.x * cov3d.m13 + jw_r1.y * cov3d.m23 + jw_r1.z * cov3d.m33);
-        const float3 jwc_r2 = make_float3(
-            jw_r2.x * cov3d.m11 + jw_r2.y * cov3d.m12 + jw_r2.z * cov3d.m13,
-            jw_r2.x * cov3d.m12 + jw_r2.y * cov3d.m22 + jw_r2.z * cov3d.m23,
-            jw_r2.x * cov3d.m13 + jw_r2.y * cov3d.m23 + jw_r2.z * cov3d.m33);
-
-        // 2d covariance gradient
-        const float a = dot(jwc_r1, jw_r1) + config::dilation, b = dot(jwc_r1, jw_r2), c = dot(jwc_r2, jw_r2) + config::dilation;
-        const float aa = a * a, bb = b * b, cc = c * c;
-        const float ac = a * c, ab = a * b, bc = b * c;
-        const float determinant = ac - bb;
-        const float determinant_rcp = 1.0f / (determinant + 1e-8f);  // Add epsilon for numerical stability
-        const float determinant_rcp_sq = determinant_rcp * determinant_rcp;
-        const float3 dL_dconic = make_float3(
-            grad_conic[primitive_idx],
-            grad_conic[n_primitives + primitive_idx],
-            grad_conic[2 * n_primitives + primitive_idx]);
-        const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
-                                                          2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
-                                                          bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z,
-                                                          2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
-
-        // 3d covariance gradient
-        const mat3x3_triu dL_dcov3d = {
-            (jw_r1.x * jw_r1.x) * dL_dcov2d.x + 2.0f * (jw_r1.x * jw_r2.x) * dL_dcov2d.y + (jw_r2.x * jw_r2.x) * dL_dcov2d.z,
-            (jw_r1.x * jw_r1.y) * dL_dcov2d.x + (jw_r1.x * jw_r2.y + jw_r1.y * jw_r2.x) * dL_dcov2d.y + (jw_r2.x * jw_r2.y) * dL_dcov2d.z,
-            (jw_r1.x * jw_r1.z) * dL_dcov2d.x + (jw_r1.x * jw_r2.z + jw_r1.z * jw_r2.x) * dL_dcov2d.y + (jw_r2.x * jw_r2.z) * dL_dcov2d.z,
-            (jw_r1.y * jw_r1.y) * dL_dcov2d.x + 2.0f * (jw_r1.y * jw_r2.y) * dL_dcov2d.y + (jw_r2.y * jw_r2.y) * dL_dcov2d.z,
-            (jw_r1.y * jw_r1.z) * dL_dcov2d.x + (jw_r1.y * jw_r2.z + jw_r1.z * jw_r2.y) * dL_dcov2d.y + (jw_r2.y * jw_r2.z) * dL_dcov2d.z,
-            (jw_r1.z * jw_r1.z) * dL_dcov2d.x + 2.0f * (jw_r1.z * jw_r2.z) * dL_dcov2d.y + (jw_r2.z * jw_r2.z) * dL_dcov2d.z,
-        };
-
-        // gradient of J * W
-        const float3 dL_djw_r1 = 2.0f * make_float3(
-                                            jwc_r1.x * dL_dcov2d.x + jwc_r2.x * dL_dcov2d.y,
-                                            jwc_r1.y * dL_dcov2d.x + jwc_r2.y * dL_dcov2d.y,
-                                            jwc_r1.z * dL_dcov2d.x + jwc_r2.z * dL_dcov2d.y);
-        const float3 dL_djw_r2 = 2.0f * make_float3(
-                                            jwc_r1.x * dL_dcov2d.y + jwc_r2.x * dL_dcov2d.z,
-                                            jwc_r1.y * dL_dcov2d.y + jwc_r2.y * dL_dcov2d.z,
-                                            jwc_r1.z * dL_dcov2d.y + jwc_r2.z * dL_dcov2d.z);
-
-        // gradient of non-zero entries in J
-        const float dL_dj11 = w2c_r1.x * dL_djw_r1.x + w2c_r1.y * dL_djw_r1.y + w2c_r1.z * dL_djw_r1.z;
-        const float dL_dj22 = w2c_r2.x * dL_djw_r2.x + w2c_r2.y * dL_djw_r2.y + w2c_r2.z * dL_djw_r2.z;
-        const float dL_dj13 = w2c_r3.x * dL_djw_r1.x + w2c_r3.y * dL_djw_r1.y + w2c_r3.z * dL_djw_r1.z;
-        const float dL_dj23 = w2c_r3.x * dL_djw_r2.x + w2c_r3.y * dL_djw_r2.y + w2c_r3.z * dL_djw_r2.z;
-
-        // mean3d camera space gradient from J and mean2d
-        // Account for clamping of tx/ty in the forward pass. The gradient should only pass if x/y were not clamped.
-        const float dtx_dx = (x > clip_left && x < clip_right) ? 1.0f : 0.0f;
-        const float dty_dy = (y > clip_top && y < clip_bottom) ? 1.0f : 0.0f;
-        const float dL_dj13_clamped = dL_dj13 * dtx_dx;
-        const float dL_dj23_clamped = dL_dj23 * dty_dy;
-
-        float djwr1_dz_helper = dL_dj11 - 2.0f * tx * dL_dj13_clamped;
-        float djwr2_dz_helper = dL_dj22 - 2.0f * ty * dL_dj23_clamped;
-        const float2 dL_dmean2d = grad_mean2d[primitive_idx];
-        const float3 dL_dmean3d_cam = make_float3(
-            j11 * (dL_dmean2d.x - dL_dj13_clamped / depth),
-            j22 * (dL_dmean2d.y - dL_dj23_clamped / depth),
-            -j11 * (x * dL_dmean2d.x + djwr1_dz_helper / depth) - j22 * (y * dL_dmean2d.y + djwr2_dz_helper / depth));
-
-        grad_w2c_per_gs[primitive_idx * 4 + 0].w =  dL_dmean3d_cam.x;
-        grad_w2c_per_gs[primitive_idx * 4 + 1].w =  dL_dmean3d_cam.y;
-        grad_w2c_per_gs[primitive_idx * 4 + 2].w =  dL_dmean3d_cam.z;
-        grad_w2c_per_gs[primitive_idx * 4 + 0].x =  dL_dmean3d_cam.x * mean3d.x;
-        grad_w2c_per_gs[primitive_idx * 4 + 0].y =  dL_dmean3d_cam.x * mean3d.y;
-        grad_w2c_per_gs[primitive_idx * 4 + 0].z =  dL_dmean3d_cam.x * mean3d.z;
-        grad_w2c_per_gs[primitive_idx * 4 + 1].x =  dL_dmean3d_cam.y * mean3d.x;
-        grad_w2c_per_gs[primitive_idx * 4 + 1].y =  dL_dmean3d_cam.y * mean3d.y;
-        grad_w2c_per_gs[primitive_idx * 4 + 1].z =  dL_dmean3d_cam.y * mean3d.z;
-        grad_w2c_per_gs[primitive_idx * 4 + 2].x =  dL_dmean3d_cam.z * mean3d.x;
-        grad_w2c_per_gs[primitive_idx * 4 + 2].y =  dL_dmean3d_cam.z * mean3d.y;
-        grad_w2c_per_gs[primitive_idx * 4 + 2].z =  dL_dmean3d_cam.z * mean3d.z;
-
-        // 3d mean gradient from splatting
-        const float3 dL_dmean3d_from_splatting = make_float3(
-            w2c_r1.x * dL_dmean3d_cam.x + w2c_r2.x * dL_dmean3d_cam.y + w2c_r3.x * dL_dmean3d_cam.z,
-            w2c_r1.y * dL_dmean3d_cam.x + w2c_r2.y * dL_dmean3d_cam.y + w2c_r3.y * dL_dmean3d_cam.z,
-            w2c_r1.z * dL_dmean3d_cam.x + w2c_r2.z * dL_dmean3d_cam.y + w2c_r3.z * dL_dmean3d_cam.z);
-
-        // write total 3d mean gradient
-        const float3 dL_dmean3d = dL_dmean3d_from_splatting + dL_dmean3d_from_color;
-#ifndef NDEBUG
-        // Boundary check for primitive arrays
-        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
-#endif
-        grad_means[primitive_idx] = dL_dmean3d;
-
-        // raw scale gradient
-        const float dL_dvariance_x = rotation.m11 * rotation.m11 * dL_dcov3d.m11 + rotation.m21 * rotation.m21 * dL_dcov3d.m22 + rotation.m31 * rotation.m31 * dL_dcov3d.m33 +
-                                     2.0f * (rotation.m11 * rotation.m21 * dL_dcov3d.m12 + rotation.m11 * rotation.m31 * dL_dcov3d.m13 + rotation.m21 * rotation.m31 * dL_dcov3d.m23);
-        const float dL_dvariance_y = rotation.m12 * rotation.m12 * dL_dcov3d.m11 + rotation.m22 * rotation.m22 * dL_dcov3d.m22 + rotation.m32 * rotation.m32 * dL_dcov3d.m33 +
-                                     2.0f * (rotation.m12 * rotation.m22 * dL_dcov3d.m12 + rotation.m12 * rotation.m32 * dL_dcov3d.m13 + rotation.m22 * rotation.m32 * dL_dcov3d.m23);
-        const float dL_dvariance_z = rotation.m13 * rotation.m13 * dL_dcov3d.m11 + rotation.m23 * rotation.m23 * dL_dcov3d.m22 + rotation.m33 * rotation.m33 * dL_dcov3d.m33 +
-                                     2.0f * (rotation.m13 * rotation.m23 * dL_dcov3d.m12 + rotation.m13 * rotation.m33 * dL_dcov3d.m13 + rotation.m23 * rotation.m33 * dL_dcov3d.m23);
-        // The gradient for raw_scale is 2*variance*dL_dvariance. When variance is close to zero, this can lead to vanishing gradients.
-        // This is inherent to the exp parameterization of scale, but worth noting for training stability.
-        const float3 dL_draw_scale = make_float3(
-            2.0f * variance.x * dL_dvariance_x,
-            2.0f * variance.y * dL_dvariance_y,
-            2.0f * variance.z * dL_dvariance_z);
-#ifndef NDEBUG
-        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
-#endif
-        grad_raw_scales[primitive_idx] = dL_draw_scale;
-
-        // raw rotation gradient
-        const mat3x3 dL_drotation = {
-            2.0f * (rotation_scaled.m11 * dL_dcov3d.m11 + rotation_scaled.m21 * dL_dcov3d.m12 + rotation_scaled.m31 * dL_dcov3d.m13),
-            2.0f * (rotation_scaled.m12 * dL_dcov3d.m11 + rotation_scaled.m22 * dL_dcov3d.m12 + rotation_scaled.m32 * dL_dcov3d.m13),
-            2.0f * (rotation_scaled.m13 * dL_dcov3d.m11 + rotation_scaled.m23 * dL_dcov3d.m12 + rotation_scaled.m33 * dL_dcov3d.m13),
-            2.0f * (rotation_scaled.m11 * dL_dcov3d.m12 + rotation_scaled.m21 * dL_dcov3d.m22 + rotation_scaled.m31 * dL_dcov3d.m23),
-            2.0f * (rotation_scaled.m12 * dL_dcov3d.m12 + rotation_scaled.m22 * dL_dcov3d.m22 + rotation_scaled.m32 * dL_dcov3d.m23),
-            2.0f * (rotation_scaled.m13 * dL_dcov3d.m12 + rotation_scaled.m23 * dL_dcov3d.m22 + rotation_scaled.m33 * dL_dcov3d.m23),
-            2.0f * (rotation_scaled.m11 * dL_dcov3d.m13 + rotation_scaled.m21 * dL_dcov3d.m23 + rotation_scaled.m31 * dL_dcov3d.m33),
-            2.0f * (rotation_scaled.m12 * dL_dcov3d.m13 + rotation_scaled.m22 * dL_dcov3d.m23 + rotation_scaled.m32 * dL_dcov3d.m33),
-            2.0f * (rotation_scaled.m13 * dL_dcov3d.m13 + rotation_scaled.m23 * dL_dcov3d.m23 + rotation_scaled.m33 * dL_dcov3d.m33)};
-        const float dL_dqxx = -dL_drotation.m22 - dL_drotation.m33;
-        const float dL_dqyy = -dL_drotation.m11 - dL_drotation.m33;
-        const float dL_dqzz = -dL_drotation.m11 - dL_drotation.m22;
-        const float dL_dqxy = dL_drotation.m12 + dL_drotation.m21;
-        const float dL_dqxz = dL_drotation.m13 + dL_drotation.m31;
-        const float dL_dqyz = dL_drotation.m23 + dL_drotation.m32;
-        const float dL_dqrx = dL_drotation.m32 - dL_drotation.m23;
-        const float dL_dqry = dL_drotation.m13 - dL_drotation.m31;
-        const float dL_dqrz = dL_drotation.m21 - dL_drotation.m12;
-        // The following formula for quaternion gradient appears to be a custom implementation.
-        // It's recommended to verify its correctness against the original 3DGS paper or standard quaternion calculus references.
-        const float dL_dq_norm_helper = qxx * dL_dqxx + qyy * dL_dqyy + qzz * dL_dqzz + qxy * dL_dqxy + qxz * dL_dqxz + qyz * dL_dqyz + qrx * dL_dqrx + qry * dL_dqry + qrz * dL_dqrz;
-        const float4 dL_draw_rotation = 2.0f * make_float4(qx * dL_dqrx + qy * dL_dqry + qz * dL_dqrz - qr * dL_dq_norm_helper, 2.0f * qx * dL_dqxx + qy * dL_dqxy + qz * dL_dqxz + qr * dL_dqrx - qx * dL_dq_norm_helper, 2.0f * qy * dL_dqyy + qx * dL_dqxy + qz * dL_dqyz + qr * dL_dqry - qy * dL_dq_norm_helper, 2.0f * qz * dL_dqzz + qx * dL_dqxz + qy * dL_dqyz + qr * dL_dqrz - qz * dL_dq_norm_helper) / q_norm_sq;
-#ifndef NDEBUG
-        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
-#endif
-        grad_raw_rotations[primitive_idx] = dL_draw_rotation;
-
-        // TODO: only needed for adaptive density control from the original 3dgs
-        if (densification_info != nullptr) {
-#ifndef NDEBUG
-            // Boundary check for densification_info array (size: 2 * n_primitives)
-            assert(primitive_idx >= 0 && primitive_idx < n_primitives);
-            assert(n_primitives + primitive_idx >= 0 && n_primitives + primitive_idx < 2 * n_primitives);
-#endif
-            densification_info[primitive_idx] += 1.0f;
-            densification_info[n_primitives + primitive_idx] += length(dL_dmean2d * make_float2(0.5f * w, 0.5f * h));
-            // densification_info[n_primitives + primitive_idx] += length(dL_dmean2d);
+__device__ inline float3 convert_sh_to_color_backward(
+    const float3* sh_coefficients_rest,
+    float3* grad_sh_coefficients_0,
+    float3* grad_sh_coefficients_rest,
+    const float3& position,
+    const float3& cam_position,
+    const uint primitive_idx,
+    const uint active_sh_bases,
+    const uint total_bases_sh_rest) {
+    // computation adapted from https://github.com/NVlabs/tiny-cuda-nn/blob/212104156403bd87616c1a4f73a1c5f2c2e172a9/include/tiny-cuda-nn/common_device.h#L340
+    const int coefficients_base_idx = primitive_idx * total_bases_sh_rest;
+    const float3* coefficients_ptr = sh_coefficients_rest + coefficients_base_idx;
+    float3* grad_coefficients_ptr = grad_sh_coefficients_rest + coefficients_base_idx;
+    const float3 grad_color = grad_sh_coefficients_0[primitive_idx];
+    grad_sh_coefficients_0[primitive_idx] = 0.28209479177387814f * grad_color;
+    float3 dcolor_dposition = make_float3(0.0f);
+    if (active_sh_bases > 1) {
+        auto [x_raw, y_raw, z_raw] = position - cam_position;
+        auto [x, y, z] = normalize(make_float3(x_raw, y_raw, z_raw));
+        grad_coefficients_ptr[0] = (-0.48860251190291987f * y) * grad_color;
+        grad_coefficients_ptr[1] = (0.48860251190291987f * z) * grad_color;
+        grad_coefficients_ptr[2] = (-0.48860251190291987f * x) * grad_color;
+        float3 grad_direction_x = -0.48860251190291987f * coefficients_ptr[2];
+        float3 grad_direction_y = -0.48860251190291987f * coefficients_ptr[0];
+        float3 grad_direction_z = 0.48860251190291987f * coefficients_ptr[1];
+        if (active_sh_bases > 4) {
+            const float xx = x * x, yy = y * y, zz = z * z;
+            const float xy = x * y, xz = x * z, yz = y * z;
+            grad_coefficients_ptr[3] = (1.0925484305920792f * xy) * grad_color;
+            grad_coefficients_ptr[4] = (-1.0925484305920792f * yz) * grad_color;
+            grad_coefficients_ptr[5] = (0.94617469575755997f * zz - 0.31539156525251999f) * grad_color;
+            grad_coefficients_ptr[6] = (-1.0925484305920792f * xz) * grad_color;
+            grad_coefficients_ptr[7] = (0.54627421529603959f * xx - 0.54627421529603959f * yy) * grad_color;
+            grad_direction_x = grad_direction_x + (1.0925484305920792f * y) * coefficients_ptr[3] + (-1.0925484305920792f * z) * coefficients_ptr[6] + (1.0925484305920792 * x) * coefficients_ptr[7];
+            grad_direction_y = grad_direction_y + (1.0925484305920792f * x) * coefficients_ptr[3] + (-1.0925484305920792f * z) * coefficients_ptr[4] + (-1.0925484305920792 * y) * coefficients_ptr[7];
+            grad_direction_z = grad_direction_z + (-1.0925484305920792f * y) * coefficients_ptr[4] + (1.8923493915151202 * z) * coefficients_ptr[5] + (-1.0925484305920792f * x) * coefficients_ptr[6];
+            if (active_sh_bases > 9) {
+                grad_coefficients_ptr[8] = (0.59004358992664352f * y * (-3.0f * xx + yy)) * grad_color;
+                grad_coefficients_ptr[9] = (2.8906114426405538f * xy * z) * grad_color;
+                grad_coefficients_ptr[10] = (0.45704579946446572f * y * (1.0f - 5.0f * zz)) * grad_color;
+                grad_coefficients_ptr[11] = (0.3731763325901154f * z * (5.0f * zz - 3.0f)) * grad_color;
+                grad_coefficients_ptr[12] = (0.45704579946446572f * x * (1.0f - 5.0f * zz)) * grad_color;
+                grad_coefficients_ptr[13] = (1.4453057213202769f * z * (xx - yy)) * grad_color;
+                grad_coefficients_ptr[14] = (0.59004358992664352f * x * (-xx + 3.0f * yy)) * grad_color;
+                grad_direction_x = grad_direction_x + (-3.5402615395598609f * xy) * coefficients_ptr[8] + (2.8906114426405538f * yz) * coefficients_ptr[9] + (0.45704579946446572f - 2.2852289973223288f * zz) * coefficients_ptr[12] + (2.8906114426405538f * xz) * coefficients_ptr[13] + (-1.7701307697799304f * xx + 1.7701307697799304f * yy) * coefficients_ptr[14];
+                grad_direction_y = grad_direction_y + (-1.7701307697799304f * xx + 1.7701307697799304f * yy) * coefficients_ptr[8] + (2.8906114426405538f * xz) * coefficients_ptr[9] + (0.45704579946446572f - 2.2852289973223288f * zz) * coefficients_ptr[10] + (-2.8906114426405538f * yz) * coefficients_ptr[13] + (3.5402615395598609f * xy) * coefficients_ptr[14];
+                grad_direction_z = grad_direction_z + (2.8906114426405538f * xy) * coefficients_ptr[9] + (-4.5704579946446566f * yz) * coefficients_ptr[10] + (5.597644988851731f * zz - 1.1195289977703462f) * coefficients_ptr[11] + (-4.5704579946446566f * xz) * coefficients_ptr[12] + (1.4453057213202769f * xx - 1.4453057213202769f * yy) * coefficients_ptr[13];
+            }
         }
-    }
 
-    inline __device__ void prefetch(const void* ptr) {
-        asm volatile("prefetch.global.L1 [%0];" :: "l"(ptr));
+        const float3 grad_direction = make_float3(
+            dot(grad_direction_x, grad_color),
+            dot(grad_direction_y, grad_color),
+            dot(grad_direction_z, grad_color));
+        const float xx_raw = x_raw * x_raw, yy_raw = y_raw * y_raw, zz_raw = z_raw * z_raw;
+        const float xy_raw = x_raw * y_raw, xz_raw = x_raw * z_raw, yz_raw = y_raw * z_raw;
+        const float norm_sq = xx_raw + yy_raw + zz_raw;
+        dcolor_dposition = make_float3(
+                                (yy_raw + zz_raw) * grad_direction.x - xy_raw * grad_direction.y - xz_raw * grad_direction.z,
+                                -xy_raw * grad_direction.x + (xx_raw + zz_raw) * grad_direction.y - yz_raw * grad_direction.z,
+                                -xz_raw * grad_direction.x - yz_raw * grad_direction.y + (xx_raw + yy_raw) * grad_direction.z) *
+                            rsqrtf(norm_sq * norm_sq * norm_sq);
     }
+    return dcolor_dposition;
+}
 
-    struct alignas(32) PerPixel {
-        float3 grad_color_pixel;
-        uint last_contributor;
-        float3 color_pixel_after;
-        float transmittance;
+__global__ void preprocess_backward_cu(
+    const float3* means,
+    const float3* raw_scales,
+    const float4* raw_rotations,
+    const float3* sh_coefficients_rest,
+    const float4* w2c,
+    const float3* cam_position,
+    const uint* primitive_n_touched_tiles,
+    const float2* grad_mean2d,
+    const float* grad_conic,
+    float3* grad_means,
+    float3* grad_raw_scales,
+    float4* grad_raw_rotations,
+    float3* grad_sh_coefficients_0,
+    float3* grad_sh_coefficients_rest,
+    float4* grad_w2c_per_gs,
+    float* densification_info,
+    const uint n_primitives,
+    const uint active_sh_bases,
+    const uint total_bases_sh_rest,
+    const float w,
+    const float h,
+    const float fx,
+    const float fy,
+    const float cx,
+    const float cy) {
+    auto primitive_idx = cg::this_grid().thread_rank();
+    if (primitive_idx >= n_primitives || primitive_n_touched_tiles[primitive_idx] == 0)
+        return;
+
+    // load 3d mean
+    const float3 mean3d = means[primitive_idx];
+
+    // sh evaluation backward
+    const float3 dL_dmean3d_from_color = convert_sh_to_color_backward(
+        sh_coefficients_rest, grad_sh_coefficients_0, grad_sh_coefficients_rest,
+        mean3d, cam_position[0],
+        primitive_idx, active_sh_bases, total_bases_sh_rest);
+
+    const float4 w2c_r3 = w2c[2];
+    const float depth = w2c_r3.x * mean3d.x + w2c_r3.y * mean3d.y + w2c_r3.z * mean3d.z + w2c_r3.w;
+    const float4 w2c_r1 = w2c[0];
+    const float x = (w2c_r1.x * mean3d.x + w2c_r1.y * mean3d.y + w2c_r1.z * mean3d.z + w2c_r1.w) / depth;
+    const float4 w2c_r2 = w2c[1];
+    const float y = (w2c_r2.x * mean3d.x + w2c_r2.y * mean3d.y + w2c_r2.z * mean3d.z + w2c_r2.w) / depth;
+
+    // compute 3d covariance from raw scale and rotation
+    const float3 raw_scale = raw_scales[primitive_idx];
+    const float3 variance = make_float3(expf(2.0f * raw_scale.x), expf(2.0f * raw_scale.y), expf(2.0f * raw_scale.z));
+    auto [qr, qx, qy, qz] = raw_rotations[primitive_idx];
+    const float qrr_raw = qr * qr, qxx_raw = qx * qx, qyy_raw = qy * qy, qzz_raw = qz * qz;
+    const float q_norm_sq = qrr_raw + qxx_raw + qyy_raw + qzz_raw;
+    const float qxx = 2.0f * qxx_raw / q_norm_sq, qyy = 2.0f * qyy_raw / q_norm_sq, qzz = 2.0f * qzz_raw / q_norm_sq;
+    const float qxy = 2.0f * qx * qy / q_norm_sq, qxz = 2.0f * qx * qz / q_norm_sq, qyz = 2.0f * qy * qz / q_norm_sq;
+    const float qrx = 2.0f * qr * qx / q_norm_sq, qry = 2.0f * qr * qy / q_norm_sq, qrz = 2.0f * qr * qz / q_norm_sq;
+    const mat3x3 rotation = {
+        1.0f - (qyy + qzz), qxy - qrz, qry + qxz,
+        qrz + qxy, 1.0f - (qxx + qzz), qyz - qrx,
+        qxz - qry, qrx + qyz, 1.0f - (qxx + qyy)};
+    const mat3x3 rotation_scaled = {
+        rotation.m11 * variance.x, rotation.m12 * variance.y, rotation.m13 * variance.z,
+        rotation.m21 * variance.x, rotation.m22 * variance.y, rotation.m23 * variance.z,
+        rotation.m31 * variance.x, rotation.m32 * variance.y, rotation.m33 * variance.z};
+    const mat3x3_triu cov3d{
+        rotation_scaled.m11 * rotation.m11 + rotation_scaled.m12 * rotation.m12 + rotation_scaled.m13 * rotation.m13,
+        rotation_scaled.m11 * rotation.m21 + rotation_scaled.m12 * rotation.m22 + rotation_scaled.m13 * rotation.m23,
+        rotation_scaled.m11 * rotation.m31 + rotation_scaled.m12 * rotation.m32 + rotation_scaled.m13 * rotation.m33,
+        rotation_scaled.m21 * rotation.m21 + rotation_scaled.m22 * rotation.m22 + rotation_scaled.m23 * rotation.m23,
+        rotation_scaled.m21 * rotation.m31 + rotation_scaled.m22 * rotation.m32 + rotation_scaled.m23 * rotation.m33,
+        rotation_scaled.m31 * rotation.m31 + rotation_scaled.m32 * rotation.m32 + rotation_scaled.m33 * rotation.m33,
     };
 
-    static inline __device__ void fast_copy(PerPixel &dst,
-                                            const PerPixel &src) {
-      uint64_t *dst_ptr = (uint64_t *)&dst;
-      const uint64_t *src_ptr = (const uint64_t *)&src;
+    // ewa splatting gradient helpers
+    const float clip_left = (-0.15f * w - cx) / fx;
+    const float clip_right = (1.15f * w - cx) / fx;
+    const float clip_top = (-0.15f * h - cy) / fy;
+    const float clip_bottom = (1.15f * h - cy) / fy;
+    const float tx = clamp(x, clip_left, clip_right);
+    const float ty = clamp(y, clip_top, clip_bottom);
+    const float j11 = fx / depth;
+    const float j13 = -j11 * tx;
+    const float j22 = fy / depth;
+    const float j23 = -j22 * ty;
+    const float3 jw_r1 = make_float3(
+        j11 * w2c_r1.x + j13 * w2c_r3.x,
+        j11 * w2c_r1.y + j13 * w2c_r3.y,
+        j11 * w2c_r1.z + j13 * w2c_r3.z);
+    const float3 jw_r2 = make_float3(
+        j22 * w2c_r2.x + j23 * w2c_r3.x,
+        j22 * w2c_r2.y + j23 * w2c_r3.y,
+        j22 * w2c_r2.z + j23 * w2c_r3.z);
+    const float3 jwc_r1 = make_float3(
+        jw_r1.x * cov3d.m11 + jw_r1.y * cov3d.m12 + jw_r1.z * cov3d.m13,
+        jw_r1.x * cov3d.m12 + jw_r1.y * cov3d.m22 + jw_r1.z * cov3d.m23,
+        jw_r1.x * cov3d.m13 + jw_r1.y * cov3d.m23 + jw_r1.z * cov3d.m33);
+    const float3 jwc_r2 = make_float3(
+        jw_r2.x * cov3d.m11 + jw_r2.y * cov3d.m12 + jw_r2.z * cov3d.m13,
+        jw_r2.x * cov3d.m12 + jw_r2.y * cov3d.m22 + jw_r2.z * cov3d.m23,
+        jw_r2.x * cov3d.m13 + jw_r2.y * cov3d.m23 + jw_r2.z * cov3d.m33);
+
+    // 2d covariance gradient
+    const float a = dot(jwc_r1, jw_r1) + config::dilation, b = dot(jwc_r1, jw_r2), c = dot(jwc_r2, jw_r2) + config::dilation;
+    const float aa = a * a, bb = b * b, cc = c * c;
+    const float ac = a * c, ab = a * b, bc = b * c;
+    const float determinant = ac - bb;
+    const float determinant_rcp = 1.0f / (determinant + 1e-8f);  // Add epsilon for numerical stability
+    const float determinant_rcp_sq = determinant_rcp * determinant_rcp;
+    const float3 dL_dconic = make_float3(
+        grad_conic[primitive_idx],
+        grad_conic[n_primitives + primitive_idx],
+        grad_conic[2 * n_primitives + primitive_idx]);
+    const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
+                                                        2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
+                                                        bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z,
+                                                        2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
+
+    // 3d covariance gradient
+    const mat3x3_triu dL_dcov3d = {
+        (jw_r1.x * jw_r1.x) * dL_dcov2d.x + 2.0f * (jw_r1.x * jw_r2.x) * dL_dcov2d.y + (jw_r2.x * jw_r2.x) * dL_dcov2d.z,
+        (jw_r1.x * jw_r1.y) * dL_dcov2d.x + (jw_r1.x * jw_r2.y + jw_r1.y * jw_r2.x) * dL_dcov2d.y + (jw_r2.x * jw_r2.y) * dL_dcov2d.z,
+        (jw_r1.x * jw_r1.z) * dL_dcov2d.x + (jw_r1.x * jw_r2.z + jw_r1.z * jw_r2.x) * dL_dcov2d.y + (jw_r2.x * jw_r2.z) * dL_dcov2d.z,
+        (jw_r1.y * jw_r1.y) * dL_dcov2d.x + 2.0f * (jw_r1.y * jw_r2.y) * dL_dcov2d.y + (jw_r2.y * jw_r2.y) * dL_dcov2d.z,
+        (jw_r1.y * jw_r1.z) * dL_dcov2d.x + (jw_r1.y * jw_r2.z + jw_r1.z * jw_r2.y) * dL_dcov2d.y + (jw_r2.y * jw_r2.z) * dL_dcov2d.z,
+        (jw_r1.z * jw_r1.z) * dL_dcov2d.x + 2.0f * (jw_r1.z * jw_r2.z) * dL_dcov2d.y + (jw_r2.z * jw_r2.z) * dL_dcov2d.z,
+    };
+
+    // gradient of J * W
+    const float3 dL_djw_r1 = 2.0f * make_float3(
+                                        jwc_r1.x * dL_dcov2d.x + jwc_r2.x * dL_dcov2d.y,
+                                        jwc_r1.y * dL_dcov2d.x + jwc_r2.y * dL_dcov2d.y,
+                                        jwc_r1.z * dL_dcov2d.x + jwc_r2.z * dL_dcov2d.y);
+    const float3 dL_djw_r2 = 2.0f * make_float3(
+                                        jwc_r1.x * dL_dcov2d.y + jwc_r2.x * dL_dcov2d.z,
+                                        jwc_r1.y * dL_dcov2d.y + jwc_r2.y * dL_dcov2d.z,
+                                        jwc_r1.z * dL_dcov2d.y + jwc_r2.z * dL_dcov2d.z);
+
+    // gradient of non-zero entries in J
+    const float dL_dj11 = w2c_r1.x * dL_djw_r1.x + w2c_r1.y * dL_djw_r1.y + w2c_r1.z * dL_djw_r1.z;
+    const float dL_dj22 = w2c_r2.x * dL_djw_r2.x + w2c_r2.y * dL_djw_r2.y + w2c_r2.z * dL_djw_r2.z;
+    const float dL_dj13 = w2c_r3.x * dL_djw_r1.x + w2c_r3.y * dL_djw_r1.y + w2c_r3.z * dL_djw_r1.z;
+    const float dL_dj23 = w2c_r3.x * dL_djw_r2.x + w2c_r3.y * dL_djw_r2.y + w2c_r3.z * dL_djw_r2.z;
+
+    // mean3d camera space gradient from J and mean2d
+    // Account for clamping of tx/ty in the forward pass. The gradient should only pass if x/y were not clamped.
+    const float dtx_dx = (x > clip_left && x < clip_right) ? 1.0f : 0.0f;
+    const float dty_dy = (y > clip_top && y < clip_bottom) ? 1.0f : 0.0f;
+    const float dL_dj13_clamped = dL_dj13 * dtx_dx;
+    const float dL_dj23_clamped = dL_dj23 * dty_dy;
+
+    float djwr1_dz_helper = dL_dj11 - 2.0f * tx * dL_dj13_clamped;
+    float djwr2_dz_helper = dL_dj22 - 2.0f * ty * dL_dj23_clamped;
+    const float2 dL_dmean2d = grad_mean2d[primitive_idx];
+    const float3 dL_dmean3d_cam = make_float3(
+        j11 * (dL_dmean2d.x - dL_dj13_clamped / depth),
+        j22 * (dL_dmean2d.y - dL_dj23_clamped / depth),
+        -j11 * (x * dL_dmean2d.x + djwr1_dz_helper / depth) - j22 * (y * dL_dmean2d.y + djwr2_dz_helper / depth));
+
+    grad_w2c_per_gs[primitive_idx * 4 + 0].w =  dL_dmean3d_cam.x;
+    grad_w2c_per_gs[primitive_idx * 4 + 1].w =  dL_dmean3d_cam.y;
+    grad_w2c_per_gs[primitive_idx * 4 + 2].w =  dL_dmean3d_cam.z;
+    grad_w2c_per_gs[primitive_idx * 4 + 0].x =  dL_dmean3d_cam.x * mean3d.x;
+    grad_w2c_per_gs[primitive_idx * 4 + 0].y =  dL_dmean3d_cam.x * mean3d.y;
+    grad_w2c_per_gs[primitive_idx * 4 + 0].z =  dL_dmean3d_cam.x * mean3d.z;
+    grad_w2c_per_gs[primitive_idx * 4 + 1].x =  dL_dmean3d_cam.y * mean3d.x;
+    grad_w2c_per_gs[primitive_idx * 4 + 1].y =  dL_dmean3d_cam.y * mean3d.y;
+    grad_w2c_per_gs[primitive_idx * 4 + 1].z =  dL_dmean3d_cam.y * mean3d.z;
+    grad_w2c_per_gs[primitive_idx * 4 + 2].x =  dL_dmean3d_cam.z * mean3d.x;
+    grad_w2c_per_gs[primitive_idx * 4 + 2].y =  dL_dmean3d_cam.z * mean3d.y;
+    grad_w2c_per_gs[primitive_idx * 4 + 2].z =  dL_dmean3d_cam.z * mean3d.z;
+
+    // 3d mean gradient from splatting
+    const float3 dL_dmean3d_from_splatting = make_float3(
+        w2c_r1.x * dL_dmean3d_cam.x + w2c_r2.x * dL_dmean3d_cam.y + w2c_r3.x * dL_dmean3d_cam.z,
+        w2c_r1.y * dL_dmean3d_cam.x + w2c_r2.y * dL_dmean3d_cam.y + w2c_r3.y * dL_dmean3d_cam.z,
+        w2c_r1.z * dL_dmean3d_cam.x + w2c_r2.z * dL_dmean3d_cam.y + w2c_r3.z * dL_dmean3d_cam.z);
+
+    // write total 3d mean gradient
+    const float3 dL_dmean3d = dL_dmean3d_from_splatting + dL_dmean3d_from_color;
+#ifndef NDEBUG
+    // Boundary check for primitive arrays
+    assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
+    grad_means[primitive_idx] = dL_dmean3d;
+
+    // raw scale gradient
+    const float dL_dvariance_x = rotation.m11 * rotation.m11 * dL_dcov3d.m11 + rotation.m21 * rotation.m21 * dL_dcov3d.m22 + rotation.m31 * rotation.m31 * dL_dcov3d.m33 +
+                                    2.0f * (rotation.m11 * rotation.m21 * dL_dcov3d.m12 + rotation.m11 * rotation.m31 * dL_dcov3d.m13 + rotation.m21 * rotation.m31 * dL_dcov3d.m23);
+    const float dL_dvariance_y = rotation.m12 * rotation.m12 * dL_dcov3d.m11 + rotation.m22 * rotation.m22 * dL_dcov3d.m22 + rotation.m32 * rotation.m32 * dL_dcov3d.m33 +
+                                    2.0f * (rotation.m12 * rotation.m22 * dL_dcov3d.m12 + rotation.m12 * rotation.m32 * dL_dcov3d.m13 + rotation.m22 * rotation.m32 * dL_dcov3d.m23);
+    const float dL_dvariance_z = rotation.m13 * rotation.m13 * dL_dcov3d.m11 + rotation.m23 * rotation.m23 * dL_dcov3d.m22 + rotation.m33 * rotation.m33 * dL_dcov3d.m33 +
+                                    2.0f * (rotation.m13 * rotation.m23 * dL_dcov3d.m12 + rotation.m13 * rotation.m33 * dL_dcov3d.m13 + rotation.m23 * rotation.m33 * dL_dcov3d.m23);
+    // The gradient for raw_scale is 2*variance*dL_dvariance. When variance is close to zero, this can lead to vanishing gradients.
+    // This is inherent to the exp parameterization of scale, but worth noting for training stability.
+    const float3 dL_draw_scale = make_float3(
+        2.0f * variance.x * dL_dvariance_x,
+        2.0f * variance.y * dL_dvariance_y,
+        2.0f * variance.z * dL_dvariance_z);
+#ifndef NDEBUG
+    assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
+    grad_raw_scales[primitive_idx] = dL_draw_scale;
+
+    // raw rotation gradient
+    const mat3x3 dL_drotation = {
+        2.0f * (rotation_scaled.m11 * dL_dcov3d.m11 + rotation_scaled.m21 * dL_dcov3d.m12 + rotation_scaled.m31 * dL_dcov3d.m13),
+        2.0f * (rotation_scaled.m12 * dL_dcov3d.m11 + rotation_scaled.m22 * dL_dcov3d.m12 + rotation_scaled.m32 * dL_dcov3d.m13),
+        2.0f * (rotation_scaled.m13 * dL_dcov3d.m11 + rotation_scaled.m23 * dL_dcov3d.m12 + rotation_scaled.m33 * dL_dcov3d.m13),
+        2.0f * (rotation_scaled.m11 * dL_dcov3d.m12 + rotation_scaled.m21 * dL_dcov3d.m22 + rotation_scaled.m31 * dL_dcov3d.m23),
+        2.0f * (rotation_scaled.m12 * dL_dcov3d.m12 + rotation_scaled.m22 * dL_dcov3d.m22 + rotation_scaled.m32 * dL_dcov3d.m23),
+        2.0f * (rotation_scaled.m13 * dL_dcov3d.m12 + rotation_scaled.m23 * dL_dcov3d.m22 + rotation_scaled.m33 * dL_dcov3d.m23),
+        2.0f * (rotation_scaled.m11 * dL_dcov3d.m13 + rotation_scaled.m21 * dL_dcov3d.m23 + rotation_scaled.m31 * dL_dcov3d.m33),
+        2.0f * (rotation_scaled.m12 * dL_dcov3d.m13 + rotation_scaled.m22 * dL_dcov3d.m23 + rotation_scaled.m32 * dL_dcov3d.m33),
+        2.0f * (rotation_scaled.m13 * dL_dcov3d.m13 + rotation_scaled.m23 * dL_dcov3d.m23 + rotation_scaled.m33 * dL_dcov3d.m33)};
+    const float dL_dqxx = -dL_drotation.m22 - dL_drotation.m33;
+    const float dL_dqyy = -dL_drotation.m11 - dL_drotation.m33;
+    const float dL_dqzz = -dL_drotation.m11 - dL_drotation.m22;
+    const float dL_dqxy = dL_drotation.m12 + dL_drotation.m21;
+    const float dL_dqxz = dL_drotation.m13 + dL_drotation.m31;
+    const float dL_dqyz = dL_drotation.m23 + dL_drotation.m32;
+    const float dL_dqrx = dL_drotation.m32 - dL_drotation.m23;
+    const float dL_dqry = dL_drotation.m13 - dL_drotation.m31;
+    const float dL_dqrz = dL_drotation.m21 - dL_drotation.m12;
+    // The following formula for quaternion gradient appears to be a custom implementation.
+    // It's recommended to verify its correctness against the original 3DGS paper or standard quaternion calculus references.
+    const float dL_dq_norm_helper = qxx * dL_dqxx + qyy * dL_dqyy + qzz * dL_dqzz + qxy * dL_dqxy + qxz * dL_dqxz + qyz * dL_dqyz + qrx * dL_dqrx + qry * dL_dqry + qrz * dL_dqrz;
+    const float4 dL_draw_rotation = 2.0f * make_float4(qx * dL_dqrx + qy * dL_dqry + qz * dL_dqrz - qr * dL_dq_norm_helper, 2.0f * qx * dL_dqxx + qy * dL_dqxy + qz * dL_dqxz + qr * dL_dqrx - qx * dL_dq_norm_helper, 2.0f * qy * dL_dqyy + qx * dL_dqxy + qz * dL_dqyz + qr * dL_dqry - qy * dL_dq_norm_helper, 2.0f * qz * dL_dqzz + qx * dL_dqxz + qy * dL_dqyz + qr * dL_dqrz - qz * dL_dq_norm_helper) / q_norm_sq;
+#ifndef NDEBUG
+    assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
+    grad_raw_rotations[primitive_idx] = dL_draw_rotation;
+
+    // TODO: only needed for adaptive density control from the original 3dgs
+    if (densification_info != nullptr) {
+#ifndef NDEBUG
+        // Boundary check for densification_info array (size: 2 * n_primitives)
+        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+        assert(n_primitives + primitive_idx >= 0 && n_primitives + primitive_idx < 2 * n_primitives);
+#endif
+        densification_info[primitive_idx] += 1.0f;
+        densification_info[n_primitives + primitive_idx] += length(dL_dmean2d * make_float2(0.5f * w, 0.5f * h));
+        // densification_info[n_primitives + primitive_idx] += length(dL_dmean2d);
+    }
+}
+
+inline __device__ void prefetch(const void* ptr) {
+    asm volatile("prefetch.global.L1 [%0];" :: "l"(ptr));
+}
+
+struct alignas(32) PerPixel {
+    float3 grad_color_pixel;
+    uint last_contributor;
+    float3 color_pixel_after;
+    float transmittance;
+};
+
+static inline __device__ void fast_copy(PerPixel &dst,
+                                        const PerPixel &src) {
+    uint64_t *dst_ptr = (uint64_t *)&dst;
+    const uint64_t *src_ptr = (const uint64_t *)&src;
 #pragma unroll
-      for (int i = 0; i < 4; i++) {
-        dst_ptr[i] = src_ptr[i]; // nvcc will expand all these into two LDS.128 command
-      }
+    for (int i = 0; i < 4; i++) {
+    dst_ptr[i] = src_ptr[i]; // nvcc will expand all these into two LDS.128 command
+    }
+}
+
+static inline __device__ void fast_zero(PerPixel &dst) {
+    uint64_t *dst_ptr = (uint64_t *)&dst;
+#pragma unroll
+    for (int i = 0; i < 4; i++) {
+    dst_ptr[i] = (uint64_t) 0;
+    }
+}
+
+
+__global__ void blend_backward_cu(
+    const uint2* __restrict__ tile_instance_ranges,
+    const uint* __restrict__ tile_bucket_offsets,
+    const uint* __restrict__ instance_primitive_indices,
+    const float2* __restrict__ primitive_mean2d,
+    const float4* __restrict__ primitive_conic_opacity,
+    const float3* __restrict__ primitive_color,
+    const float* __restrict__ grad_image,
+    const float* __restrict__ image,
+    const uint* __restrict__ tile_max_n_contributions,
+    const uint* __restrict__ tile_n_contributions,
+    const uint* __restrict__ bucket_tile_index,
+    const float4* __restrict__ bucket_color_transmittance,
+    float2* grad_mean2d,
+    float* grad_conic,
+    float* grad_raw_opacity,
+    float3* grad_color,
+    const uint n_buckets,
+    const uint n_primitives,
+    const uint width,
+    const uint height,
+    const uint grid_width) {
+    auto block = cg::this_thread_block();
+    auto warp = cg::tiled_partition<32>(block);
+    const uint lane_idx = warp.thread_rank();
+    const uint warp_idx = block.thread_rank() / 32;
+
+    assert(warp_idx < config::blend_bwd_n_warps);
+    const uint bucket_idx = (block.group_index().x * config::blend_bwd_n_warps) + warp_idx;
+
+    if (bucket_idx >= n_buckets)
+        return;
+
+    const uint tile_idx = bucket_tile_index[bucket_idx];
+    const uint2 tile_instance_range = tile_instance_ranges[tile_idx];
+    const int tile_n_primitives = tile_instance_range.y - tile_instance_range.x;
+    const uint tile_first_bucket_offset = tile_idx == 0 ? 0 : tile_bucket_offsets[tile_idx - 1];
+    const int tile_bucket_idx = bucket_idx - tile_first_bucket_offset;
+    if (tile_bucket_idx * 32 >= tile_max_n_contributions[tile_idx])
+        return;
+
+    const int tile_primitive_idx = tile_bucket_idx * 32 + lane_idx;
+    const int instance_idx = tile_instance_range.x + tile_primitive_idx;
+    const bool valid_primitive = tile_primitive_idx < tile_n_primitives;
+
+    // load gaussian data
+    uint primitive_idx = 0;
+    float2 mean2d = {0.0f, 0.0f};
+    float3 conic = {0.0f, 0.0f, 0.0f};
+    float opacity = 0.0f;
+    float3 color = {0.0f, 0.0f, 0.0f};
+    float3 color_grad_factor = {0.0f, 0.0f, 0.0f};
+
+    // tile metadata
+    const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
+    const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_height};
+
+    bucket_color_transmittance += bucket_idx * config::block_size_blend;
+
+    if (valid_primitive) {
+        primitive_idx = instance_primitive_indices[instance_idx];
+        mean2d = primitive_mean2d[primitive_idx];
+        const float4 conic_opacity = primitive_conic_opacity[primitive_idx];
+        conic = make_float3(conic_opacity);
+        opacity = conic_opacity.w;
+        const float3 color_unclamped = primitive_color[primitive_idx];
+        color = fmaxf(color_unclamped, 0.0f);
+        if (color_unclamped.x >= 0.0f)
+            color_grad_factor.x = 1.0f;
+        if (color_unclamped.y >= 0.0f)
+            color_grad_factor.y = 1.0f;
+        if (color_unclamped.z >= 0.0f)
+            color_grad_factor.z = 1.0f;
     }
 
-    static inline __device__ void fast_zero(PerPixel &dst) {
-      uint64_t *dst_ptr = (uint64_t *)&dst;
-#pragma unroll
-      for (int i = 0; i < 4; i++) {
-        dst_ptr[i] = (uint64_t) 0;
-      }
-    }
 
+    // gradient accumulation
+    float2 dL_dmean2d_accum = {0.0f, 0.0f};
+    float3 dL_dconic_accum = {0.0f, 0.0f, 0.0f};
+    float dL_draw_opacity_partial_accum = 0.0f;
+    float3 dL_dcolor_accum = {0.0f, 0.0f, 0.0f};
 
-    __global__ void blend_backward_cu(
-        const uint2* __restrict__ tile_instance_ranges,
-        const uint* __restrict__ tile_bucket_offsets,
-        const uint* __restrict__ instance_primitive_indices,
-        const float2* __restrict__ primitive_mean2d,
-        const float4* __restrict__ primitive_conic_opacity,
-        const float3* __restrict__ primitive_color,
-        const float* __restrict__ grad_image,
-        const float* __restrict__ image,
-        const uint* __restrict__ tile_max_n_contributions,
-        const uint* __restrict__ tile_n_contributions,
-        const uint* __restrict__ bucket_tile_index,
-        const float4* __restrict__ bucket_color_transmittance,
-        float2* grad_mean2d,
-        float* grad_conic,
-        float* grad_raw_opacity,
-        float3* grad_color,
-        const uint n_buckets,
-        const uint n_primitives,
-        const uint width,
-        const uint height,
-        const uint grid_width) {
-        auto block = cg::this_thread_block();
-        auto warp = cg::tiled_partition<32>(block);
-        const uint lane_idx = warp.thread_rank();
-        const uint warp_idx = block.thread_rank() / 32;
+    alignas(32) PerPixel per_pixel_registers;
+    fast_zero(per_pixel_registers);
 
-        assert(warp_idx < config::blend_bwd_n_warps);
-        const uint bucket_idx = (block.group_index().x * config::blend_bwd_n_warps) + warp_idx;
+    // shorter
+    auto& last_contributor = per_pixel_registers.last_contributor;
+    auto& color_pixel_after = per_pixel_registers.color_pixel_after;
+    auto& transmittance = per_pixel_registers.transmittance;
+    auto& grad_color_pixel = per_pixel_registers.grad_color_pixel;
 
-        if (bucket_idx >= n_buckets)
-            return;
-
-        const uint tile_idx = bucket_tile_index[bucket_idx];
-        const uint2 tile_instance_range = tile_instance_ranges[tile_idx];
-        const int tile_n_primitives = tile_instance_range.y - tile_instance_range.x;
-        const uint tile_first_bucket_offset = tile_idx == 0 ? 0 : tile_bucket_offsets[tile_idx - 1];
-        const int tile_bucket_idx = bucket_idx - tile_first_bucket_offset;
-        if (tile_bucket_idx * 32 >= tile_max_n_contributions[tile_idx])
-            return;
-
-        const int tile_primitive_idx = tile_bucket_idx * 32 + lane_idx;
-        const int instance_idx = tile_instance_range.x + tile_primitive_idx;
-        const bool valid_primitive = tile_primitive_idx < tile_n_primitives;
-
-        // load gaussian data
-        uint primitive_idx = 0;
-        float2 mean2d = {0.0f, 0.0f};
-        float3 conic = {0.0f, 0.0f, 0.0f};
-        float opacity = 0.0f;
-        float3 color = {0.0f, 0.0f, 0.0f};
-        float3 color_grad_factor = {0.0f, 0.0f, 0.0f};
-
-        // tile metadata
-        const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
-        const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_height};
-
-        bucket_color_transmittance += bucket_idx * config::block_size_blend;
-
-        if (valid_primitive) {
-            primitive_idx = instance_primitive_indices[instance_idx];
-            mean2d = primitive_mean2d[primitive_idx];
-            const float4 conic_opacity = primitive_conic_opacity[primitive_idx];
-            conic = make_float3(conic_opacity);
-            opacity = conic_opacity.w;
-            const float3 color_unclamped = primitive_color[primitive_idx];
-            color = fmaxf(color_unclamped, 0.0f);
-            if (color_unclamped.x >= 0.0f)
-                color_grad_factor.x = 1.0f;
-            if (color_unclamped.y >= 0.0f)
-                color_grad_factor.y = 1.0f;
-            if (color_unclamped.z >= 0.0f)
-                color_grad_factor.z = 1.0f;
-        }
-
-
-        // gradient accumulation
-        float2 dL_dmean2d_accum = {0.0f, 0.0f};
-        float3 dL_dconic_accum = {0.0f, 0.0f, 0.0f};
-        float dL_draw_opacity_partial_accum = 0.0f;
-        float3 dL_dcolor_accum = {0.0f, 0.0f, 0.0f};
-
-        alignas(32) PerPixel per_pixel_registers;
-        fast_zero(per_pixel_registers);
-
-        // shorter
-        auto& last_contributor = per_pixel_registers.last_contributor;
-        auto& color_pixel_after = per_pixel_registers.color_pixel_after;
-        auto& transmittance = per_pixel_registers.transmittance;
-        auto& grad_color_pixel = per_pixel_registers.grad_color_pixel;
-
-        __shared__ PerPixel cached_per_pixel_all[config::blend_bwd_n_warps][32];
-        auto& cached_per_pixel = cached_per_pixel_all[warp_idx];
-        const uint lane_idx_uint = static_cast<uint>(lane_idx);
-        unsigned long long saddr;
-        asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel));
+    __shared__ PerPixel cached_per_pixel_all[config::blend_bwd_n_warps][32];
+    auto& cached_per_pixel = cached_per_pixel_all[warp_idx];
+    const uint lane_idx_uint = static_cast<uint>(lane_idx);
+    unsigned long long saddr;
+    asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel));
 
 // iterate over all pixels in the tile
 // Unrolling is not a good idea here.
 // #pragma unroll 2
-        for (uint ii = 0; ii < config::block_size_blend + 31; ii += 16) {
-            if (ii % 32 == 0 /*  && ii < config::block_size_blend */) { // fetch data
-                const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
-                const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
-                const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
-                const uint i = ii + lane_idx_uint;
-                const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
-                                            start_pixel_coords.y | (i >> config::tile_width_log2)};
-                const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
-                const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
-                    /* row */ pixel_coords.y,
-                    /* col */ pixel_coords.x,
-                    width_in_tile);
-                const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
-                PerPixel local;
-                float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
-                if (is_valid) {
-                    color_transmittance = bucket_color_transmittance[i];
-                    local.last_contributor = tile_n_contributions[pixel_idx]; // logical pixel index.
-                    local.grad_color_pixel = make_float3(grad_image[physical_pixel_idx],
-                                    grad_image[physical_pixel_idx + channel_stride],
-                                    grad_image[physical_pixel_idx + channel_stride * 2]);
-                    local.color_pixel_after = make_float3(image[physical_pixel_idx],
-                                    image[physical_pixel_idx + channel_stride],
-                                    image[physical_pixel_idx + channel_stride * 2]);
-                    local.transmittance = color_transmittance.w;
-                }
-                local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
-                fast_copy(cached_per_pixel[lane_idx], local);
-            } else if (ii % 16 == 0) {
-                // odd. prefetch
-                const uint i = ii + lane_idx_uint + 16;
-                const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
-                const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
-                const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
-                const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
-                                            start_pixel_coords.y | (i >> config::tile_width_log2)};
-                const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
-                    /* row */ pixel_coords.y,
-                    /* col */ pixel_coords.x,
-                    width_in_tile);
-                prefetch(image + physical_pixel_idx);
-                prefetch(bucket_color_transmittance + i);
-                prefetch(grad_image + physical_pixel_idx);
+    for (uint ii = 0; ii < config::block_size_blend + 31; ii += 16) {
+        if (ii % 32 == 0 /*  && ii < config::block_size_blend */) { // fetch data
+            const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+            const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+            const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
+            const uint i = ii + lane_idx_uint;
+            const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
+                                        start_pixel_coords.y | (i >> config::tile_width_log2)};
+            const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
+            const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
+                /* row */ pixel_coords.y,
+                /* col */ pixel_coords.x,
+                width_in_tile);
+            const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
+            PerPixel local;
+            float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
+            if (is_valid) {
+                color_transmittance = bucket_color_transmittance[i];
+                local.last_contributor = tile_n_contributions[pixel_idx]; // logical pixel index.
+                local.grad_color_pixel = make_float3(grad_image[physical_pixel_idx],
+                                grad_image[physical_pixel_idx + channel_stride],
+                                grad_image[physical_pixel_idx + channel_stride * 2]);
+                local.color_pixel_after = make_float3(image[physical_pixel_idx],
+                                image[physical_pixel_idx + channel_stride],
+                                image[physical_pixel_idx + channel_stride * 2]);
+                local.transmittance = color_transmittance.w;
             }
+            local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
+            fast_copy(cached_per_pixel[lane_idx], local);
+        } else if (ii % 16 == 0) {
+            // odd. prefetch
+            const uint i = ii + lane_idx_uint + 16;
+            const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+            const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+            const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
+            const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
+                                        start_pixel_coords.y | (i >> config::tile_width_log2)};
+            const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
+                /* row */ pixel_coords.y,
+                /* col */ pixel_coords.x,
+                width_in_tile);
+            prefetch(image + physical_pixel_idx);
+            prefetch(bucket_color_transmittance + i);
+            prefetch(grad_image + physical_pixel_idx);
+        }
 
 // #pragma unroll 16
-            for (uint j = 0; j < 16; ++j) {
-                const uint i = ii + j;
-                // which pixel index should this thread deal with?
-                const uint idx = i - lane_idx_uint; // overflow is ok, will much greater than the block size, and mark invalid
-                const uint2 pixel_coords = {
-                    start_pixel_coords.x | (idx & config::tile_width_minus_1),
-                    start_pixel_coords.y | (idx >> config::tile_width_log2)};
-                per_pixel_registers = warp.shfl_up(per_pixel_registers, 1);
+        for (uint j = 0; j < 16; ++j) {
+            const uint i = ii + j;
+            // which pixel index should this thread deal with?
+            const uint idx = i - lane_idx_uint; // overflow is ok, will much greater than the block size, and mark invalid
+            const uint2 pixel_coords = {
+                start_pixel_coords.x | (idx & config::tile_width_minus_1),
+                start_pixel_coords.y | (idx >> config::tile_width_log2)};
+            per_pixel_registers = warp.shfl_up(per_pixel_registers, 1);
 
-                const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;
-                const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
+            const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;
+            const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
 
-                const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y));
-                const float2 delta = (mean2d - 0.5f) - pixel;
-                const float3 delta_coefs = make_float3(delta.x * delta.x, delta.x * delta.y, delta.y * delta.y);
-                const float sigma_over_2_gt = 0.5f * (conic.x * delta_coefs.x + conic.z * delta_coefs.z) + conic.y * delta_coefs.y;
-                const float sigma_over_2 = fmaxf(sigma_over_2_gt, 0.0f); // ensures >= 0
-                const float gaussian = __expf(-sigma_over_2);
+            const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y));
+            const float2 delta = (mean2d - 0.5f) - pixel;
+            const float3 delta_coefs = make_float3(delta.x * delta.x, delta.x * delta.y, delta.y * delta.y);
+            const float sigma_over_2_gt = 0.5f * (conic.x * delta_coefs.x + conic.z * delta_coefs.z) + conic.y * delta_coefs.y;
+            const float sigma_over_2 = fmaxf(sigma_over_2_gt, 0.0f); // ensures >= 0
+            const float gaussian = __expf(-sigma_over_2);
 
-                // leader thread loads values from shared memory into registers
-                if (lane_idx == 0 && valid_general) {
-                    float4* dst_view = reinterpret_cast<float4*>(&per_pixel_registers);
-                    float4* dst_view_next = dst_view + 1;
-                    // asm this. fuck
-                    asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
-                        : "=f"(dst_view->x), "=f"(dst_view->y), "=f"(dst_view->z), "=f"(dst_view->w)
-                        : "l"(saddr + (i % 32) * sizeof(PerPixel)));
-                    asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4+16];"
-                        : "=f"(dst_view_next->x), "=f"(dst_view_next->y), "=f"(dst_view_next->z), "=f"(dst_view_next->w)
-                        : "l"(saddr + (i % 32) * sizeof(PerPixel)));
-                }
-                const bool skip = !valid_general || tile_primitive_idx >= last_contributor;
-                const float alpha_prepare = opacity * gaussian;
-                const float color_dot_grad_color_pixel = dot(color, grad_color_pixel);
-
-                float alpha = 0.f;
-                if (!skip) [[likely]] {
-                    alpha = fminf(alpha_prepare, config::max_fragment_alpha);
-                }
-
-                const float blending_weight = transmittance * alpha;
-                const float one_minus_alpha = 1.0f - alpha;
-                // color gradient
-                const float3 dL_dcolor = blending_weight * grad_color_pixel * color_grad_factor;
-                dL_dcolor_accum += dL_dcolor;
-                color_pixel_after -= blending_weight * color;
-                const float color_pixel_after_dot_grad_color_pixel = dot(color_pixel_after, grad_color_pixel);
-                const float2 prepare_dl_dmean2d =
-                    make_float2(conic.x * delta.x + conic.y * delta.y,
-                                conic.y * delta.x + conic.z * delta.y);
-
-                // alpha gradient
-                const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel / one_minus_alpha;
-                const float dL_draw_opacity_partial = alpha * dL_dalpha_from_color;
-                dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
-
-                // conic and mean2d gradient
-                const float3 dL_dconic = -0.5f * dL_draw_opacity_partial * delta_coefs;
-                dL_dconic_accum += dL_dconic;
-                const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
-
-                dL_dmean2d_accum -= dL_dmean2d;
-                transmittance *= one_minus_alpha;
+            // leader thread loads values from shared memory into registers
+            if (lane_idx == 0 && valid_general) {
+                float4* dst_view = reinterpret_cast<float4*>(&per_pixel_registers);
+                float4* dst_view_next = dst_view + 1;
+                // asm this. fuck
+                asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
+                    : "=f"(dst_view->x), "=f"(dst_view->y), "=f"(dst_view->z), "=f"(dst_view->w)
+                    : "l"(saddr + (i % 32) * sizeof(PerPixel)));
+                asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4+16];"
+                    : "=f"(dst_view_next->x), "=f"(dst_view_next->y), "=f"(dst_view_next->z), "=f"(dst_view_next->w)
+                    : "l"(saddr + (i % 32) * sizeof(PerPixel)));
             }
-        }
+            const bool skip = !valid_general || tile_primitive_idx >= last_contributor;
+            const float alpha_prepare = opacity * gaussian;
+            const float color_dot_grad_color_pixel = dot(color, grad_color_pixel);
 
-        // finally add the gradients using atomics
-        if (valid_primitive) {
-#ifndef NDEBUG
-            // Boundary check for gradient arrays
-            assert(primitive_idx >= 0 && primitive_idx < n_primitives);
-#endif
-            atomicAdd(&grad_mean2d[primitive_idx].x, dL_dmean2d_accum.x);
-            atomicAdd(&grad_mean2d[primitive_idx].y, dL_dmean2d_accum.y);
-            atomicAdd(&grad_conic[primitive_idx], dL_dconic_accum.x);
-            atomicAdd(&grad_conic[n_primitives + primitive_idx], dL_dconic_accum.y);
-            atomicAdd(&grad_conic[2 * n_primitives + primitive_idx], dL_dconic_accum.z);
-            const float dL_draw_opacity = dL_draw_opacity_partial_accum * (1.0f - opacity);
-            atomicAdd(&grad_raw_opacity[primitive_idx], dL_draw_opacity);
-            atomicAdd(&grad_color[primitive_idx].x, dL_dcolor_accum.x);
-            atomicAdd(&grad_color[primitive_idx].y, dL_dcolor_accum.y);
-            atomicAdd(&grad_color[primitive_idx].z, dL_dcolor_accum.z);
+            float alpha = 0.f;
+            if (!skip) [[likely]] {
+                alpha = fminf(alpha_prepare, config::max_fragment_alpha);
+            }
+
+            const float blending_weight = transmittance * alpha;
+            const float one_minus_alpha = 1.0f - alpha;
+            // color gradient
+            const float3 dL_dcolor = blending_weight * grad_color_pixel * color_grad_factor;
+            dL_dcolor_accum += dL_dcolor;
+            color_pixel_after -= blending_weight * color;
+            const float color_pixel_after_dot_grad_color_pixel = dot(color_pixel_after, grad_color_pixel);
+            const float2 prepare_dl_dmean2d =
+                make_float2(conic.x * delta.x + conic.y * delta.y,
+                            conic.y * delta.x + conic.z * delta.y);
+
+            // alpha gradient
+            const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel / one_minus_alpha;
+            const float dL_draw_opacity_partial = alpha * dL_dalpha_from_color;
+            dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
+
+            // conic and mean2d gradient
+            const float3 dL_dconic = -0.5f * dL_draw_opacity_partial * delta_coefs;
+            dL_dconic_accum += dL_dconic;
+            const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
+
+            dL_dmean2d_accum -= dL_dmean2d;
+            transmittance *= one_minus_alpha;
         }
     }
+
+    // finally add the gradients using atomics
+    if (valid_primitive) {
+#ifndef NDEBUG
+        // Boundary check for gradient arrays
+        assert(primitive_idx >= 0 && primitive_idx < n_primitives);
+#endif
+        atomicAdd(&grad_mean2d[primitive_idx].x, dL_dmean2d_accum.x);
+        atomicAdd(&grad_mean2d[primitive_idx].y, dL_dmean2d_accum.y);
+        atomicAdd(&grad_conic[primitive_idx], dL_dconic_accum.x);
+        atomicAdd(&grad_conic[n_primitives + primitive_idx], dL_dconic_accum.y);
+        atomicAdd(&grad_conic[2 * n_primitives + primitive_idx], dL_dconic_accum.z);
+        const float dL_draw_opacity = dL_draw_opacity_partial_accum * (1.0f - opacity);
+        atomicAdd(&grad_raw_opacity[primitive_idx], dL_draw_opacity);
+        atomicAdd(&grad_color[primitive_idx].x, dL_dcolor_accum.x);
+        atomicAdd(&grad_color[primitive_idx].y, dL_dcolor_accum.y);
+        atomicAdd(&grad_color[primitive_idx].z, dL_dcolor_accum.z);
+    }
+}
 
 } // namespace fast_gs::rasterization::kernels::backward
