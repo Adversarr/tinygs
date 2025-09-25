@@ -460,7 +460,7 @@ __global__ void blend_backward_cu(
 // Unrolling is not a good idea here.
 // #pragma unroll 2
     for (uint ii = 0; ii < config::block_size_blend + 31; ii += 16) {
-        if (ii % 32 == 0 /*  && ii < config::block_size_blend */) { // fetch data
+        if (ii % 32 == 0  && ii < config::block_size_blend) { // fetch data
             const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
             const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
             const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
@@ -489,21 +489,6 @@ __global__ void blend_backward_cu(
             local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
             fast_copy(cached_per_pixel[lane_idx], local);
             __syncwarp(); // Synchronize after writing to shared memory
-        } else if (ii % 16 == 0) {
-            // odd. prefetch
-            const uint i = ii + lane_idx_uint + 16;
-            const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
-            const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
-            const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
-            const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
-                                        start_pixel_coords.y | (i >> config::tile_width_log2)};
-            const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
-                /* row */ pixel_coords.y,
-                /* col */ pixel_coords.x,
-                width_in_tile);
-            prefetch(image + physical_pixel_idx);
-            prefetch(bucket_color_transmittance + i);
-            prefetch(grad_image + physical_pixel_idx);
         }
 
 // #pragma unroll 16

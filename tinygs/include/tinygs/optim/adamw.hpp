@@ -7,9 +7,9 @@ namespace tinygs {
 
 struct AdamWParameters {
   /// Shared parameters
-  double beta1 = 0.9;
-  double beta2 = 0.999;
-  double epsilon = 1e-8;
+  float beta1 = 0.9f;
+  float beta2 = 0.999f;
+  float epsilon = 1e-8f;
 
   /// AdaBound extension (from tiny-cuda-nn)
   bool enable_adabound = false;
