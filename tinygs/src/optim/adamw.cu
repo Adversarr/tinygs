@@ -29,14 +29,17 @@ __device__ void adam_step_func(
   first_moment = beta1 * first_moment + (1 - beta1) * gradient;
   second_moment = beta2 * second_moment + (1 - beta2) * gradient_sq;
 
-  // // Follow AdaBound paradigm
-  const float effective_learning_rate
-      = fmin(fmax(learning_rate / (sqrtf(second_moment) + epsilon), lower_lr_bound), upper_lr_bound);
-
-  weight -= effective_learning_rate * first_moment;
+  // // Follow AdaBound paradigm (numerically stable)
+  {
+    const double denom = sqrt((double)second_moment) + (double)epsilon;
+    const double safe_denom = (denom == 0.0) ? 1e-300 : denom;
+    const double eff_lr_d = (double)learning_rate / safe_denom;
+    const float effective_learning_rate = fminf(fmaxf((float)eff_lr_d, lower_lr_bound), upper_lr_bound);
+    weight -= effective_learning_rate * first_moment;
+  }
 }
 
-__global__ void launch_gaussian_adam_step_SoA(
+__global__ void launch_gaussian_adam_step_SoA_ref2(
   // Means
   vec3* __restrict__ means,
   const vec3* __restrict__ means_grad,
@@ -68,137 +71,138 @@ __global__ void launch_gaussian_adam_step_SoA(
   const float gradient_scale,
   const float global_lr
 ) {
-  auto grid = cooperative_groups::this_grid();
   auto block = cooperative_groups::this_thread_block();
-  const uint block_leader_thread_idx = blockIdx.x * blockDim.x;
-  const auto local_idx = threadIdx.x;
-  const auto idx = block_leader_thread_idx + local_idx;
-  const uint this_block_range = ::min(block.size(), num_gaussians - block_leader_thread_idx);
-  constexpr size_t stages_count = 2; // Pipeline with 2 stage
-  // note: we cannot return, the last thread will be used to enable barrier.
+  const unsigned int block_leader_thread_idx = blockIdx.x * blockDim.x;
+  const unsigned int local_idx = threadIdx.x;
+  const unsigned int idx = block_leader_thread_idx + local_idx;
+  // Fix: Use signed int to avoid unsigned underflow
+  int remaining = static_cast<int>(num_gaussians) - static_cast<int>(block_leader_thread_idx);
+  remaining = max(0, remaining);
+  const unsigned int this_block_range = min(blockDim.x, static_cast<unsigned int>(remaining));
+  constexpr size_t stages_count = 2;  // Pipeline with 2 stages
   bool enable = idx < num_gaussians;
-
-  /* == common settings ==  */
+  /* == common settings == */
   __shared__ cuda::pipeline_shared_state<
       cuda::thread_scope::thread_scope_block,
       stages_count
   > shared_state;
   auto pipeline = cuda::make_pipeline(block, &shared_state);
-  // 2 stage for async, block.size() * 4      *   4B * 4               * 2
-  //                                   float4 | v, grad, first, second | stage
-  // it should < 4096B, otherwise will limit the occupancy.
-  // => 4096/128 = 32 = block.size() ? This is too small. (One warp per SM)
-  // However, if we have better GPUs, this could be much much much larger!
-  extern __shared__ float4 shared[];
-  float4* const shared_val = shared;
-  float4* const shared_grad = shared + block.size(); // float4 * bsize
-  float4* const shared_momentum = shared + 2 * block.size();
-  const size_t shared_offset[stages_count] = {0, 4 * block.size()};
-
-  const double beta1 = adam_p.beta1;
-  const double beta2 = adam_p.beta2;
-  const double epsilon = adam_p.epsilon;
+  extern __shared__ float shared2[];
+  float* const shared_val = shared2;
+  float* const shared_grad = shared2 + 4 * blockDim.x;
+  float* const shared_momentum = shared2 + 8 * blockDim.x;
+  const uint shared_offset[stages_count] = {0, 16 * blockDim.x};  // Fix: Byte offsets
+  const float beta1_f = adam_p.beta1;
+  const float beta2_f = adam_p.beta2;
+  const float epsilon_f = adam_p.epsilon;
   const float max_grad_1 = general_p.max_grad_1;
-
-  uint curr_stage_store = 0;
-  uint curr_stage_compute = 0;
-  // AdaBound paper: https://openreview.net/pdf?id=Bkg3g2R9FX
-  float lower_lr_bound = 0;
+  unsigned int curr_stage_store = 0;
+  unsigned int curr_stage_compute = 0;
+  float lower_lr_bound = 0.0f;
   float upper_lr_bound = std::numeric_limits<float>::max();
-
-  // TODO: typically very large, will lose accuracy.
-  const float inv_n = 1.0f / num_gaussians;
-
-  // actually perform the optimization for this gaussian
-  uint this_step = 0;
-  float this_lr_scale = 0;
-
-#define PREFETCH_SHM(type, field_name)                                                                               \
-  pipeline.producer_acquire();                                                                                       \
-  {uint cpy_bytes = div_round_up<uint>(sizeof(type) * this_block_range, 16u) * 16u;                                         \
-  uint cpy_bytes2 = div_round_up<uint>(sizeof(type) * this_block_range * 2, 16u) * 16u;                                    \
-  cuda::memcpy_async(block, shared_val + shared_offset[curr_stage_store], (const float4*) ((field_name) + block_leader_thread_idx),    \
-                     cpy_bytes, pipeline);                                                                           \
-  cuda::memcpy_async(block, shared_grad + shared_offset[curr_stage_store],                                           \
-                     (const float4*) ( (field_name##_grad) + block_leader_thread_idx), cpy_bytes, pipeline);      \
-  cuda::memcpy_async(block, shared_momentum + shared_offset[curr_stage_store],                                       \
-                     (const float4*) ((field_name##_first_second) + 2 * block_leader_thread_idx), cpy_bytes2, \
-                     pipeline);                                                                                      \
-  pipeline.producer_commit();                                                                                        }\
+  const float inv_n = 1.0f / static_cast<float>(num_gaussians);
+  uint32_t this_step = 0;
+  float this_lr_scale = 1.0f;
+#define PREFETCH_SHM(type, field_name) \
+  pipeline.producer_acquire(); \
+  { \
+    const uint cpy_bytes = ((sizeof(type) * this_block_range + 15) / 16) * 16; /* Align to 16B */\
+    const uint cpy_bytes2 = ((sizeof(type) * this_block_range * 2 + 15) / 16) * 16; \
+    cuda::memcpy_async(block, shared_val + shared_offset[curr_stage_store], \
+                       reinterpret_cast<const float*>((field_name) + block_leader_thread_idx), \
+                       cpy_bytes, pipeline); \
+    cuda::memcpy_async(block, shared_grad + shared_offset[curr_stage_store], \
+                       reinterpret_cast<const float*>(field_name##_grad + block_leader_thread_idx), \
+                       cpy_bytes, pipeline); \
+    cuda::memcpy_async(block, shared_momentum + shared_offset[curr_stage_store], \
+                       reinterpret_cast<const float*>(field_name##_first_second + 2 * block_leader_thread_idx), \
+                       cpy_bytes2, pipeline); \
+  } \
+  pipeline.producer_commit(); \
   curr_stage_store = (curr_stage_store + 1) % stages_count
-
-  PREFETCH_SHM(float3, means);
+  PREFETCH_SHM(vec3, means);
   PREFETCH_SHM(float, opacities);
 
-  const float beta1_f = (float)beta1;
-  const float beta2_f = (float)beta2;
-  const float epsilon_f = (float)epsilon;
-
 #define apply_(v, g, f, s, lr) adam_step_func((v), (g), (f), (s), (lr), beta1_f, beta2_f, epsilon_f, max_grad_1, lower_lr_bound, upper_lr_bound)
-
-  // Use mean
+  // Means
   {
-    vec3* pval = reinterpret_cast<vec3*>(shared_val + shared_offset[curr_stage_compute]);
-    const vec3* pgrad = reinterpret_cast<const vec3*>(shared_grad + shared_offset[curr_stage_compute]);
-    vec3* pmom = reinterpret_cast<vec3*>(shared_momentum + shared_offset[curr_stage_compute]);
     pipeline.consumer_wait();
     if (enable) {
+      vec3* pval = reinterpret_cast<vec3*>(shared_val + shared_offset[curr_stage_compute]);
+      const vec3* pgrad = reinterpret_cast<const vec3*>(shared_grad + shared_offset[curr_stage_compute]);
+      vec3* pmom = reinterpret_cast<vec3*>(shared_momentum + shared_offset[curr_stage_compute]);
       vec3 val = pval[local_idx];
-      vec3 grad = pgrad[local_idx];
+      vec3 grad = pgrad[local_idx] * gradient_scale;  // Fix: Add gradient_scale
       vec3 first = pmom[local_idx * 2];
       vec3 second = pmom[local_idx * 2 + 1];
-
-      if (sum(abs(grad)) == 0) {
+      float grad_norm_1 = sum(abs(grad));
+      if (general_p.skip_zero_grad && grad_norm_1 == 0.0f) {  // Fix: Conditional skip, only on means
         enable = false;
-      } 
-
-      if (enable) {
+      } else {
         this_step = ++gaussian_steps[idx];
-        this_lr_scale = ::sqrt(1. - ::pow(beta2, static_cast<double>(this_step))) /
-                              (1. - ::pow(beta1, static_cast<double>(this_step)));
-        const float lr = (general_p.means_lr * global_lr) * this_lr_scale;
+        // Fix: Compute AdaBound bounds per gaussian (based on this_step)
+        if (adam_p.enable_adabound) {
+          // Use double intermediates and guard denominators to avoid underflow to zero.
+          const double denom = fmax((1.0 - (double)adam_p.beta2) * (double)this_step + 1.0, 1e-20);
+          const double lower = 0.1 - 0.1 / denom;
+          const double denom2 = fmax((1.0 - (double)adam_p.beta2) * (double)this_step, 1e-20);
+          const double upper = 0.1 + 0.1 / denom2;
+          lower_lr_bound = static_cast<float>(fmax(lower, 0.0));
+          // ensure upper bound is not smaller than lower bound (tiny epsilon)
+          upper_lr_bound = static_cast<float>(fmax(upper, (double)lower_lr_bound + 1e-12));
+        }
+        if (this_step < 1024) {
+          // Compute in double precision and guard the denominator to avoid numerical issues
+          const double b2t = pow((double)adam_p.beta2, (double)this_step);
+          const double b1t = pow((double)adam_p.beta1, (double)this_step);
+          const double num = fmax(1.0 - b2t, 1e-300);
+          double den = 1.0 - b1t;
+          den = fmax(den, 1e-16);
+          this_lr_scale = static_cast<float>(sqrt(num) / den);
+        }
+        const float lr = general_p.means_lr * global_lr * this_lr_scale;
         apply_(val.x, grad.x, first.x, second.x, lr);
         apply_(val.y, grad.y, first.y, second.y, lr);
         apply_(val.z, grad.z, first.z, second.z, lr);
         means[idx] = val;
-        means_first_second[idx * 2] = first;
-        means_first_second[idx * 2 + 1] = second;
+        means_first_second[2 * idx] = first;
+        means_first_second[2 * idx + 1] = second;
       }
     }
     curr_stage_compute = (curr_stage_compute + 1) % stages_count;
     pipeline.consumer_release();
-    PREFETCH_SHM(float4, rotations); // means is used, we load rotations now.
+    PREFETCH_SHM(vec4, rotations);
   }
-
-  { // opacities
+  // Opacities
+  {
     pipeline.consumer_wait();
-    float* pval = reinterpret_cast<float*>(shared_val + shared_offset[curr_stage_compute]);
-    const float* pgrad = reinterpret_cast<const float*>(shared_grad + shared_offset[curr_stage_compute]);
-    float* pmom = reinterpret_cast<float*>(shared_momentum + shared_offset[curr_stage_compute]);
-    float val = pval[local_idx];
-    float grad = pgrad[local_idx] * gradient_scale + (general_p.opacities_l1 * activate_opacity_deriv(val)) * inv_n;
-    float first = pmom[local_idx * 2];
-    float second = pmom[local_idx * 2 + 1];
+    if (enable) {
+      float* pval = reinterpret_cast<float*>(shared_val + shared_offset[curr_stage_compute]);
+      const float* pgrad = reinterpret_cast<const float*>(shared_grad + shared_offset[curr_stage_compute]);
+      float* pmom = reinterpret_cast<float*>(shared_momentum + shared_offset[curr_stage_compute]);
+      float val = pval[local_idx];
+      float grad = pgrad[local_idx] * gradient_scale + general_p.opacities_l1 * activate_opacity_deriv(val) * inv_n;
+      float first = pmom[local_idx * 2];
+      float second = pmom[local_idx * 2 + 1];
+      const float lr = general_p.opacities_lr * global_lr * this_lr_scale;
+      apply_(val, grad, first, second, lr);
+      opacities[idx] = val;
+      opacities_first_second[2 * idx] = first;
+      opacities_first_second[2 * idx + 1] = second;
+    }
     curr_stage_compute = (curr_stage_compute + 1) % stages_count;
     pipeline.consumer_release();
     PREFETCH_SHM(vec3, scales);
-    if (enable) {
-      const float lr =  general_p.opacities_lr * global_lr * this_lr_scale;
-      apply_(val, grad, first, second, lr);
-      opacities[idx] = val;
-      opacities_first_second[idx * 2] = first;
-      opacities_first_second[idx * 2 + 1] = second;
-    }
   }
-
-  { // rotations
+  // Rotations
+  {
     pipeline.consumer_wait();
-    vec4* pval = reinterpret_cast<vec4*>(shared_val + shared_offset[curr_stage_compute]);
-    const vec4* pgrad = reinterpret_cast<const vec4*>(shared_grad + shared_offset[curr_stage_compute]);
-    vec4* pmom = reinterpret_cast<vec4*>(shared_momentum + shared_offset[curr_stage_compute]);
     if (enable) {
+      vec4* pval = reinterpret_cast<vec4*>(shared_val + shared_offset[curr_stage_compute]);
+      const vec4* pgrad = reinterpret_cast<const vec4*>(shared_grad + shared_offset[curr_stage_compute]);
+      vec4* pmom = reinterpret_cast<vec4*>(shared_momentum + shared_offset[curr_stage_compute]);
       vec4 val = pval[local_idx];
-      vec4 grad = pgrad[local_idx];
+      vec4 grad = pgrad[local_idx] * gradient_scale;  // Fix: Add gradient_scale
       vec4 first = pmom[local_idx * 2];
       vec4 second = pmom[local_idx * 2 + 1];
       const float lr = general_p.rotations_lr * global_lr * this_lr_scale;
@@ -207,22 +211,23 @@ __global__ void launch_gaussian_adam_step_SoA(
       apply_(val.z, grad.z, first.z, second.z, lr);
       apply_(val.w, grad.w, first.w, second.w, lr);
       rotations[idx] = val;
-      rotations_first_second[idx * 2] = first;
-      rotations_first_second[idx * 2 + 1] = second;
+      rotations_first_second[2 * idx] = first;
+      rotations_first_second[2 * idx + 1] = second;
     }
     curr_stage_compute = (curr_stage_compute + 1) % stages_count;
     pipeline.consumer_release();
     PREFETCH_SHM(vec3, sh_coefficient_0);
   }
-
-  { // scales
+  // Scales
+  {
     pipeline.consumer_wait();
-    vec3* pval = reinterpret_cast<vec3*>(shared_val + shared_offset[curr_stage_compute]);
-    const vec3* pgrad = reinterpret_cast<const vec3*>(shared_grad + shared_offset[curr_stage_compute]);
-    vec3* pmom = reinterpret_cast<vec3*>(shared_momentum + shared_offset[curr_stage_compute]);
     if (enable) {
+      vec3* pval = reinterpret_cast<vec3*>(shared_val + shared_offset[curr_stage_compute]);
+      const vec3* pgrad = reinterpret_cast<const vec3*>(shared_grad + shared_offset[curr_stage_compute]);
+      vec3* pmom = reinterpret_cast<vec3*>(shared_momentum + shared_offset[curr_stage_compute]);
       vec3 val = pval[local_idx];
-      vec3 grad = pgrad[local_idx];
+      vec3 grad = pgrad[local_idx] * gradient_scale +  // Fix: Add gradient_scale and L1 reg
+                  general_p.scales_l1 * activate_scale_deriv(val) * inv_n;
       vec3 first = pmom[local_idx * 2];
       vec3 second = pmom[local_idx * 2 + 1];
       const float lr = general_p.scales_lr * global_lr * this_lr_scale;
@@ -230,49 +235,50 @@ __global__ void launch_gaussian_adam_step_SoA(
       apply_(val.y, grad.y, first.y, second.y, lr);
       apply_(val.z, grad.z, first.z, second.z, lr);
       scales[idx] = val;
-      scales_first_second[idx * 2] = first;
-      scales_first_second[idx * 2 + 1] = second;
+      scales_first_second[2 * idx] = first;
+      scales_first_second[2 * idx + 1] = second;
     }
     curr_stage_compute = (curr_stage_compute + 1) % stages_count;
     pipeline.consumer_release();
   }
-
-  { // spherical harmonics - 0th coefficient
+  // Spherical Harmonics - 0th coefficient
+  {
     pipeline.consumer_wait();
-    vec3* pval = reinterpret_cast<vec3*>(shared_val + shared_offset[curr_stage_compute]);
-    const vec3* pgrad = reinterpret_cast<const vec3*>(shared_grad + shared_offset[curr_stage_compute]);
-    vec3* pmom = reinterpret_cast<vec3*>(shared_momentum + shared_offset[curr_stage_compute]);
-    vec3 val = pval[local_idx];
-    vec3 grad = pgrad[local_idx];
-    vec3 first = pmom[local_idx * 2];
-    vec3 second = pmom[local_idx * 2 + 1];
-    curr_stage_compute = (curr_stage_compute + 1) % stages_count;
-    pipeline.consumer_release();
-
     if (enable) {
+      vec3* pval = reinterpret_cast<vec3*>(shared_val + shared_offset[curr_stage_compute]);
+      const vec3* pgrad = reinterpret_cast<const vec3*>(shared_grad + shared_offset[curr_stage_compute]);
+      vec3* pmom = reinterpret_cast<vec3*>(shared_momentum + shared_offset[curr_stage_compute]);
+      vec3 val = pval[local_idx];
+      vec3 grad = pgrad[local_idx] * gradient_scale;  // Fix: Add gradient_scale (no L1 here)
+      vec3 first = pmom[local_idx * 2];
+      vec3 second = pmom[local_idx * 2 + 1];
       const float lr = general_p.shs_lr * global_lr * this_lr_scale;
       apply_(val.x, grad.x, first.x, second.x, lr);
       apply_(val.y, grad.y, first.y, second.y, lr);
       apply_(val.z, grad.z, first.z, second.z, lr);
       sh_coefficient_0[idx] = val;
-      sh_coefficient_0_first_second[idx * 2] = first;
-      sh_coefficient_0_first_second[idx * 2 + 1] = second;
+      sh_coefficient_0_first_second[2 * idx] = first;
+      sh_coefficient_0_first_second[2 * idx + 1] = second;
     }
+    curr_stage_compute = (curr_stage_compute + 1) % stages_count;
+    pipeline.consumer_release();
   }
-
-  if (enable) { // spherical harmonics - rest coefficients
+  return;
+  // Spherical Harmonics - rest coefficients
+  if (enable) {
     // NOTE: They use 1/20 LR w.r.t. sh0
-    int start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
-    int end = start + (kMaxSphericalHarmonicsCoefficients - 1);
-    for (int i = start; i < end; i++) {
-      vec3& val = sh_coefficients_rest[i];
-      const vec3 grad = sh_coefficients_rest_grad[i] * gradient_scale;
-      vec3& first_moment = sh_coefficients_rest_first_second[i * 2];
-      vec3& second_moment = sh_coefficients_rest_first_second[i * 2 + 1];
-      const float lr = general_p.shs_lr * global_lr * this_lr_scale * 0.05f;
-      if (enable) apply_(val.x, grad.x, first_moment.x, second_moment.x, lr);
-      if (enable) apply_(val.y, grad.y, first_moment.y, second_moment.y, lr);
-      if (enable) apply_(val.z, grad.z, first_moment.z, second_moment.z, lr);
+    const int num_rest = kMaxSphericalHarmonicsCoefficients - 1;
+    const int start = idx * num_rest;
+    const int base = idx * 2 * num_rest;  // Fix: Base for interleaved first/second
+    const float lr = general_p.shs_lr * global_lr * this_lr_scale * 0.05f;
+    for (int i = 0; i < num_rest; ++i) {
+      vec3& val = sh_coefficients_rest[start + i];
+      vec3 grad = sh_coefficients_rest_grad[start + i] * gradient_scale;  // Fix: Add gradient_scale
+      vec3& first = sh_coefficients_rest_first_second[base + 2 * i];
+      vec3& second = sh_coefficients_rest_first_second[base + 2 * i + 1];
+      apply_(val.x, grad.x, first.x, second.x, lr);
+      apply_(val.y, grad.y, first.y, second.y, lr);
+      apply_(val.z, grad.z, first.z, second.z, lr);
     }
   }
 }
@@ -291,7 +297,7 @@ void AdamW::step(float scale) {
 
   auto expected_shm = 4 * block_size * sizeof(float) * 4 * 2;
 
-  launch_gaussian_adam_step_SoA<<<grid, block_size, expected_shm, 0>>>(
+  launch_gaussian_adam_step_SoA_ref2<<<grid, block_size, expected_shm, 0>>>(
     thrust::raw_pointer_cast(m_gaussians->means().data()),
     thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
     thrust::raw_pointer_cast(m_means_first_second.data()),
@@ -320,6 +326,7 @@ void AdamW::step(float scale) {
 
   CUDA_CHECK_THROW(cudaDeviceSynchronize());
 }
+
 
 AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad) :
   OptimizerBase(gaussians, gaussians_grad) {
