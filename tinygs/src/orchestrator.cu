@@ -395,8 +395,8 @@ void Orchestrator::initialize() {
   // Get image dimensions from the first data sample
   auto shape = m_dataloader->get_dataset()->image_shape();
 
-  uint32_t width = shape.width;
-  uint32_t height = shape.height;
+  uint32_t width = shape.padded_width();
+  uint32_t height = shape.padded_height();
   
   // Initialize GPU memory buffers
   m_loss_buffer = std::make_unique<GPUMemory<float>>(width * height * 4);

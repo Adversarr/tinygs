@@ -117,12 +117,12 @@ __global__ void launch_gaussian_adam_step_SoA(
   pipeline.producer_acquire();                                                                                       \
   {uint cpy_bytes = div_round_up<uint>(sizeof(type) * this_block_range, 16u) * 16u;                                         \
   uint cpy_bytes2 = div_round_up<uint>(sizeof(type) * this_block_range * 2, 16u) * 16u;                                    \
-  cuda::memcpy_async(block, shared_val + shared_offset[curr_stage_store], (const float4*) (block_leader_thread_idx + (field_name)),    \
+  cuda::memcpy_async(block, shared_val + shared_offset[curr_stage_store], (const float4*) ((field_name) + block_leader_thread_idx),    \
                      cpy_bytes, pipeline);                                                                           \
   cuda::memcpy_async(block, shared_grad + shared_offset[curr_stage_store],                                           \
-                     (const float4*) (block_leader_thread_idx + (field_name##_grad)), cpy_bytes, pipeline);      \
+                     (const float4*) ( (field_name##_grad) + block_leader_thread_idx), cpy_bytes, pipeline);      \
   cuda::memcpy_async(block, shared_momentum + shared_offset[curr_stage_store],                                       \
-                     (const float4*) (2 * block_leader_thread_idx + (field_name##_first_second)), cpy_bytes2, \
+                     (const float4*) ((field_name##_first_second) + 2 * block_leader_thread_idx), cpy_bytes2, \
                      pipeline);                                                                                      \
   pipeline.producer_commit();                                                                                        }\
   curr_stage_store = (curr_stage_store + 1) % stages_count
@@ -150,7 +150,7 @@ __global__ void launch_gaussian_adam_step_SoA(
 
       if (sum(abs(grad)) == 0) {
         enable = false;
-      }
+      } 
 
       if (enable) {
         this_step = ++gaussian_steps[idx];

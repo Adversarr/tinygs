@@ -488,6 +488,7 @@ __global__ void blend_backward_cu(
             }
             local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
             fast_copy(cached_per_pixel[lane_idx], local);
+            __syncwarp(); // Synchronize after writing to shared memory
         } else if (ii % 16 == 0) {
             // odd. prefetch
             const uint i = ii + lane_idx_uint + 16;
@@ -533,10 +534,11 @@ __global__ void blend_backward_cu(
                 asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
                     : "=f"(dst_view->x), "=f"(dst_view->y), "=f"(dst_view->z), "=f"(dst_view->w)
                     : "l"(saddr + (i % 32) * sizeof(PerPixel)));
-                asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4+16];"
+                asm volatile("ld.shared.v4.f32 {%0, %1, %2, %3}, [%4];"
                     : "=f"(dst_view_next->x), "=f"(dst_view_next->y), "=f"(dst_view_next->z), "=f"(dst_view_next->w)
-                    : "l"(saddr + (i % 32) * sizeof(PerPixel)));
+                    : "l"(saddr + (i % 32) * sizeof(PerPixel) + 16ul));
             }
+            __syncwarp(); // Synchronize after reading from shared memory
             const bool skip = !valid_general || tile_primitive_idx >= last_contributor;
             const float alpha_prepare = opacity * gaussian;
             const float color_dot_grad_color_pixel = dot(color, grad_color_pixel);

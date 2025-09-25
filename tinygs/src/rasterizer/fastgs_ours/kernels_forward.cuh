@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include <cuda/barrier>
+#include <cuda/pipeline>
 // Disables `pipeline_shared_state` initialization warning.
 #pragma nv_diag_suppress static_var_with_dynamic_init
 
@@ -193,26 +193,34 @@ __global__ void preprocess_cu(
     }
 
     auto block = cg::this_thread_block();
+
+    constexpr int stages_count = 3; // rot, opa, scale
+    /* == common settings ==  */
+    __shared__ cuda::pipeline_shared_state<
+        cuda::thread_scope::thread_scope_block,
+        stages_count
+    > shared_state;
+    auto pipeline = cuda::make_pipeline(block, &shared_state);
+
     // Create a synchronization object (C++20 barrier)
-    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier_rotations;
-    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier_opacities;
-    __shared__ cuda::barrier<cuda::thread_scope::thread_scope_block> barrier_scales;
     __shared__ float shm_opacities[config::block_size_preprocess];
     __shared__ float4 shm_raw_rotations[config::block_size_preprocess];
     __shared__ float3 shm_raw_scales[config::block_size_preprocess];
 
-    if (block.thread_rank() == 0) {
-        init(&barrier_rotations, block.size()); // Friend function initializes barrier
-        init(&barrier_opacities, block.size()); // Friend function initializes barrier
-        init(&barrier_scales, block.size()); // Friend function initializes barrier
-    }
-    block.sync();
-
     const int block_batch_idx = block.group_index().x * config::block_size_preprocess;
     const int block_max_idx = min(block_batch_idx + block.size(), n_primitives);
-    cuda::memcpy_async(block, shm_opacities, raw_opacities + block_batch_idx, sizeof(float) * (block_max_idx - block_batch_idx), barrier_opacities);
-    cuda::memcpy_async(block, shm_raw_rotations, raw_rotations + block_batch_idx, sizeof(float4) * (block_max_idx - block_batch_idx), barrier_rotations);
-    cuda::memcpy_async(block, shm_raw_scales, raw_scales + block_batch_idx, sizeof(float3) * (block_max_idx - block_batch_idx), barrier_scales);
+    pipeline.producer_acquire();
+    cuda::memcpy_async(block, shm_opacities, raw_opacities + block_batch_idx, sizeof(float) * (block_max_idx - block_batch_idx), pipeline);
+    pipeline.producer_commit();
+
+
+    pipeline.producer_acquire();
+    cuda::memcpy_async(block, shm_raw_scales, raw_scales + block_batch_idx, sizeof(float3) * (block_max_idx - block_batch_idx), pipeline);
+    pipeline.producer_commit();
+
+    pipeline.producer_acquire();
+    cuda::memcpy_async(block, shm_raw_rotations, raw_rotations + block_batch_idx, sizeof(float4) * (block_max_idx - block_batch_idx), pipeline);
+    pipeline.producer_commit();
 
     if (active)
         primitive_n_touched_tiles[primitive_idx] = 0;
@@ -229,19 +237,24 @@ __global__ void preprocess_cu(
         active = false;
 
     // load opacity
-    barrier_opacities.arrive_and_wait(); // Waits for opacity copy to complete
+    pipeline.consumer_wait();
     const float raw_opacity = shm_opacities[block.thread_rank()];
+    pipeline.consumer_release();
+
     const float opacity = 1.0f / (1.0f + expf(-raw_opacity));
     if (raw_opacity < config::min_alpha_threshold_deactivated)
         active = false;
 
     // compute 3d covariance from raw scale and rotation
-    barrier_scales.arrive_and_wait(); // Waits for scale copy to complete
+    pipeline.consumer_wait();
     const float3 raw_scale = shm_raw_scales[block.thread_rank()];
+    pipeline.consumer_release();
     const float3 variance = make_float3(__expf(2.0f * raw_scale.x), __expf(2.0f * raw_scale.y), __expf(2.0f * raw_scale.z));
 
-    barrier_rotations.arrive_and_wait(); // Waits for rotation copies to complete
+    pipeline.consumer_wait();
     auto [qr, qx, qy, qz] = shm_raw_rotations[block.thread_rank()];
+    pipeline.consumer_release();
+
     const float qrr_raw = qr * qr, qxx_raw = qx * qx, qyy_raw = qy * qy, qzz_raw = qz * qz;
     const float q_norm_sq = qrr_raw + qxx_raw + qyy_raw + qzz_raw;
     if (q_norm_sq < 1e-8f)
@@ -424,6 +437,8 @@ __global__ void create_instances_cu(
     collected_screen_bounds[block.thread_rank()] = screen_bounds;
     collected_mean2d_shifted[block.thread_rank()] = primitive_mean2d[primitive_idx] - 0.5f;
     collected_conic_opacity[block.thread_rank()] = primitive_conic_opacity[primitive_idx];
+
+    block.sync();
 
     uint current_write_offset = primitive_offsets[idx];
 

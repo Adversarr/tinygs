@@ -142,8 +142,8 @@ namespace fast_gs::rasterization {
 
         static PerBucketBuffers from_blob(char*& blob, size_t n_buckets) {
             PerBucketBuffers buffers;
-            obtain(blob, buffers.tile_index, n_buckets * config::block_size_blend, 128);
-            obtain(blob, buffers.color_transmittance, n_buckets * config::block_size_blend, 128);
+            obtain(blob, buffers.tile_index, n_buckets * config::block_size_blend, config::block_size_blend);
+            obtain(blob, buffers.color_transmittance, n_buckets * config::block_size_blend, config::block_size_blend);
             return buffers;
         }
     };
