@@ -1,5 +1,6 @@
-#include "optim/adamw.hpp"
-#include "optim/sgd.hpp"
+#include "tinygs/optim/adamw.hpp"
+#include "tinygs/optim/sgd.hpp"
+#include "tinygs/optim/simple_adam.hpp"
 #include "tinygs/optim/optim.hpp"
 #include <nlohmann/json.hpp>
 
@@ -85,6 +86,8 @@ std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_typ
   std::string lower_optimizer_type = to_lower(optimizer_type);
   if (lower_optimizer_type == "adam") {
     return std::make_unique<AdamW>(gaussians, gaussians_grad);
+  } else if (lower_optimizer_type == "simple_adam") {
+    return std::make_unique<SimpleAdam>(gaussians, gaussians_grad);
   } else if (lower_optimizer_type == "sgd") {
     return std::make_unique<SGD>(gaussians, gaussians_grad);
   } else {

@@ -2,7 +2,7 @@
 #include <thrust/execution_policy.h>
 
 #include <nvtx3/nvtx3.hpp>
-
+#include <cooperative_groups.h>
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/optim/adamw.hpp"
 

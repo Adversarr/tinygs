@@ -55,7 +55,7 @@
     "scales_lr": 0.005,
     "shs_lr": 0.0025,
     "skip_zero_grad": false,
-    "type": "adam"
+    "type": "simple_adam"
   },
   "rasterizer": {
     "type": "fastgs"
