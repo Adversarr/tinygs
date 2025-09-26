@@ -88,12 +88,12 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
         (unsigned char*)raw_data, (float *)gpu_data.data, total_elements);
     }
   }
+  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
 }
 
 void DataLoaderBase::transfer_gpu(const Image &gpu_data,
                                   const Image &host_data) {
   transfer_gpu(cudaStreamDefault, gpu_data, host_data);
-  CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
 }
 
 std::shared_ptr<DatasetBase> DataLoaderBase::get_dataset() const {

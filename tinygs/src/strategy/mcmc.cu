@@ -199,10 +199,10 @@ void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
     reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
     m_mcmc_params.noise_lr_init * m_optimizer->get_lr()
   );
-  cudaStreamSynchronize(ctx.stream);
+  maybe_sync(ctx.stream);
 }
 
-void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
+void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
   // Expand exponentially.
   const int num_gaussians = m_gaussians->size();
@@ -284,7 +284,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& /* ctx */) {
   // Call the CUDA relocation function from gsplat
   thrust::device_vector<float> new_opacities(num_to_add); // activated
   thrust::device_vector<vec3> new_scales(num_to_add);     // activated
-  relocation_kernel<<<(num_to_add + 255) / 256, 256>>>(
+  relocation_kernel<<<(num_to_add + 255) / 256, 256, 0, ctx.stream>>>(
     num_to_add,
     thrust::raw_pointer_cast(sampled_opacities.data()),
     thrust::raw_pointer_cast(sampled_scales.data()), // scales in exponential space.
@@ -490,7 +490,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   // Call the CUDA relocation function from gsplat
   thrust::device_vector<float> new_opacities(num_dead);
   thrust::device_vector<vec3> new_scales(num_dead);
-  relocation_kernel<<<(num_dead + 255) / 256, 256>>>(
+  relocation_kernel<<<(num_dead + 255) / 256, 256, 0, ctx.stream>>>(
     num_dead,
     thrust::raw_pointer_cast(sampled_opacities.data()),
     thrust::raw_pointer_cast(sampled_scales.data()), // scales in exponential space.

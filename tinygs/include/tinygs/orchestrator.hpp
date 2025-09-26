@@ -210,6 +210,8 @@ private:
   RasterizeContext m_rasterize_ctx;
   LossContext m_loss_ctx;
 
+  cudaStream_t m_major_stream = 0;
+
   // Helper methods
 
   /// @brief Initialize GPU memory buffers

@@ -51,7 +51,7 @@ public:
   virtual json get_params() const;
 
   /// @brief Perform one optimization step
-  virtual void step(float scale) = 0;
+  virtual void step(float scale, cudaStream_t stream) = 0;
 
   /// @brief Reset optimizer state
   virtual void reset();

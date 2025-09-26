@@ -96,11 +96,11 @@ __global__ void launch_gaussian_sgd_step_SoA(
   }
 }
 
-void SGD::step(float scale) {
+void SGD::step(float scale, cudaStream_t stream) {
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
   const int grid = (m_gaussians->size() + 255) / 256;
 
-  launch_gaussian_sgd_step_SoA<<<grid, 256>>>(
+  launch_gaussian_sgd_step_SoA<<<grid, 256, 0, stream>>>(
     thrust::raw_pointer_cast(m_gaussians->means().data()),
     thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
     thrust::raw_pointer_cast(m_gaussians->opacities().data()),
@@ -118,7 +118,7 @@ void SGD::step(float scale) {
     gradient_scale,
     m_global_lr
   );
-  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
+  maybe_sync(stream);
 }
 
 SGD::SGD(std::shared_ptr<GPUGaussian3d> gaussians,

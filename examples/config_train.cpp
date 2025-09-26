@@ -216,7 +216,8 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
   auto final_state = orchestrator->train();
   
   log_info("Training completed after {} steps", final_state.current_step);
-  
-  cv::waitKey(0);
-  cv::destroyAllWindows();
+  if (visualize) {
+    cv::waitKey(0);
+    cv::destroyAllWindows();
+  }
 }

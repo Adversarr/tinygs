@@ -101,7 +101,7 @@ struct m_step {
   static constexpr char const *message{"simple_adam_step"};
 };
 
-void SimpleAdam::step(float scale) {
+void SimpleAdam::step(float scale, cudaStream_t stream) {
 
   NVTX3_FUNC_RANGE();
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
@@ -128,7 +128,7 @@ void SimpleAdam::step(float scale) {
     auto msg = regstr::get<m_step>();
     nvtx3::event_attributes attr(msg, nvtx3::payload{n});
     range range(attr);
-    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->means().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
       (float*) thrust::raw_pointer_cast(m_means_first.data()),
@@ -142,7 +142,7 @@ void SimpleAdam::step(float scale) {
     );
 
     // Opacities
-    adam_step_with_shm<<<div_round_up<uint>(n, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n, block_size), block_size, 0, stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->opacities().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->opacities().data()),
       (float*) thrust::raw_pointer_cast(m_opacities_first.data()),
@@ -159,7 +159,7 @@ void SimpleAdam::step(float scale) {
     );
 
     // Rotations
-    adam_step_with_shm<<<div_round_up<uint>(n * 4, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n * 4, block_size), block_size, 0, stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->rotations().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->rotations().data()),
       (float*) thrust::raw_pointer_cast(m_rotations_first.data()),
@@ -173,7 +173,7 @@ void SimpleAdam::step(float scale) {
     );
 
     // Scales
-    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->scales().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->scales().data()),
       (float*) thrust::raw_pointer_cast(m_scales_first.data()),
@@ -190,7 +190,7 @@ void SimpleAdam::step(float scale) {
     );
 
     // SH Coefficient 0
-    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficient_0().data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
@@ -205,7 +205,7 @@ void SimpleAdam::step(float scale) {
 
     // SH Coefficients Rest
     const int sh_rest_size = n * (kMaxSphericalHarmonicsCoefficients - 1) * 3;
-    adam_step_with_shm<<<div_round_up<uint>(sh_rest_size, block_size), block_size>>>(
+    adam_step_with_shm<<<div_round_up<uint>(sh_rest_size, block_size), block_size, 0, stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
@@ -217,7 +217,7 @@ void SimpleAdam::step(float scale) {
       bias_correction1,
       bias_correction2_sqrt
     );
-    maybe_sync(0);
+    maybe_sync(stream);
   }
 }
 
@@ -355,7 +355,6 @@ void SimpleAdam::remove(char* kept_flag, int num_kept) {
   m_sh_coefficient_0_second = std::move(sh_coefficients_0_second);
   m_sh_coefficients_rest_first = std::move(sh_coefficients_rest_first);
   m_sh_coefficients_rest_second = std::move(sh_coefficients_rest_second);
-  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 }
 
 __global__ static void duplicate_optimizer_state_kernel(

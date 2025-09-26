@@ -212,13 +212,7 @@ struct AsyncDataLoader::Impl {
     gpu_output.image = Image{gpu_image.shape, gpu_image.data_type, gpu_image.data};
 
     GPUBatchInputOutput pld{gpu_input, gpu_output};
-    
-    // Synchronize stream and check for CUDA errors
-    auto cuda_result = cudaStreamSynchronize(prefetch_stream);
-    if (cuda_result != cudaSuccess) {
-      throw std::runtime_error("CUDA stream synchronization failed: " + std::string(cudaGetErrorString(cuda_result)));
-    }
-    
+
     // Push result to data queue
     if (!data_queue->push(std::make_pair(pld, buffer_idx), st)) {
       return false; // Queue closed or cancelled

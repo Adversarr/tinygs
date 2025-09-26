@@ -39,7 +39,7 @@ public:
   void reset() override;
   
   /// @brief Perform one optimization step
-  void step(float scale) override;
+  void step(float scale, cudaStream_t stream) override;
   
   /// @brief Remove optimizer state for flagged gaussians
   void remove(char* kept_flag, int num_kept) override;

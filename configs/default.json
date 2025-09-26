@@ -33,7 +33,7 @@
     }
   ],
   "lr_scheduler": {
-    "decay_rate": 0.9997689723968506,
+    "decay_rate": 0.999769,
     "initial_lr": 1.0,
     "step_count": 0,
     "type": "exponential"

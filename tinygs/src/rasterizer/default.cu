@@ -202,8 +202,6 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
   );
   m_impl->num_buckets = num_buckets;
   m_impl->num_rendered = num_rendered;
-
-  cudaDeviceSynchronize(); //! In actual implementation, this should not be called.
 }
 
 DefaultRasterizer::~DefaultRasterizer() {}

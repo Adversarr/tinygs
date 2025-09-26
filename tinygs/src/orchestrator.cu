@@ -218,7 +218,7 @@ void Orchestrator::train_step() {
 
   // Optimizer step (learning rate already set by scheduler)
   //? the gradient scaler, since we are not supporting AMP, 1.0f is the default value.
-  m_optimizer->step(1.0f);
+  m_optimizer->step(1.0f, m_major_stream);
 
   // Strategy step (densification)
   if (m_strategy) {
@@ -391,6 +391,13 @@ void Orchestrator::update_config(const OrchestratorConfig& config) {
 }
 
 void Orchestrator::initialize() {
+  if (m_major_stream) {
+    CUDA_CHECK_THROW(cudaStreamDestroy(m_major_stream));
+  }
+  CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&m_major_stream, cudaStreamNonBlocking));
+
+  m_rasterize_ctx.stream = m_major_stream;
+
   m_dataloader->reset();
   // Get image dimensions from the first data sample
   auto shape = m_dataloader->get_dataset()->image_shape();

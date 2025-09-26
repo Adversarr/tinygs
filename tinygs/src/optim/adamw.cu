@@ -346,7 +346,7 @@ struct m_sh_rest {
   static constexpr char const *message{"adam_sh_rest"};
 };
 
-void AdamW::step(float scale) {
+void AdamW::step(float scale, cudaStream_t stream) {
 
   NVTX3_FUNC_RANGE();
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
@@ -366,7 +366,7 @@ void AdamW::step(float scale) {
     nvtx3::event_attributes attr(msg, nvtx3::payload{n});
     range range(attr);
 
-    launch_gaussian_adam_step_SoA_ref2<<<grid, block_size, expected_shm, 0>>>(
+    launch_gaussian_adam_step_SoA_ref2<<<grid, block_size, expected_shm, stream>>>(
       thrust::raw_pointer_cast(m_gaussians->means().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
       thrust::raw_pointer_cast(m_means_first_second.data()),
@@ -392,7 +392,7 @@ void AdamW::step(float scale) {
       gradient_scale,
       m_global_lr
     );
-    maybe_sync(0);
+    maybe_sync(stream);
   }
 
   {
@@ -401,7 +401,7 @@ void AdamW::step(float scale) {
     range range(attr);
 
     dim3 grid{div_round_up<uint>(n, block_size / 16)};
-    launch_gaussian_adam_shrest<<<grid, block_size>>>(
+    launch_gaussian_adam_shrest<<<grid, block_size, 0, stream>>>(
       thrust::raw_pointer_cast(m_gaussian_steps.data()),
       thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
@@ -412,7 +412,7 @@ void AdamW::step(float scale) {
       gradient_scale,
       m_global_lr
     );
-    maybe_sync();
+    maybe_sync(stream);
   }
 }
 
@@ -523,7 +523,6 @@ void AdamW::remove(char* kept_flag, int num_kept) {
   m_sh_coefficient_0_first_second = std::move(sh_coefficients_0);
   m_gaussian_steps = std::move(gaussian_steps);
   m_sh_coefficients_rest_first_second = std::move(sh_coefficients_rest);
-  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 }
 
 __global__ static void duplicate_optimizer_state_kernel(

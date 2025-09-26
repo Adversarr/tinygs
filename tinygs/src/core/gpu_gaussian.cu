@@ -154,8 +154,6 @@ void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
   m_scales = std::move(scales);
   m_sh_coefficient_0 = std::move(sh_coefficient_0);
   m_sh_coefficients_rest = std::move(sh_coefficients_rest);
-  
-  CUDA_CHECK_THROW(cudaDeviceSynchronize()); CUDA_CHECK_THROW(cudaGetLastError());
 }
 
 void GPUGaussian3d::append(int num_dup) {
