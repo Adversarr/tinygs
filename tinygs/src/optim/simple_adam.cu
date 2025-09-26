@@ -40,51 +40,7 @@ struct NoDecay {
   }
 };
 
-template<typename T, typename DecayFunc = NoDecay>
-__global__ static void adam_step(
-    // Means
-    T *__restrict__ thetas,
-    T const *__restrict__ thetas_grad,
-    T *__restrict__ thetas_first,
-    T *__restrict__ thetas_second,
-    // other
-    SimpleAdamParameters adam_p,
-    float lr,
-    uint32_t num_gaussians,
-    float gradient_scale,
-    float bias_correction1,     // (1 - beta_1^t)
-    float bias_correction2_sqrt, // sqrt(1 - beta_2^t)
-    DecayFunc f = DecayFunc()
-) {
-  const auto idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= num_gaussians) return;
-
-  // Load
-  T theta = thetas[idx];
-  const T g = f(theta, gradient_scale * thetas_grad[idx]);
-  T m = thetas_first[idx];
-  T v = thetas_second[idx];
-  const T g_sq = g * g;
-
-  // Update biased first and second moment estimates
-  m = lerp(m, g, 1.0f - adam_p.beta1);
-  v = lerp(v, g_sq, 1.0f - adam_p.beta2);
-
-  // Bias-corrected estimates
-  const T m_hat = m / bias_correction1;
-  const T denom = tinygs::sqrt(v) / bias_correction2_sqrt + adam_p.epsilon;
-
-  // step
-  theta -= m_hat * lr / denom;
-
-  // write back updated params and moments
-  thetas[idx] = theta;
-  thetas_first[idx] = m;
-  thetas_second[idx] = v;
-}
-
-
-template<uint nc, uint bsize=256, typename DecayFunc = NoDecay>
+template<typename DecayFunc = NoDecay>
 __global__ static void adam_step_with_shm(
     // Means
     float *__restrict__ thetas,
@@ -104,15 +60,13 @@ __global__ static void adam_step_with_shm(
   const auto local_idx = threadIdx.x;
   const auto idx = block_first + local_idx;
   auto block = cg::this_thread_block();
-  uint gs_idx = idx / nc;
-  uint coef_idx = idx % nc;
   if (idx >= num_gaussians) return;
 
   // Load
   float theta = thetas[idx];
   const float g = f(theta, gradient_scale * thetas_grad[idx]);
-  float m = thetas_first[gs_idx * nc + coef_idx];
-  float v = thetas_second[gs_idx * nc + coef_idx];
+  float m = thetas_first[idx];
+  float v = thetas_second[idx];
   const float g_sq = g * g;
 
   // Update biased first and second moment estimates
@@ -128,8 +82,8 @@ __global__ static void adam_step_with_shm(
 
   // write back updated params and moments
   thetas[idx] = theta;
-  thetas_first[gs_idx * nc + coef_idx] = m;
-  thetas_second[gs_idx * nc + coef_idx] = v;
+  thetas_first[idx] = m;
+  thetas_second[idx] = v;
 }
 
 
@@ -174,78 +128,84 @@ void SimpleAdam::step(float scale) {
     auto msg = regstr::get<m_step>();
     nvtx3::event_attributes attr(msg, nvtx3::payload{n});
     range range(attr);
-    adam_step_with_shm<3><<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->means().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
       (float*) thrust::raw_pointer_cast(m_means_first.data()),
       (float*) thrust::raw_pointer_cast(m_means_second.data()),
       m_adam_params,
       m_params.means_lr,
-      m_gaussians->size()*3,
+      n * 3,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt
     );
 
     // Opacities
-    adam_step_with_shm<1><<<div_round_up<uint>(n, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n, block_size), block_size, 0, 0>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->opacities().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->opacities().data()),
       (float*) thrust::raw_pointer_cast(m_opacities_first.data()),
       (float*) thrust::raw_pointer_cast(m_opacities_second.data()),
       m_adam_params,
       m_params.opacities_lr,
-      m_gaussians->size(),
+      n,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      [d=m_params.opacities_l1, invn = 1.0f / n] __device__(float x, float g) { 
+        return (activate_opacity_deriv(x) * d) * invn + g;
+      }
     );
 
     // Rotations
-    adam_step_with_shm<4><<<div_round_up<uint>(n * 4, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n * 4, block_size), block_size, 0, 0>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->rotations().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->rotations().data()),
       (float*) thrust::raw_pointer_cast(m_rotations_first.data()),
       (float*) thrust::raw_pointer_cast(m_rotations_second.data()),
       m_adam_params,
       m_params.rotations_lr,
-      m_gaussians->size() * 4,
+      n * 4,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt
     );
 
     // Scales
-    adam_step_with_shm<3><<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->scales().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->scales().data()),
       (float*) thrust::raw_pointer_cast(m_scales_first.data()),
       (float*) thrust::raw_pointer_cast(m_scales_second.data()),
       m_adam_params,
       m_params.scales_lr,
-      m_gaussians->size() * 3,
+      n * 3,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      [d=m_params.scales_l1, invn = 1.0f / n] __device__(float x, float g) { 
+        return (activate_scale_deriv(x) * d) * invn + g;
+      }
     );
 
     // SH Coefficient 0
-    adam_step_with_shm<3><<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
+    adam_step_with_shm<<<div_round_up<uint>(n * 3, block_size), block_size, 0, 0>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficient_0().data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
       m_adam_params,
       m_params.shs_lr,
-      m_gaussians->size() * 3,
+      n * 3,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt
     );
 
     // SH Coefficients Rest
-    const int sh_rest_size = m_gaussians->size() * (kMaxSphericalHarmonicsCoefficients - 1) * 3;
-    adam_step_with_shm<3><<<div_round_up<uint>(sh_rest_size, block_size), block_size, 0, 0>>>(
+    const int sh_rest_size = n * (kMaxSphericalHarmonicsCoefficients - 1) * 3;
+    adam_step_with_shm<<<div_round_up<uint>(sh_rest_size, block_size), block_size>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
       (float*) thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),

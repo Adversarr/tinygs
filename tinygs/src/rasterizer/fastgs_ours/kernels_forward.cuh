@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #pragma once
+#include "tinygs/core/gaussian.hpp"
 
 #include <cuda/pipeline>
 // Disables `pipeline_shared_state` initialization warning.
@@ -241,7 +242,7 @@ __global__ void preprocess_cu(
     const float raw_opacity = shm_opacities[block.thread_rank()];
     pipeline.consumer_release();
 
-    const float opacity = 1.0f / (1.0f + expf(-raw_opacity));
+    const float opacity = tinygs::activate_opacity(raw_opacity);
     if (raw_opacity < config::min_alpha_threshold_deactivated)
         active = false;
 
@@ -249,8 +250,10 @@ __global__ void preprocess_cu(
     pipeline.consumer_wait();
     const float3 raw_scale = shm_raw_scales[block.thread_rank()];
     pipeline.consumer_release();
-    const float3 variance = make_float3(__expf(2.0f * raw_scale.x), __expf(2.0f * raw_scale.y), __expf(2.0f * raw_scale.z));
-
+    const float3 variance = make_float3(
+        tinygs::activate_scale(raw_scale.x) * tinygs::activate_scale(raw_scale.x),
+        tinygs::activate_scale(raw_scale.y) * tinygs::activate_scale(raw_scale.y), 
+        tinygs::activate_scale(raw_scale.z) * tinygs::activate_scale(raw_scale.z));
     pipeline.consumer_wait();
     auto [qr, qx, qy, qz] = shm_raw_rotations[block.thread_rank()];
     pipeline.consumer_release();

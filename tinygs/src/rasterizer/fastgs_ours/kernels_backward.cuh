@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #pragma once
-
+#include "tinygs/core/gaussian.hpp"
 // blend_backward based on
 // https://github.com/humansensinglab/taming-3dgs/blob/fd0f7d9edfe135eb4eefd3be82ee56dada7f2a16/submodules/diff-gaussian-rasterization/cuda_rasterizer/backward.cu#L404
 
@@ -133,7 +133,10 @@ __global__ void preprocess_backward_cu(
 
     // compute 3d covariance from raw scale and rotation
     const float3 raw_scale = raw_scales[primitive_idx];
-    const float3 variance = make_float3(expf(2.0f * raw_scale.x), expf(2.0f * raw_scale.y), expf(2.0f * raw_scale.z));
+    const float3 variance = make_float3(
+        tinygs::activate_scale(raw_scale.x) * tinygs::activate_scale(raw_scale.x),
+        tinygs::activate_scale(raw_scale.y) * tinygs::activate_scale(raw_scale.y), 
+        tinygs::activate_scale(raw_scale.z) * tinygs::activate_scale(raw_scale.z));
     auto [qr, qx, qy, qz] = raw_rotations[primitive_idx];
     const float qrr_raw = qr * qr, qxx_raw = qx * qx, qyy_raw = qy * qy, qzz_raw = qz * qz;
     const float q_norm_sq = qrr_raw + qxx_raw + qyy_raw + qzz_raw;
@@ -279,9 +282,9 @@ __global__ void preprocess_backward_cu(
     // The gradient for raw_scale is 2*variance*dL_dvariance. When variance is close to zero, this can lead to vanishing gradients.
     // This is inherent to the exp parameterization of scale, but worth noting for training stability.
     const float3 dL_draw_scale = make_float3(
-        2.0f * variance.x * dL_dvariance_x,
-        2.0f * variance.y * dL_dvariance_y,
-        2.0f * variance.z * dL_dvariance_z);
+        2.0f * tinygs::activate_scale_deriv(raw_scale.x) * dL_dvariance_x,
+        2.0f * tinygs::activate_scale_deriv(raw_scale.y) * dL_dvariance_y,
+        2.0f * tinygs::activate_scale_deriv(raw_scale.z) * dL_dvariance_z);
 #ifndef NDEBUG
     assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif
@@ -316,7 +319,6 @@ __global__ void preprocess_backward_cu(
 #endif
     grad_raw_rotations[primitive_idx] = dL_draw_rotation;
 
-    // TODO: only needed for adaptive density control from the original 3dgs
     if (densification_info != nullptr) {
 #ifndef NDEBUG
         // Boundary check for densification_info array (size: 2 * n_primitives)
@@ -325,7 +327,6 @@ __global__ void preprocess_backward_cu(
 #endif
         densification_info[primitive_idx] += 1.0f;
         densification_info[n_primitives + primitive_idx] += length(dL_dmean2d * make_float2(0.5f * w, 0.5f * h));
-        // densification_info[n_primitives + primitive_idx] += length(dL_dmean2d);
     }
 }
 
@@ -473,7 +474,7 @@ __global__ void blend_backward_cu(
                 /* col */ pixel_coords.x,
                 width_in_tile);
             const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
-            PerPixel local;
+            PerPixel local; fast_zero(local);
             float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
             if (is_valid) {
                 color_transmittance = bucket_color_transmittance[i];

@@ -185,7 +185,7 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   m_gaussians.sh_coefficient_0.resize(num_points);
   m_gaussians.sh_coefficients_rest.resize(num_points * (kMaxSphericalHarmonicsCoefficients - 1));
 
-  auto init_opa = log(m_params.init_opacity / (1 - m_params.init_opacity));
+  auto init_opa = deactivate_opacity(m_params.init_opacity);
   // Initialize gaussians using SoA structure with filtered points
   for (size_t i = 0; i < num_points; ++i) {
     // Set position and opacity

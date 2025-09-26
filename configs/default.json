@@ -13,7 +13,7 @@
     "default_distance": 0.001,
     "enable_radius_outlier_removal": false,
     "init_opacity": 0.5,
-    "init_scaling": 0.2,
+    "init_scaling": 0.5,
     "min_distance": 1.0e-07,
     "nb_points": 16,
     "num_neighbors": 3,
@@ -45,14 +45,15 @@
     "beta1": 0.9,
     "beta2": 0.999,
     "enable_adabound": false,
+    "gamma": 1e-3,
     "epsilon": 1.0e-8,
-    "max_grad_1": 1.0,
+    "max_grad_1": 0.0,
     "means_lr": 0.00016,
     "opacities_l1": 0.01,
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
     "scales_l1": 0.01,
-    "scales_lr": 0.005,
+    "scales_lr": 0.001,
     "shs_lr": 0.0025,
     "skip_zero_grad": false,
     "type": "simple_adam"
@@ -62,7 +63,7 @@
   },
   "strategy": {
     "duplicate_grad_threshold": 0.0002,
-    "duplicate_scale_threshold": 0.01,
+    "duplicate_scale_threshold": 0.005,
     "end_refine": 25000,
     "max_num_gaussians": 1000000,
     "max_screen_size": 20,
@@ -72,7 +73,7 @@
     "reset_every": 3000,
     "seed": 42,
     "start_refine": 500,
-    "type": "mcmc"
+    "type": "default"
   },
   "trainer": {
     "checkpoint_interval": 1000,
@@ -84,9 +85,9 @@
     "max_sh_degree": 3,
     "max_steps": 30000,
     "near_plane": 0.01,
-    "sh_degree_interval": 3000,
+    "sh_degree_interval": 1000,
     "test_steps": [3000, 7000, 30000],
     "out_dir": "outputs",
-    "export_rasterized": true
+    "export_rasterized": false
   }
 }
