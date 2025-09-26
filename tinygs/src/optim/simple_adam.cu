@@ -7,6 +7,9 @@
 #include "tinygs/optim/simple_adam.hpp"
 #include <cooperative_groups.h>
 #include <cooperative_groups/memcpy_async.h>
+#include <thrust/transform_reduce.h>
+#include <thrust/functional.h>
+#include <cstdio>
 
 namespace cg = cooperative_groups;
 
@@ -100,6 +103,54 @@ static const nvtx3::rgb C_ORANGE{255, 153, 0};
 struct m_step {
   static constexpr char const *message{"simple_adam_step"};
 };
+
+namespace {
+// Configurable (via JSON) logging intervals
+int g_momentum_log_interval = 1000;
+int g_gradient_log_interval = 100;
+
+// Functors for L1 accumulation
+struct Vec3AbsSum {
+  __host__ __device__ float operator()(const vec3& v) const {
+    return fabsf(v.x) + fabsf(v.y) + fabsf(v.z);
+  }
+};
+struct Vec4AbsSum {
+  __host__ __device__ float operator()(const vec4& v) const {
+    return fabsf(v.x) + fabsf(v.y) + fabsf(v.z) + fabsf(v.w);
+  }
+};
+struct FloatAbs {
+  __host__ __device__ float operator()(float v) const {
+    return fabsf(v);
+  }
+};
+
+// Simplified helpers (use thrust::device)
+template<typename It, typename UnaryOp>
+float l1_norm(It begin, It end, UnaryOp op) {
+  if (begin == end) return 0.f;
+  return thrust::transform_reduce(thrust::device, begin, end, op, 0.f, thrust::plus<float>());
+}
+
+template <typename VecT, typename It>
+float l0_norm(It begin, It end) {
+  if (begin == end) return 0.f;
+  return thrust::transform_reduce(
+      thrust::device, begin, end,
+      [] __device__(VecT v) -> float {
+        float l = glm::length(v);
+        return l != 0.f ? 1.f : 0.f;
+      },
+      0.f, thrust::plus<float>());
+}
+
+template<typename VecT, typename AbsFunctor>
+float l1_vec(const thrust::device_vector<VecT>& v, AbsFunctor f) {
+  if (v.empty()) return 0.f;
+  return l1_norm(v.begin(), v.end(), f) / l0_norm<VecT>(v.begin(), v.end());
+}
+} // anonymous namespace
 
 void SimpleAdam::step(float scale, cudaStream_t stream) {
 
@@ -218,6 +269,47 @@ void SimpleAdam::step(float scale, cudaStream_t stream) {
       bias_correction2_sqrt
     );
     maybe_sync(stream);
+  }
+
+  // Logging (performed after update; uses same stream for ordering)
+  if (m_global_steps % g_momentum_log_interval == 0 || m_global_steps % g_gradient_log_interval == 0) {
+    // Momentum L1
+    float m_means_l1 = 0.f, m_opacities_l1 = 0.f, m_rot_l1 = 0.f, m_scales_l1 = 0.f, m_sh0_l1 = 0.f, m_shrest_l1 = 0.f;
+    if (m_global_steps % g_momentum_log_interval == 0) {
+      m_means_l1     = l1_vec(m_means_first, Vec3AbsSum{});
+      m_opacities_l1 = l1_vec(m_opacities_first, FloatAbs{});
+      m_rot_l1       = l1_vec(m_rotations_first, Vec4AbsSum{});
+      m_scales_l1    = l1_vec(m_scales_first, Vec3AbsSum{});
+      m_sh0_l1       = l1_vec(m_sh_coefficient_0_first, Vec3AbsSum{});
+      m_shrest_l1    = l1_vec(m_sh_coefficients_rest_first, Vec3AbsSum{});
+    }
+
+    // Gradient L1
+    float g_means_l1 = 0.f, g_opacities_l1 = 0.f, g_rot_l1 = 0.f, g_scales_l1 = 0.f, g_sh0_l1 = 0.f, g_shrest_l1 = 0.f;
+    if (m_global_steps % g_gradient_log_interval == 0) {
+      g_means_l1     = l1_vec(m_gaussians_grad->means(), Vec3AbsSum{});
+      g_opacities_l1 = l1_vec(m_gaussians_grad->opacities(), FloatAbs{});
+      g_rot_l1       = l1_vec(m_gaussians_grad->rotations(), Vec4AbsSum{});
+      g_scales_l1    = l1_vec(m_gaussians_grad->scales(), Vec3AbsSum{});
+      g_sh0_l1       = l1_vec(m_gaussians_grad->sh_coefficient_0(), Vec3AbsSum{});
+      g_shrest_l1    = l1_vec(m_gaussians_grad->sh_coefficients_rest(), Vec3AbsSum{});
+    }
+
+    // Ensure reductions complete before host printf
+    cudaStreamSynchronize(stream);
+
+    if (m_global_steps % g_momentum_log_interval == 0) {
+      std::printf("[SimpleAdam][step %llu] Momentum L1 | means=%.6g opacities=%.6g rotations=%.6g scales=%.6g sh0=%.6g shRest=%.6g total=%.6g\n",
+                  (unsigned long long)m_global_steps,
+                  m_means_l1, m_opacities_l1, m_rot_l1, m_scales_l1, m_sh0_l1, m_shrest_l1,
+                  m_means_l1 + m_opacities_l1 + m_rot_l1 + m_scales_l1 + m_sh0_l1 + m_shrest_l1);
+    }
+    if (m_global_steps % g_gradient_log_interval == 0) {
+      std::printf("[SimpleAdam][step %llu] Grad L1     | means=%.6g opacities=%.6g rotations=%.6g scales=%.6g sh0=%.6g shRest=%.6g total=%.6g\n",
+                  (unsigned long long)m_global_steps,
+                  g_means_l1, g_opacities_l1, g_rot_l1, g_scales_l1, g_sh0_l1, g_shrest_l1,
+                  g_means_l1 + g_opacities_l1 + g_rot_l1 + g_scales_l1 + g_sh0_l1 + g_shrest_l1);
+    }
   }
 }
 
@@ -551,20 +643,18 @@ json SimpleAdamParameters::to_json() const {
   j["beta1"] = beta1;
   j["beta2"] = beta2;
   j["epsilon"] = epsilon;
-  // j["enable_adabound"] = enable_adabound; // Removed enable_adabound
+  // Added logging intervals (global, not struct fields)
+  j["momentum_log_interval"] = g_momentum_log_interval;
+  j["gradient_log_interval"] = g_gradient_log_interval;
   return j;
 }
 
 void SimpleAdamParameters::from_json(const json& config) {
-  if (config.contains("beta1")) {
-    beta1 = config.at("beta1").get<float>();
-  }
-  if (config.contains("beta2")) {
-    beta2 = config.at("beta2").get<float>();
-  }
-  if (config.contains("epsilon")) {
-    epsilon = config.at("epsilon").get<float>();
-  }
+  if (config.contains("beta1")) beta1 = config.at("beta1").get<float>();
+  if (config.contains("beta2")) beta2 = config.at("beta2").get<float>();
+  if (config.contains("epsilon")) epsilon = config.at("epsilon").get<float>();
+  if (config.contains("momentum_log_interval")) g_momentum_log_interval = config.at("momentum_log_interval").get<int>();
+  if (config.contains("gradient_log_interval")) g_gradient_log_interval = config.at("gradient_log_interval").get<int>();
   if (config.contains("enable_adabound")) {
     // Removed enable_adabound
   }

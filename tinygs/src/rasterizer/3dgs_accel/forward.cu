@@ -439,7 +439,7 @@ void FORWARD::render(
 	float* depths,
 	float* depth)
 {
-	renderCUDA<NUM_CHANNELS_3DGS> << <grid, block >> > (
+	renderCUDA<NUM_CHANNELS_3DGS> <<<grid, block >>> (
 		ranges,
 		point_list,
 		per_tile_bucket_offset, bucket_to_tile,

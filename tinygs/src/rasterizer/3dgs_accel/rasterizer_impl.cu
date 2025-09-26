@@ -9,6 +9,7 @@
  * For inquiries contact  george.drettakis@inria.fr
  */
 
+#include "tinygs/common.hpp"
 #include "rasterizer_impl.h"
 #include <iostream>
 #include <fstream>
@@ -339,6 +340,28 @@ __global__ void set(int N, uint32_t* where, int* space)
 	space[off] = 1;
 }
 
+__global__ void convert_to_tiled(
+	const float* __restrict__ pix_input,
+	float* __restrict__ pix_output,
+	int width, int height
+) {
+	auto linear_idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (linear_idx >= 3 * width * height)
+		return;
+
+
+auto tiled_width = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+auto tiled_height = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+	auto c = linear_idx / (width * height);
+	auto y = (linear_idx % (width * height)) / width;
+	auto x = linear_idx % width;
+	float src = pix_input[linear_idx];
+
+	const auto channel_stride = (tiled_width * tiled_height) << (2 * tinygs::kImageTileLog2);
+	const auto inchannel_offset = tinygs::get_linear_index_tiled(y, x, tiled_width);
+
+	pix_output[c * channel_stride + inchannel_offset] = src;
+}
 
 // Forward rendering procedure for differentiable rasterization
 // of Gaussians.
@@ -492,11 +515,14 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 		imgState.n_contrib,
 		imgState.max_contrib,
 		background,
-		out_color,
+		imgState.pixel_colors,
 		geomState.depths,
 		invdepth), debug)
 
-	CHECK_CUDA(cudaMemcpy(imgState.pixel_colors, out_color, sizeof(float) * width * height * NUM_CHANNELS_3DGS, cudaMemcpyDeviceToDevice), debug);
+	// CHECK_CUDA(cudaMemcpy(imgState.pixel_colors, out_color, sizeof(float) * width * height * NUM_CHANNELS_3DGS, cudaMemcpyDeviceToDevice), debug);
+	convert_to_tiled<<<(width * height * 3 + 255) / 256, 256>>>(
+		imgState.pixel_colors, out_color,
+		width, height);
 	CHECK_CUDA(cudaMemcpy(imgState.pixel_invDepths, invdepth, sizeof(float) * width * height, cudaMemcpyDeviceToDevice), debug);
 	return std::make_tuple(num_rendered, bucket_sum);
 }

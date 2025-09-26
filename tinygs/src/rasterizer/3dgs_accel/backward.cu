@@ -11,6 +11,7 @@
 
 #include "backward.h"
 #include "auxiliary.h"
+#include "tinygs/common.hpp"
 #include <cooperative_groups.h>
 #include <cooperative_groups/reduce.h>
 namespace cg = cooperative_groups;
@@ -578,7 +579,12 @@ PerGaussianRenderCUDA_backward(
 			T_final = final_Ts[pix_id];
 			last_contributor = n_contrib[pix_id];
 			for (int ch = 0; ch < C; ++ch) {
-				dL_dpixel[ch] = dL_dpixels[ch * H * W + pix_id];
+				auto tiled_width = (W + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+				auto tiled_height = (H + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+				auto channel_stride = (tiled_width * tiled_height) << (2 * tinygs::kImageTileLog2);
+				auto inchannel_offset = tinygs::get_linear_index_tiled(pix.y, pix.x, tiled_width);
+
+				dL_dpixel[ch] = dL_dpixels[ch * channel_stride + inchannel_offset];
 			}
 			dL_invdepth = dL_invdepths[pix_id];
 		}

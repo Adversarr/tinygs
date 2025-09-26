@@ -201,7 +201,7 @@ __global__ void preprocess_backward_cu(
         grad_conic[2 * n_primitives + primitive_idx]);
     const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
                                                         2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
-                                                        bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z,
+                                                        2.0f * (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
                                                         2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
 
     // 3d covariance gradient
@@ -279,12 +279,14 @@ __global__ void preprocess_backward_cu(
                                     2.0f * (rotation.m12 * rotation.m22 * dL_dcov3d.m12 + rotation.m12 * rotation.m32 * dL_dcov3d.m13 + rotation.m22 * rotation.m32 * dL_dcov3d.m23);
     const float dL_dvariance_z = rotation.m13 * rotation.m13 * dL_dcov3d.m11 + rotation.m23 * rotation.m23 * dL_dcov3d.m22 + rotation.m33 * rotation.m33 * dL_dcov3d.m33 +
                                     2.0f * (rotation.m13 * rotation.m23 * dL_dcov3d.m12 + rotation.m13 * rotation.m33 * dL_dcov3d.m13 + rotation.m23 * rotation.m33 * dL_dcov3d.m23);
-    // The gradient for raw_scale is 2*variance*dL_dvariance. When variance is close to zero, this can lead to vanishing gradients.
-    // This is inherent to the exp parameterization of scale, but worth noting for training stability.
+    // Original Note:
+    // > The gradient for raw_scale is 2*variance*dL_dvariance. When variance is close to zero, this can lead to vanishing gradients.
+    // > This is inherent to the exp parameterization of scale, but worth noting for training stability.
+    // NOTE: we restore this.
     const float3 dL_draw_scale = make_float3(
-        2.0f * tinygs::activate_scale_deriv(raw_scale.x) * dL_dvariance_x,
-        2.0f * tinygs::activate_scale_deriv(raw_scale.y) * dL_dvariance_y,
-        2.0f * tinygs::activate_scale_deriv(raw_scale.z) * dL_dvariance_z);
+        2.0f * tinygs::activate_scale_deriv(raw_scale.x) * tinygs::activate_scale(raw_scale.x) * dL_dvariance_x,
+        2.0f * tinygs::activate_scale_deriv(raw_scale.y) * tinygs::activate_scale(raw_scale.y) * dL_dvariance_y,
+        2.0f * tinygs::activate_scale_deriv(raw_scale.z) * tinygs::activate_scale(raw_scale.z) * dL_dvariance_z);
 #ifndef NDEBUG
     assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif

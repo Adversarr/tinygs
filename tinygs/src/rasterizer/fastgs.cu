@@ -127,6 +127,8 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     const auto& sh_coeffs_0 = m_gaussians->sh_coefficient_0();
     const auto& sh_coeffs_rest = m_gaussians->sh_coefficients_rest();
 
+    int activated_bases = (m_gaussians->get_sh_degree() + 1) * (m_gaussians->get_sh_degree() + 1);
+
     auto [n_visible_primitives, n_instances, n_buckets,
           primitive_primitive_indices_selector,
           instance_primitive_indices_selector] =
@@ -146,7 +148,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* image */ static_cast<float*>(ctx.fwd_output.image.data),
             /* alpha */ static_cast<float*>(ctx.fwd_output.alpha.data),
             /* n_primitives */ m_gaussians->size(),
-            /* active_sh_bases */ m_gaussians->get_sh_degree(),
+            /* active_sh_bases */ activated_bases,
             /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
             /* width */ ctx.fwd_input.width,
             /* height */ ctx.fwd_input.height,
@@ -199,7 +201,8 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   if (params.densification_info) {
     densification_info = params.densification_info->data();
   }
-
+  
+  int activated_bases = (m_gaussians->get_sh_degree() + 1) * (m_gaussians->get_sh_degree() + 1);
   fast_gs::rasterization::backward(
     /* grad_image */ static_cast<float*>(params.grad_output.image.data),
     /* grad_alpha */ static_cast<float*>(params.grad_output.alpha.data),
@@ -232,7 +235,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* n_buckets */ m_impl->n_buckets,
     /* primitive_primitive_indices_selector */ m_impl->primitive_primitive_indices_selector,
     /* instance_primitive_indices_selector */ m_impl->instance_primitive_indices_selector,
-    /* active_sh_bases */ m_gaussians->get_sh_degree(),
+    /* active_sh_bases */ activated_bases,
     /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
     /* width */ params.fwd_input.width,
     /* height */ params.fwd_input.height,
