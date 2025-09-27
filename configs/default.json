@@ -50,6 +50,7 @@
     "max_grad_1": 0.0,
     "means_lr": 0.00016,
     "opacities_l1": 0.01,
+    "decouple_decay": true,
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
     "scales_l1": 0.01,

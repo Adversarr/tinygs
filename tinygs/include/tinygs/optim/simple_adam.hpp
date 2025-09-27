@@ -10,6 +10,7 @@ struct SimpleAdamParameters {
   float beta1 = 0.9f;
   float beta2 = 0.999f;
   float epsilon = 1e-8f;
+  bool decouple_decay = false; // AdamW support
 
   /// @brief Default constructor with default values
   SimpleAdamParameters() = default;
@@ -57,6 +58,10 @@ public:
   json get_params() const override;
 
 private:
+
+  void step_adam(float scale, cudaStream_t stream);
+  void step_adamw(float scale, cudaStream_t stream);
+
   SimpleAdamParameters m_adam_params;
   uint32_t m_global_steps = 0;
 
