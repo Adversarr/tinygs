@@ -462,8 +462,8 @@ __global__ void blend_backward_cu(
 // iterate over all pixels in the tile
 // Unrolling is not a good idea here.
 // #pragma unroll 2
-    for (uint ii = 0; ii < config::block_size_blend + 31; ii += 16) {
-        if (ii % 32 == 0  && ii < config::block_size_blend) { // fetch data
+    for (uint ii = 0; ii < config::block_size_blend + 31; ii += 32) {
+        if (ii < config::block_size_blend) { // fetch data
             const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
             const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
             const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
@@ -480,7 +480,7 @@ __global__ void blend_backward_cu(
             float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
             if (is_valid) {
                 color_transmittance = bucket_color_transmittance[i];
-                local.last_contributor = tile_n_contributions[pixel_idx]; // logical pixel index.
+                local.last_contributor = tile_n_contributions[physical_pixel_idx]; // logical pixel index.
                 local.grad_color_pixel = make_float3(grad_image[physical_pixel_idx],
                                 grad_image[physical_pixel_idx + channel_stride],
                                 grad_image[physical_pixel_idx + channel_stride * 2]);
@@ -493,9 +493,7 @@ __global__ void blend_backward_cu(
             fast_copy(cached_per_pixel[lane_idx], local);
             __syncwarp(); // Synchronize after writing to shared memory
         }
-
-// #pragma unroll 16
-        for (uint j = 0; j < 16; ++j) {
+        for (uint j = 0; j < 32; ++j) {
             const uint i = ii + j;
             // which pixel index should this thread deal with?
             const uint idx = i - lane_idx_uint; // overflow is ok, will much greater than the block size, and mark invalid

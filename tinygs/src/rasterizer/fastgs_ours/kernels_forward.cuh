@@ -659,7 +659,10 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
 
         // image[pixel_idx] = color_pixel;
         // alpha_map[pixel_idx] = 1.0f - transmittance;
-        tile_n_contributions[pixel_idx] = n_contributions;
+        // tile_n_contributions[pixel_idx] = n_contributions;
+        // NOTE: the rendering tile is 16x16, our tiled index is 8x8, store it without additional padding
+        // is safe.
+        tile_n_contributions[physical_pixel_idx] = n_contributions;
     }
 
     // max reduce the number of contributions
