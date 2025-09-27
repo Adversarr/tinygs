@@ -15,6 +15,8 @@ struct RasterizeContext {
   /// @brief CUDA stream for computation
   cudaStream_t stream = nullptr;
 
+  float grad_scaler = 1.0f;
+
   GPUBatchInput fwd_input;
   GPUBatchOutput fwd_output;
   GPUBatchInput grad_input;

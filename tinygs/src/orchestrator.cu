@@ -32,6 +32,7 @@ json OrchestratorConfig::to_json() const {
   j["near_plane"] = near_plane;
   j["far_plane"] = far_plane;
   j["test_steps"] = test_steps;
+  j["grad_scaler"] = grad_scaler;
   j["out_dir"] = out_dir;
   j["export_rasterized"] = export_rasterized;
   return j;
@@ -60,6 +61,7 @@ void OrchestratorConfig::from_json(const json& j) {
       throw std::invalid_argument("Expect test_steps to be array of integers.");
     }
   }
+  if (j.contains("grad_scaler")) grad_scaler = j["grad_scaler"].get<float>();
   if (j.contains("out_dir")) out_dir = j["out_dir"].get<std::string>();
   if (j.contains("export_rasterized")) export_rasterized = j["export_rasterized"].get<bool>();
 }
@@ -218,7 +220,8 @@ void Orchestrator::train_step() {
 
   // Optimizer step (learning rate already set by scheduler)
   //? the gradient scaler, since we are not supporting AMP, 1.0f is the default value.
-  m_optimizer->step(1.0f, m_major_stream);
+  const float inv_grad_scale = 1.0f / m_config.grad_scaler;
+  m_optimizer->step(inv_grad_scale, m_major_stream);
 
   // Strategy step (densification)
   if (m_strategy) {
@@ -423,7 +426,8 @@ void Orchestrator::initialize() {
   m_rasterize_ctx.fwd_input.height = height;
   m_rasterize_ctx.fwd_input.near = m_config.near_plane;
   m_rasterize_ctx.fwd_input.far = m_config.far_plane;
-  
+  m_rasterize_ctx.grad_scaler = m_config.grad_scaler;
+
   // Setup output images
   m_rasterize_ctx.fwd_output.image = render_rgb;
   m_rasterize_ctx.fwd_output.alpha = render_alpha;
@@ -484,7 +488,9 @@ void Orchestrator::evaluate_losses(const GPUBatchInputOutput& data) {
   m_loss_ctx.target = data.output.image;
   m_loss_ctx.pred = m_rasterize_ctx.fwd_output.image;
   for (const auto& loss_component : m_losses) {
-    loss_component.loss->evaluate(m_loss_ctx, loss_component.weight);
+    // Apply gradient scaler to loss weight
+    const float w = loss_component.weight * m_config.grad_scaler;
+    loss_component.loss->evaluate(m_loss_ctx, w);
   }
 }
 
@@ -494,7 +500,7 @@ std::vector<float> Orchestrator::evaluate_metrics() {
   
   for (const auto& metric_component : m_metrics) {
     float value = metric_component.metric->evaluate(
-      m_loss_ctx.pred, 
+      m_loss_ctx.pred,
       m_loss_ctx.target
     );
     metric_values.push_back(value);

@@ -1,5 +1,5 @@
 #pragma once
-#include "nvtx3/nvtx3.hpp"
+#include <nvtx3/nvtx3.hpp>
 #include <cuda_runtime.h>
 
 namespace gs_nvtx {

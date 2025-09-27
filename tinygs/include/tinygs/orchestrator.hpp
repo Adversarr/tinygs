@@ -45,6 +45,8 @@ struct OrchestratorConfig {
   std::string out_dir;
   bool export_rasterized = false;
 
+  float grad_scaler = 1.0f;
+
   /// @brief Convert config to JSON
   json to_json() const;
   /// @brief Load config from JSON

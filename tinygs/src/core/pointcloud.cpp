@@ -7,7 +7,7 @@
 
 #include "./happly.h"
 #include "tinygs/utils/scope_timer.hpp"
-#include "nvtx3/nvtx3.hpp"
+#include <nvtx3/nvtx3.hpp>
 
 namespace tinygs {
 

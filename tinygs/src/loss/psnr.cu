@@ -29,7 +29,7 @@ __global__ void psnr_squared_diff_kernel(int N, const float *__restrict__ pred,
     return;
   }
 
-  const float p = pred[i];
+  const float p = tinygs::saturate(pred[i]);
   const float t = target[i];
   const float diff = p - t;
   squared_diff[i] = diff * diff;

@@ -44,7 +44,7 @@
   "optimizer": {
     "beta1": 0.9,
     "beta2": 0.999,
-    "enable_adabound": false,
+    "enable_adabound": true,
     "gamma": 1e-3,
     "epsilon": 1.0e-8,
     "max_grad_1": 0.0,
@@ -53,7 +53,7 @@
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
     "scales_l1": 0.01,
-    "scales_lr": 0.001,
+    "scales_lr": 0.005,
     "shs_lr": 0.0025,
     "skip_zero_grad": false,
     "type": "simple_adam"
@@ -81,6 +81,7 @@
     "early_stopping_threshold": 1.0e-6,
     "enable_early_stopping": false,
     "far_plane": 100.0,
+    "grad_scaler": 10.0,
     "log_interval": 100,
     "max_sh_degree": 3,
     "max_steps": 30000,

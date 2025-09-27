@@ -175,6 +175,7 @@ void SimpleAdam::step(float scale, cudaStream_t stream) {
       std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
                                static_cast<double>(m_global_steps))));
 
+  const float scene_scale = m_gaussians->scene_scale();
   {
     auto msg = regstr::get<m_step>();
     nvtx3::event_attributes attr(msg, nvtx3::payload{n});
@@ -185,7 +186,7 @@ void SimpleAdam::step(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_means_first.data()),
       (float*) thrust::raw_pointer_cast(m_means_second.data()),
       m_adam_params,
-      m_params.means_lr,
+      m_params.means_lr * scene_scale,
       n * 3,
       gradient_scale,
       bias_correction1,
