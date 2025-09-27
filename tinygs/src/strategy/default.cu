@@ -128,6 +128,8 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   log_info("Add {} gaussians ({} total, {} split, {} duplicate)", num_grows, num_grows + num_gaussians,
       num_split, num_dups);
 
+  if (num_grows == 0) return;
+
   thrust::device_vector<int> grow_indices_src(num_grows);
   auto *d_grow_indices_src = thrust::raw_pointer_cast(grow_indices_src.data());
   {

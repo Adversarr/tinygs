@@ -467,20 +467,31 @@ __global__ void blend_backward_cu(
             const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
             const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
             const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
-            const uint i = ii + lane_idx_uint;
-            const uint2 pixel_coords = {start_pixel_coords.x | (i & config::tile_width_minus_1),
-                                        start_pixel_coords.y | (i >> config::tile_width_log2)};
+            const uint i = ii + lane_idx_uint; // 0 <= i < 256
+            const uint local_tile = i >> (2 * tinygs::kImageTileLog2);                              // 0..3
+            const uint intile = i % (tinygs::kImageTile * tinygs::kImageTile);                      // 0..63
+            const uint dx = (intile % tinygs::kImageTile) + (local_tile % 2) * tinygs::kImageTile;  // 0..16
+            const uint dy = (intile / tinygs::kImageTile) + (local_tile / 2) * tinygs::kImageTile;  // 0..16
+            assert(local_tile < 4);
+            assert(intile < tinygs::kImageTile * tinygs::kImageTile);
+            assert(dx < config::tile_width);
+            assert(dy < config::tile_height);
+            const uint2 pixel_coords = {start_pixel_coords.x + dx,
+                                        start_pixel_coords.y + dy};
             const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
             const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
                 /* row */ pixel_coords.y,
                 /* col */ pixel_coords.x,
                 width_in_tile);
-            const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
+            const bool is_valid =
+                pixel_coords.x < width && pixel_coords.y < height &&
+                dx < config::tile_width && dy < config::tile_height;
             PerPixel local; fast_zero(local);
             float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
             if (is_valid) {
+                // color_transmittance = bucket_color_transmittance[dx + dy * config::tile_width];
                 color_transmittance = bucket_color_transmittance[i];
-                local.last_contributor = tile_n_contributions[physical_pixel_idx]; // logical pixel index.
+                local.last_contributor = tile_n_contributions[physical_pixel_idx];
                 local.grad_color_pixel = make_float3(grad_image[physical_pixel_idx],
                                 grad_image[physical_pixel_idx + channel_stride],
                                 grad_image[physical_pixel_idx + channel_stride * 2]);
@@ -497,9 +508,13 @@ __global__ void blend_backward_cu(
             const uint i = ii + j;
             // which pixel index should this thread deal with?
             const uint idx = i - lane_idx_uint; // overflow is ok, will much greater than the block size, and mark invalid
+            const uint local_tile = idx >> (2 * tinygs::kImageTileLog2); // 0..3
+            const uint intile = idx % (tinygs::kImageTile * tinygs::kImageTile); // 0..63
+            const uint dx = (intile % tinygs::kImageTile) + (local_tile % 2) * tinygs::kImageTile; // 0..16
+            const uint dy = (intile / tinygs::kImageTile) + (local_tile / 2) * tinygs::kImageTile; // 0..16
             const uint2 pixel_coords = {
-                start_pixel_coords.x | (idx & config::tile_width_minus_1),
-                start_pixel_coords.y | (idx >> config::tile_width_log2)};
+                start_pixel_coords.x + dx,
+                start_pixel_coords.y + dy};
             per_pixel_registers = warp.shfl_up(per_pixel_registers, 1);
 
             const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;

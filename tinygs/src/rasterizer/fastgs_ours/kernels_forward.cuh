@@ -568,7 +568,9 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     const dim3 group_index = block.group_index();
     const dim3 thread_index = block.thread_index();
     const uint thread_rank = block.thread_rank();
-    const uint2 pixel_coords = make_uint2(group_index.x * config::tile_width + thread_index.x, group_index.y * config::tile_height + thread_index.y);
+    const uint2 intile = make_uint2(thread_index.x, thread_index.y);
+    const uint2 pixel_coords = make_uint2(group_index.x * config::tile_width  + intile.x,
+                                          group_index.y * config::tile_height + intile.y);
     const bool inside = pixel_coords.x < width && pixel_coords.y < height;
     const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y)) + 0.5f;
 
@@ -588,9 +590,11 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
 
     uint bucket_offset = tile_idx == 0 ? 0 : tile_bucket_offsets[tile_idx - 1];
     const int n_buckets = div_round_up(n_points_total, 32); // re-computing is faster than reading from tile_n_buckets
-    for (int n_buckets_remaining = n_buckets, current_bucket_idx = thread_rank; n_buckets_remaining > 0; n_buckets_remaining -= config::block_size_blend, current_bucket_idx += config::block_size_blend) {
-        if (current_bucket_idx < n_buckets)
-            bucket_tile_index[bucket_offset + current_bucket_idx] = tile_idx;
+    for (int n_buckets_remaining = n_buckets, current_bucket_idx = thread_rank;
+         n_buckets_remaining > 0;
+         n_buckets_remaining -= config::block_size_blend, current_bucket_idx += config::block_size_blend) {
+      if (current_bucket_idx < n_buckets)
+        bucket_tile_index[bucket_offset + current_bucket_idx] = tile_idx;
     }
 
     // setup shared memory
@@ -616,10 +620,16 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         }
         block.sync();
         const int current_batch_size = min(config::block_size_blend, n_points_remaining);
-        for (int j = 0; !done && j < current_batch_size; ++j) {
+        int j;
+        for (j = 0; !done && j < current_batch_size; ++j) {
             if (j % 32 == 0) {
                 const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
-                bucket_color_transmittance[bucket_offset * config::block_size_blend + thread_rank] = current_color_transmittance;
+                // for a 16x16 render tile, we divide by 2x2 to get our tile.
+                //      col0 col1
+                // row0  0    1
+                // row1  2    3
+                const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
+                bucket_color_transmittance[bucket_offset * config::block_size_blend + off] = current_color_transmittance;
                 bucket_offset++;
             }
             n_possible_contributions++;
@@ -642,6 +652,13 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             color_pixel += transmittance * alpha * collected_color[j];
             transmittance = next_transmittance;
             n_contributions = n_possible_contributions;
+        }
+        j = ((j + 31) / 32) * 32; // round up to next warp
+        for (; j < current_batch_size; j += 32) {
+            const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
+            const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
+            bucket_color_transmittance[bucket_offset * config::block_size_blend + off] = current_color_transmittance;
+            bucket_offset++;
         }
     }
     if (inside) {
