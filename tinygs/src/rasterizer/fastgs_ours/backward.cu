@@ -15,6 +15,7 @@
 
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <cuda_runtime_api.h>
 
 #define WARP_SIZE 32
 template <const int kWarpSize = WARP_SIZE>
@@ -260,6 +261,14 @@ void fast_gs::rasterization::backward(
     PerBucketBuffers per_bucket_buffers = PerBucketBuffers::from_blob(per_bucket_buffers_blob, n_buckets);
     per_primitive_buffers.primitive_indices.selector = primitive_primitive_indices_selector;
     per_instance_buffers.primitive_indices.selector = instance_primitive_indices_selector;
+
+    static bool has_set = false;
+    if (!has_set){
+      has_set = true;
+      cudaFuncSetSharedMemConfig(
+          kernels::backward::blend_backward_cu,
+          cudaSharedMemBankSizeEightByte);
+    }
 
     {
         GS_RANGE_SCOPE(m_blend_backward, C_RED, catK(), n_buckets);

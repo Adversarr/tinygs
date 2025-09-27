@@ -349,7 +349,7 @@ static inline __device__ void fast_copy(PerPixel &dst,
     const uint64_t *src_ptr = (const uint64_t *)&src;
 #pragma unroll
     for (int i = 0; i < 4; i++) {
-    dst_ptr[i] = src_ptr[i]; // nvcc will expand all these into two LDS.128 command
+      dst_ptr[i] = src_ptr[i]; // nvcc will expand all these into two LDS.128 command
     }
 }
 
@@ -357,7 +357,7 @@ static inline __device__ void fast_zero(PerPixel &dst) {
     uint64_t *dst_ptr = (uint64_t *)&dst;
 #pragma unroll
     for (int i = 0; i < 4; i++) {
-    dst_ptr[i] = (uint64_t) 0;
+      dst_ptr[i] = (uint64_t) 0;
     }
 }
 
@@ -444,7 +444,10 @@ __global__ void blend_backward_cu(
     float dL_draw_opacity_partial_accum = 0.0f;
     float3 dL_dcolor_accum = {0.0f, 0.0f, 0.0f};
 
-    alignas(32) PerPixel per_pixel_registers;
+    alignas(32) union {
+      PerPixel per_pixel_registers;
+      uint64_t regfile[4];
+    };
     fast_zero(per_pixel_registers);
 
     // shorter
@@ -501,7 +504,22 @@ __global__ void blend_backward_cu(
                 local.transmittance = color_transmittance.w;
             }
             local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
-            fast_copy(cached_per_pixel[lane_idx], local);
+            // fast_copy(cached_per_pixel[lane_idx], local);
+            {
+              uint64_t* p = reinterpret_cast<uint64_t*>(&local);
+              asm volatile("st.shared.u64 [%0], %1;"::
+                    "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 0u * sizeof(uint64_t)),
+                    "l"(p[0]));
+              asm volatile("st.shared.u64 [%0], %1;"::
+                    "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 1u * sizeof(uint64_t)),
+                    "l"(p[1]));
+              asm volatile("st.shared.u64 [%0], %1;"::
+                    "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 2u * sizeof(uint64_t)),
+                    "l"(p[2]));
+              asm volatile("st.shared.u64 [%0], %1;"::
+                    "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 3u * sizeof(uint64_t)),
+                    "l"(p[3]));
+            }
             __syncwarp(); // Synchronize after writing to shared memory
         }
         for (uint j = 0; j < 32; ++j) {
@@ -515,7 +533,11 @@ __global__ void blend_backward_cu(
             const uint2 pixel_coords = {
                 start_pixel_coords.x + dx,
                 start_pixel_coords.y + dy};
-            per_pixel_registers = warp.shfl_up(per_pixel_registers, 1);
+            // per_pixel_registers = warp.shfl_up(per_pixel_registers, 1);
+            regfile[0] = __shfl_up_sync(0xFFFFFFFF, regfile[0], 1);
+            regfile[1] = __shfl_up_sync(0xFFFFFFFF, regfile[1], 1);
+            regfile[2] = __shfl_up_sync(0xFFFFFFFF, regfile[2], 1);
+            regfile[3] = __shfl_up_sync(0xFFFFFFFF, regfile[3], 1);
 
             const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;
             const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
