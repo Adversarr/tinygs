@@ -484,8 +484,7 @@ void Orchestrator::evaluate_losses(const GPUBatchInputOutput& data) {
   m_loss_ctx.target = data.output.image;
   m_loss_ctx.pred = m_rasterize_ctx.fwd_output.image;
   for (const auto& loss_component : m_losses) {
-    m_loss_ctx.scale = loss_component.weight;
-    loss_component.loss->evaluate(m_loss_ctx);
+    loss_component.loss->evaluate(m_loss_ctx, loss_component.weight);
   }
 }
 

@@ -9,7 +9,7 @@ public:
   FusedSSIMLoss();
   virtual ~FusedSSIMLoss();
 
-  void evaluate(LossContext ctx) override;
+  void evaluate(LossContext ctx, float scale) override;
 
   struct Impl;
 

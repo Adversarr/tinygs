@@ -9,7 +9,7 @@ public:
   L1Loss() = default;
   ~L1Loss() = default;
 
-  void evaluate(LossContext ctx) override;
+  void evaluate(LossContext ctx, float scale) override;
 };
 
 } // namespace tinygs

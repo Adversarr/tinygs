@@ -4,7 +4,6 @@
 namespace tinygs {
 
 struct LossContext {
-  float scale = 1.0f;
   Image pred;
   Image target;
   Image loss;
@@ -19,7 +18,7 @@ public:
   virtual ~LossBase() = default;
 
   /// @brief Accumulate loss and gradient
-  virtual void evaluate(LossContext ctx) = 0;
+  virtual void evaluate(LossContext ctx, float scale) = 0;
 };
 
 class MetricBase {

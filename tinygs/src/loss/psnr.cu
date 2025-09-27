@@ -38,7 +38,8 @@ __global__ void psnr_squared_diff_kernel(int N, const float *__restrict__ pred,
 namespace tinygs {
 
 float PsnrMetric::evaluate(Image pred, Image target) {
-  int n = pred.size();
+  int n = pred.shape.padded_size(); // physical
+  int npix = pred.shape.size();     // actual
   
   // Allocate temporary memory for squared differences
   if (m_sqr_diff.size() < n) {
@@ -51,9 +52,9 @@ float PsnrMetric::evaluate(Image pred, Image target) {
     static_cast<const float*>(pred.data),
     static_cast<const float*>(target.data),
     squared_diff);
-  
+
   // Compute MSE (mean squared error)
-  float mse = mean(squared_diff, n);
+  float mse = gpu_sum(squared_diff, n) / npix;
 
   // Compute PSNR
   // For normalized images, MAX_I = 1.0, so 20 * log10(MAX_I) = 0

@@ -491,22 +491,23 @@ FusedSSIMLoss::~FusedSSIMLoss() = default;
 FusedSSIMLoss::FusedSSIMLoss() {
   m_impl = std::make_unique<Impl>();
 }
+
 struct m_domain { static constexpr char const* name{"fused_ssim"}; };
 struct m_fused_ssim_fwd { static constexpr char const* message{"forward"}; };
 struct m_fused_ssim_bwd { static constexpr char const* message{"backward"}; };
 using regstr = nvtx3::registered_string_in<m_domain>;
 using range  = nvtx3::scoped_range_in<m_domain>;
 
-void FusedSSIMLoss::evaluate(LossContext ctx) {
+void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
     NVTX3_FUNC_RANGE();
     int H = ctx.pred.shape.height;
     int W = ctx.pred.shape.width;
     dim3 grid((W + BLOCK_X - 1) / BLOCK_X, (H + BLOCK_Y - 1) / BLOCK_Y,
               /*batch_size*/ 1);
     dim3 block(BLOCK_X, BLOCK_Y);
-    int total = ctx.pred.shape.padded_size();
+    int total = ctx.pred.shape.padded_size();   // physical
     m_impl->ensure(total, ctx.stream);
-    const float actual_scale = ctx.scale / (total);
+    const float actual_scale = scale / (H * W); // use actual pixel count
 
     const float* pred = static_cast<float*>(ctx.pred.data);
     const float* targ = static_cast<float*>(ctx.target.data);

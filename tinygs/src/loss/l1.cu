@@ -42,11 +42,12 @@ __global__ void l1_kernel(int N, const float *__restrict__ pred,
 }
 
 
-void L1Loss::evaluate(LossContext ctx) {
-  int n = ctx.pred.shape.padded_size();
+void L1Loss::evaluate(LossContext ctx, float scale) {
+  int n = ctx.pred.shape.padded_size(); // physical
+  int npix = ctx.pred.shape.size();     // actual
   NVTX3_FUNC_RANGE();
 
-  const float actual_scale = ctx.scale / n;
+  const float actual_scale = scale / npix;
   linear_kernel(l1_kernel, 0, ctx.stream, n,
     static_cast<const float*>(ctx.pred.data),
     static_cast<const float*>(ctx.target.data),
