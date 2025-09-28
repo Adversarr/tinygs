@@ -504,22 +504,22 @@ __global__ void blend_backward_cu(
                 local.transmittance = color_transmittance.w;
             }
             local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
-            // fast_copy(cached_per_pixel[lane_idx], local);
-            {
-              uint64_t* p = reinterpret_cast<uint64_t*>(&local);
-              asm volatile("st.shared.u64 [%0], %1;"::
-                    "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 0u * sizeof(uint64_t)),
-                    "l"(p[0]));
-              asm volatile("st.shared.u64 [%0], %1;"::
-                    "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 1u * sizeof(uint64_t)),
-                    "l"(p[1]));
-              asm volatile("st.shared.u64 [%0], %1;"::
-                    "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 2u * sizeof(uint64_t)),
-                    "l"(p[2]));
-              asm volatile("st.shared.u64 [%0], %1;"::
-                    "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 3u * sizeof(uint64_t)),
-                    "l"(p[3]));
-            }
+            fast_copy(cached_per_pixel[lane_idx], local);
+            // {
+            //   uint64_t* p = reinterpret_cast<uint64_t*>(&local);
+            //   asm volatile("st.shared.u64 [%0], %1;"::
+            //         "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 0u * sizeof(uint64_t)),
+            //         "l"(p[0]));
+            //   asm volatile("st.shared.u64 [%0], %1;"::
+            //         "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 1u * sizeof(uint64_t)),
+            //         "l"(p[1]));
+            //   asm volatile("st.shared.u64 [%0], %1;"::
+            //         "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 2u * sizeof(uint64_t)),
+            //         "l"(p[2]));
+            //   asm volatile("st.shared.u64 [%0], %1;"::
+            //         "l"(saddr + lane_idx_uint * sizeof(PerPixel) + 3u * sizeof(uint64_t)),
+            //         "l"(p[3]));
+            // }
             __syncwarp(); // Synchronize after writing to shared memory
         }
         for (uint j = 0; j < 32; ++j) {

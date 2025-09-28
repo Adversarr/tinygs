@@ -336,7 +336,7 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       // [d=m_params.opacities_l1, invn = 1.0f / n] __device__(float x, float g) { 
       //   return (activate_opacity_deriv(x) * d) * invn + g;
       // }
-      OpacityDecay(m_params.opacities_l1 / n)
+      OpacityDecay(m_params.opacities_l1)
     );
 
     // Rotations
@@ -368,7 +368,7 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       // [d=m_params.scales_l1, invn = 1.0f / n] __device__(float x, float g) { 
       //   return (activate_scale_deriv(x) * d) * invn + g;
       // }
-      ScaleDecay(m_params.scales_l1 / n)
+      ScaleDecay(m_params.scales_l1)
     );
 
     // SH Coefficient 0
@@ -459,7 +459,7 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       // [d=m_params.opacities_l1, invn = 1.0f / n] __device__(float x, float g) { 
       //   return (activate_opacity_deriv(x) * d) * invn + g;
       // },
-      OpacityDecay(m_params.opacities_l1 / n)
+      OpacityDecay(m_params.opacities_l1)
     );
 
     // Rotations
@@ -491,7 +491,7 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       // [d=m_params.scales_l1, invn = 1.0f / n] __device__(float x, float g) { 
       //   return (activate_scale_deriv(x) * d) * invn + g;
       // },
-      ScaleDecay(m_params.scales_l1 / n)
+      ScaleDecay(m_params.scales_l1)
     );
 
     // SH Coefficient 0
