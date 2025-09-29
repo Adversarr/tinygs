@@ -262,14 +262,6 @@ void fast_gs::rasterization::backward(
     per_primitive_buffers.primitive_indices.selector = primitive_primitive_indices_selector;
     per_instance_buffers.primitive_indices.selector = instance_primitive_indices_selector;
 
-    static bool has_set = false;
-    if (!has_set){
-      has_set = true;
-      cudaFuncSetSharedMemConfig(
-          kernels::backward::blend_backward_cu,
-          cudaSharedMemBankSizeEightByte);
-    }
-
     {
         GS_RANGE_SCOPE(m_blend_backward, C_RED, catK(), n_buckets);
         const int grids = div_round_up(n_buckets, config::blend_bwd_n_warps);

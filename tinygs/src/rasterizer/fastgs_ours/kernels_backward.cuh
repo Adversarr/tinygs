@@ -201,7 +201,7 @@ __global__ void preprocess_backward_cu(
         grad_conic[2 * n_primitives + primitive_idx]);
     const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
                                                         2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
-                                                        2.0f * (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
+                                                        /* 2.0f * */(bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
                                                         2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
 
     // 3d covariance gradient
@@ -362,7 +362,7 @@ static inline __device__ void fast_zero(PerPixel &dst) {
 }
 
 
-__global__ void blend_backward_cu(
+__global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward_cu(
     const uint2* __restrict__ tile_instance_ranges,
     const uint* __restrict__ tile_bucket_offsets,
     const uint* __restrict__ instance_primitive_indices,
@@ -462,9 +462,7 @@ __global__ void blend_backward_cu(
     unsigned long long saddr;
     asm("cvta.to.shared.u64 %0, %1;" : "=l"(saddr) : "l"(cached_per_pixel));
 
-// iterate over all pixels in the tile
-// Unrolling is not a good idea here.
-// #pragma unroll 2
+    // iterate over all pixels in the tile
     for (uint ii = 0; ii < config::block_size_blend + 31; ii += 32) {
         if (ii < config::block_size_blend) { // fetch data
             const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
@@ -505,8 +503,9 @@ __global__ void blend_backward_cu(
             }
             local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
             fast_copy(cached_per_pixel[lane_idx], local);
-            __syncwarp(); // Synchronize after writing to shared memory
         }
+
+#pragma unroll
         for (uint j = 0; j < 32; ++j) {
             const uint i = ii + j;
             // which pixel index should this thread deal with?
@@ -542,7 +541,7 @@ __global__ void blend_backward_cu(
                     : "=f"(dst_view_next->x), "=f"(dst_view_next->y), "=f"(dst_view_next->z), "=f"(dst_view_next->w)
                     : "l"(saddr + (i % 32) * sizeof(PerPixel) + 16ul));
             }
-            __syncwarp(); // Synchronize after reading from shared memory
+            // __syncwarp(); // Synchronize after reading from shared memory
             const bool skip = !valid_general || tile_primitive_idx >= last_contributor;
             const float alpha_prepare = opacity * gaussian;
             const float color_dot_grad_color_pixel = dot(color, grad_color_pixel);
