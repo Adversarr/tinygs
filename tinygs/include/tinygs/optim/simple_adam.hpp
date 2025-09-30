@@ -11,6 +11,7 @@ struct SimpleAdamParameters {
   float beta2 = 0.999f;
   float epsilon = 1e-8f;
   bool decouple_decay = false; // AdamW support
+  std::string decay_reduction = "mean"; // "mean" or "sum"
 
   /// @brief Default constructor with default values
   SimpleAdamParameters() = default;

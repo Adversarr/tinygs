@@ -343,10 +343,12 @@ void Orchestrator::train_step() {
   }
 
   if (m_state.current_step > 0) {
-    if (m_state.current_step % m_config.scene_scale_recompute_interval == 0) {
+    if (m_config.scene_scale_recompute_interval > 0 &&
+        m_state.current_step % m_config.scene_scale_recompute_interval == 0) {
       recompute_scene_scale();
     }
-    if (m_state.current_step % m_config.reorder_gaussians_interval == 0) {
+    if (m_config.reorder_gaussians_interval > 0 &&
+        m_state.current_step % m_config.reorder_gaussians_interval == 0) {
       reorder_gaussians();
     }
   }

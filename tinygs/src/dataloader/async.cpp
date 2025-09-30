@@ -188,7 +188,7 @@ struct AsyncDataLoader::Impl {
 
   /// @brief Transfer data from dataset to gpu_memory (with improved error handling)
   bool prefetch_work(DataLoaderBase& base, DatasetBase& dataset, size_t total_fetched, std::stop_token st) {
-    DL_RANGE_SCOPE_LIT("prefetch_work", ::dl_nvtx::ncat::PREFETCH);
+    DL_RANGE_SCOPE_LIT("prefetch_work", ::dl_nvtx::C_BLUE, ::dl_nvtx::catPrefetch(), total_fetched);
     // Thread-safe access to permutation state
     size_t perm_idx;
     {

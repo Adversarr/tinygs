@@ -295,6 +295,11 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
   auto n = m_gaussians->size();
   const int grid = (n + block_size - 1) / block_size;
 
+  float g_scale = 1.0f;
+  if (m_adam_params.decay_reduction == "mean") {
+    g_scale = 1.0f / n;
+  }
+
   m_global_steps++;
   const float bias_correction1 = static_cast<float>(
       1.0 - std::pow(static_cast<double>(m_adam_params.beta1),
@@ -333,10 +338,7 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      // [d=m_params.opacities_l1, invn = 1.0f / n] __device__(float x, float g) { 
-      //   return (activate_opacity_deriv(x) * d) * invn + g;
-      // }
-      OpacityDecay(m_params.opacities_l1)
+      OpacityDecay(m_params.opacities_l1 * g_scale)
     );
 
     // Rotations
@@ -368,7 +370,7 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       // [d=m_params.scales_l1, invn = 1.0f / n] __device__(float x, float g) { 
       //   return (activate_scale_deriv(x) * d) * invn + g;
       // }
-      ScaleDecay(m_params.scales_l1)
+      ScaleDecay(m_params.scales_l1 * g_scale)
     );
 
     // SH Coefficient 0
@@ -393,7 +395,7 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
       m_adam_params,
-      m_params.shs_lr,
+      m_params.shs_lr * 0.05f,
       sh_rest_size,
       gradient_scale,
       bias_correction1,
@@ -417,6 +419,11 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
 
   auto n = m_gaussians->size();
   const int grid = (n + block_size - 1) / block_size;
+
+  float g_scale = 1.0f;
+  if (m_adam_params.decay_reduction == "mean") {
+    g_scale = 1.0f / n;
+  }
 
   m_global_steps++;
   const float bias_correction1 = static_cast<float>(
@@ -456,10 +463,7 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      // [d=m_params.opacities_l1, invn = 1.0f / n] __device__(float x, float g) { 
-      //   return (activate_opacity_deriv(x) * d) * invn + g;
-      // },
-      OpacityDecay(m_params.opacities_l1)
+      OpacityDecay(m_params.opacities_l1 * g_scale)
     );
 
     // Rotations
@@ -488,10 +492,7 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      // [d=m_params.scales_l1, invn = 1.0f / n] __device__(float x, float g) { 
-      //   return (activate_scale_deriv(x) * d) * invn + g;
-      // },
-      ScaleDecay(m_params.scales_l1)
+      ScaleDecay(m_params.scales_l1 * g_scale)
     );
 
     // SH Coefficient 0
@@ -516,7 +517,7 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
       m_adam_params,
-      m_params.shs_lr,
+      m_params.shs_lr * 0.05f,
       sh_rest_size,
       gradient_scale,
       bias_correction1,
@@ -725,69 +726,6 @@ void SimpleAdam::remove(char* kept_flag, int num_kept) {
   m_sh_coefficients_rest_second = std::move(sh_coefficients_rest_second);
 }
 
-__global__ static void duplicate_optimizer_state_kernel(
-  // Means
-  vec3* __restrict__ means_first,
-  vec3* __restrict__ means_second,
-  // Opacities
-  float* __restrict__ opacities_first,
-  float* __restrict__ opacities_second,
-  // Rotations
-  vec4* __restrict__ rotations_first,
-  vec4* __restrict__ rotations_second,
-  // Scales
-  vec3* __restrict__ scales_first,
-  vec3* __restrict__ scales_second,
-  // Spherical Harmonics
-  vec3* __restrict__ sh_coefficient_0_first,
-  vec3* __restrict__ sh_coefficient_0_second,
-  vec3* __restrict__ sh_coefficients_rest_first,
-  vec3* __restrict__ sh_coefficients_rest_second,
-  // Indices
-  const int* __restrict__ indices,
-  const int* __restrict__ new_indices,
-  uint32_t num_duplicate,
-  uint32_t num_sh_rest_per_gaussian
-) {
-  auto idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= num_duplicate) return;
-
-  const int src_idx = indices[idx];
-  const int dst_idx = new_indices[idx];
-
-  constexpr float kHalf = 0.45f;
-  constexpr float kQuarter = 0.20f;
-
-  // Copy means first and second moments
-  means_first[dst_idx] = means_first[src_idx] * kHalf;
-  means_second[dst_idx] = means_second[src_idx] * kQuarter;
-
-  // Copy opacities first and second moments
-  opacities_first[dst_idx] = opacities_first[src_idx] * kHalf;
-  opacities_second[dst_idx] = opacities_second[src_idx] * kQuarter;
-
-  // Copy rotations first and second moments
-  rotations_first[dst_idx] = rotations_first[src_idx] * kHalf;
-  rotations_second[dst_idx] = rotations_second[src_idx] * kQuarter;
-
-  // Copy scales first and second moments
-  scales_first[dst_idx] = scales_first[src_idx] * kHalf;
-  scales_second[dst_idx] = scales_second[src_idx] * kQuarter;
-
-  // Copy sh_coefficient_0 first and second moments
-  sh_coefficient_0_first[dst_idx] = sh_coefficient_0_first[src_idx] * kHalf;
-  sh_coefficient_0_second[dst_idx] = sh_coefficient_0_second[src_idx] * kQuarter;
-
-  // Copy sh_coefficients_rest first and second moments
-  for (uint32_t i = 0; i < num_sh_rest_per_gaussian; i++) {
-    const int src_sh_idx = src_idx * num_sh_rest_per_gaussian + i;
-    const int dst_sh_idx = dst_idx * num_sh_rest_per_gaussian + i;
-    sh_coefficients_rest_first[dst_sh_idx] = sh_coefficients_rest_first[src_sh_idx] * kHalf;
-    sh_coefficients_rest_second[dst_sh_idx] = sh_coefficients_rest_second[src_sh_idx] * kQuarter;
-  }
-
-}
-
 void SimpleAdam::duplicate(int* indices, int* new_indices, int num_duplicate) {
   if (num_duplicate == 0) return;
   const uint32_t num_sh_rest_per_gaussian = kMaxSphericalHarmonicsCoefficients - 1;
@@ -804,27 +742,6 @@ void SimpleAdam::duplicate(int* indices, int* new_indices, int num_duplicate) {
   m_sh_coefficient_0_second.resize(m_gaussians->size(), vec3(0.f, 0.f, 0.f));
   m_sh_coefficients_rest_first.resize(m_gaussians->size() * num_sh_rest_per_gaussian, vec3(0.f, 0.f, 0.f));
   m_sh_coefficients_rest_second.resize(m_gaussians->size() * num_sh_rest_per_gaussian, vec3(0.f, 0.f, 0.f));
-
-  // TODO: This design does not provide better result. Why?
-  // const int grid = (num_duplicate + 255) / 256;
-  // duplicate_optimizer_state_kernel<<<grid, 256>>>(
-  //   thrust::raw_pointer_cast(m_means_first.data()),
-  //   thrust::raw_pointer_cast(m_means_second.data()),
-  //   thrust::raw_pointer_cast(m_opacities_first.data()),
-  //   thrust::raw_pointer_cast(m_opacities_second.data()),
-  //   thrust::raw_pointer_cast(m_rotations_first.data()),
-  //   thrust::raw_pointer_cast(m_rotations_second.data()),
-  //   thrust::raw_pointer_cast(m_scales_first.data()),
-  //   thrust::raw_pointer_cast(m_scales_second.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
-  //   indices,
-  //   new_indices,
-  //   num_duplicate,
-  //   num_sh_rest_per_gaussian
-  // );
 }
 
 void SimpleAdam::reset() {
