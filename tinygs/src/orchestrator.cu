@@ -116,6 +116,7 @@ json OrchestratorConfig::to_json() const {
   j["resolution_milestones"] = resolution_milestones;
   j["resolution_scales"] = resolution_scales;
   j["scene_scale_recompute_interval"] = scene_scale_recompute_interval;
+  j["reorder_gaussians_interval"] = reorder_gaussians_interval;
   return j;
 }
 
@@ -171,6 +172,7 @@ void OrchestratorConfig::from_json(const json& j) {
     }
   }
   if (j.contains("scene_scale_recompute_interval")) scene_scale_recompute_interval = j["scene_scale_recompute_interval"].get<size_t>();
+  if (j.contains("reorder_gaussians_interval")) reorder_gaussians_interval = j["reorder_gaussians_interval"].get<size_t>();
 }
 
 void mean(const vec3* data, size_t size, vec3& out) {
