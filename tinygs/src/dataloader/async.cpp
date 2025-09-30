@@ -5,6 +5,7 @@
 #include <queue>
 #include <random>
 #include <nvtx3/nvtx3.hpp>
+#include "tinygs/dataloader/nvtx_dl.h"
 
 namespace tinygs {
 
@@ -187,6 +188,7 @@ struct AsyncDataLoader::Impl {
 
   /// @brief Transfer data from dataset to gpu_memory (with improved error handling)
   bool prefetch_work(DataLoaderBase& base, DatasetBase& dataset, size_t total_fetched, std::stop_token st) {
+    DL_RANGE_SCOPE_LIT("prefetch_work", ::dl_nvtx::ncat::PREFETCH);
     // Thread-safe access to permutation state
     size_t perm_idx;
     {
@@ -284,7 +286,7 @@ AsyncDataLoader::~AsyncDataLoader() {
 }
 
 GPUBatchInputOutput AsyncDataLoader::next() {
-  NVTX3_FUNC_RANGE();
+  DL_FUNC_RANGE();
   
   // Check for background thread errors
   m_impl->check_background_error();

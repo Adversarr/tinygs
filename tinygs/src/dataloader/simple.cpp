@@ -2,6 +2,7 @@
 #include "tinygs/cuda/common_host.hpp"
 #include <random>
 #include <nvtx3/nvtx3.hpp>
+#include "tinygs/dataloader/nvtx_dl.h"
 
 namespace tinygs {
 
@@ -73,7 +74,7 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
 }
 
 GPUBatchInputOutput SimpleDataLoader::next() {
-  NVTX3_FUNC_RANGE();
+  DL_FUNC_RANGE();
 
   auto r = next(nullptr);
   CUDA_CHECK_THROW(cudaStreamSynchronize(nullptr));

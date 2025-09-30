@@ -6,6 +6,7 @@
 #include "tinygs/common.hpp"
 #include <algorithm>
 #include <nvtx3/nvtx3.hpp>
+#include "tinygs/dataloader/nvtx_dl.h"
 
 namespace tinygs {
 
@@ -99,8 +100,8 @@ void DataLoaderBase::set_output_shape(const ImageShape &shape) {
 void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
                                   const Image &host_data) {
   std::lock_guard lock(m_mutex);
-  // TODO: support multiple resolution for dataloader
-  NVTX3_FUNC_RANGE();
+  // Avoid NVTX ranges here because this function is called from
+  // both main and background threads.
   if (gpu_data.data == nullptr) {
     throw std::runtime_error("GPU memory is not allocated.");
   } else if (host_data.data == nullptr) {
@@ -218,7 +219,7 @@ std::shared_ptr<DatasetBase> DataLoaderBase::get_dataset() const {
 }
 
 void DataLoaderBase::reset() {
-  NVTX3_FUNC_RANGE();
+  DL_FUNC_RANGE();
   // Preallocate device scratch buffer to the maximum dataset image size in bytes
   if (m_dataset) {
     const size_t max_elements = static_cast<size_t>(m_dataset->image_shape().padded_size());
