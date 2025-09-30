@@ -8,6 +8,9 @@ namespace tinygs {
 SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataLoaderBase(dataset), m_current_index(0) {
   m_rng.seed(0);
   generate_permutation();
+  // Preallocate maximum GPU buffer once to avoid future reallocations
+  size_t max_stride = m_dataset->image_shape().padded_size();
+  m_gpu_memory.resize(max_stride);
 }
 
 void SimpleDataLoader::generate_permutation() {
@@ -44,20 +47,18 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
 
   // Prepare GPU batch input
   GPUBatchInput gpu_input;
-  gpu_input.height = host_data.image.shape.height;
-  gpu_input.width = host_data.image.shape.width;
+  gpu_input.height = m_output_shape.height;
+  gpu_input.width = m_output_shape.width;
   gpu_input.near = 0.1f; // Default near plane
   gpu_input.far = 100.0f; // Default far plane
   gpu_input.K = host_data.K;
   gpu_input.w2c = host_data.w2c;
   gpu_input.timestamp = host_data.timestamp;
-  // Allocate GPU memory for the image if needed
-  size_t image_size = host_data.image.shape.padded_size();
-  m_gpu_memory.resize(image_size);
+  // GPU memory is preallocated to maximum stride at initialization; no resize here
   
   // Create GPU image structure
   Image gpu_image;
-  gpu_image.shape = host_data.image.shape; // TODO: allow lower resolution.
+  gpu_image.shape = m_output_shape;
   gpu_image.data_type = ImageDataType::Float32;
   gpu_image.data = m_gpu_memory.data();
 
@@ -74,8 +75,8 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
 GPUBatchInputOutput SimpleDataLoader::next() {
   NVTX3_FUNC_RANGE();
 
-  auto r = next(cudaStreamDefault);
-  CUDA_CHECK_THROW(cudaStreamSynchronize(cudaStreamDefault));
+  auto r = next(nullptr);
+  CUDA_CHECK_THROW(cudaStreamSynchronize(nullptr));
   return std::move(r);
 }
 
@@ -92,6 +93,8 @@ json SimpleDataLoader::get_params() const {
 }
 
 void SimpleDataLoader::reset() {
+  // Ensure base preallocations (scratch buffer) happen once
+  DataLoaderBase::reset();
   generate_permutation();
 }
 

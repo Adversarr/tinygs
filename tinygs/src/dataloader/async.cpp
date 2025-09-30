@@ -25,6 +25,12 @@ public:
         not_empty_.notify_all();
     }
 
+    void clear() {
+        std::scoped_lock lk(m_);
+        q_.clear();
+        not_full_.notify_all();
+    }
+
     /// @brief Push element to queue, returns false if cancelled or queue is closed
     bool push(T value, std::stop_token st = {}) {
         std::unique_lock lk(m_);
@@ -83,7 +89,7 @@ struct AsyncDataLoader::Impl {
   std::unique_ptr<BoundedBlockingQueue<uint32_t>> index_queue;
   cudaStream_t prefetch_stream;             ///< CUDA stream for prefetching
 
-  uint32_t last_using_buffer_idx = 0;
+  int last_using_buffer_idx = -1;  ///< Last used buffer index to return to index queue
 
   // Thread safety and error handling
   mutable std::mutex state_mutex_;          ///< Protects shared state (permutation, current_index, rng)
@@ -107,8 +113,11 @@ struct AsyncDataLoader::Impl {
   void start(DataLoaderBase& loader, DatasetBase& dataset) {
     data_queue = std::make_unique<BoundedBlockingQueue<std::pair<GPUBatchInputOutput, uint32_t>>>(prefetch_factor);
     index_queue = std::make_unique<BoundedBlockingQueue<uint32_t>>(prefetch_factor);
-    auto size_of_image = dataset.image_shape().padded_size();
-    gpu_memory.resize(size_of_image * prefetch_factor);
+    // Preallocate ring buffer to maximum dataset image stride to avoid future reallocations
+    auto max_stride = dataset.image_shape().padded_size();
+    gpu_memory.resize(max_stride * prefetch_factor);
+    index_queue->clear();
+    data_queue->clear();
     
     prefetch_thread = std::jthread([&loader, &dataset, this](std::stop_token st) {
       try {
@@ -129,13 +138,21 @@ struct AsyncDataLoader::Impl {
         if (data_queue) data_queue->close();
         if (index_queue) index_queue->close();
       }
-      
+
       // Cleanup CUDA stream
       if (prefetch_stream) {
         CUDA_CHECK_PRINT(cudaStreamDestroy(prefetch_stream));
         prefetch_stream = nullptr;
       }
+      log_info("Prefetch thread exited.");
     });
+
+    // Prime index queue with initial buffer indices
+    for (uint32_t i = 0; i < prefetch_factor; ++i) {
+      if (!index_queue->push(i)) {
+        throw std::runtime_error("Failed to initialize index queue");
+      }
+    }
   }
 
   /// @brief Gracefully shutdown the prefetch thread
@@ -144,12 +161,15 @@ struct AsyncDataLoader::Impl {
       // Close queues first to unblock any waiting operations
       if (data_queue) data_queue->close();
       if (index_queue) index_queue->close();
-      
+
       // Request thread to stop and wait for it
       if (prefetch_thread.joinable()) {
         prefetch_thread.request_stop();
         prefetch_thread.join();
       }
+
+      data_queue->clear();
+      index_queue->clear();
     }
   }
 
@@ -189,8 +209,9 @@ struct AsyncDataLoader::Impl {
     
     // Prepare GPU batch input
     GPUBatchInput gpu_input;
-    gpu_input.height = host_data.image.shape.height;
-    gpu_input.width = host_data.image.shape.width;
+    // Keep input resolution consistent with current output shape
+    gpu_input.height = m_output_shape.height;
+    gpu_input.width = m_output_shape.width;
     gpu_input.near = 0.1f; // Default near plane
     gpu_input.far = 100.0f; // Default far plane
     gpu_input.K = host_data.K;
@@ -199,10 +220,11 @@ struct AsyncDataLoader::Impl {
 
     // Create GPU image structure
     Image gpu_image;
-    gpu_image.shape = host_data.image.shape; // TODO: allow lower resolution.
+    gpu_image.shape = m_output_shape;
     gpu_image.data_type = ImageDataType::Float32;
-    auto offset = dataset.image_shape().padded_size();
-    gpu_image.data = this->gpu_memory.data() + offset * buffer_idx;
+    // Use maximum stride for per-buffer segment to avoid overlap after resolution increases
+    const size_t stride = dataset.image_shape().padded_size();
+    gpu_image.data = this->gpu_memory.data() + stride * buffer_idx;
 
     // Transfer data from host to GPU using the provided CUDA stream
     base.transfer_gpu(prefetch_stream, gpu_image, host_data.image);
@@ -217,7 +239,7 @@ struct AsyncDataLoader::Impl {
     if (!data_queue->push(std::make_pair(pld, buffer_idx), st)) {
       return false; // Queue closed or cancelled
     }
-    
+    log_debug("Prefetched batch {} (perm_idx={}, buffer_idx={})", total_fetched, perm_idx, buffer_idx);
     return true;
   }
 
@@ -245,6 +267,8 @@ struct AsyncDataLoader::Impl {
     std::lock_guard<std::mutex> lock(state_mutex_);
     generate_permutation_unsafe(dataset_size);
   }
+
+  ImageShape m_output_shape;
 };
 
 AsyncDataLoader::AsyncDataLoader(std::shared_ptr<DatasetBase> dataset) 
@@ -266,15 +290,12 @@ GPUBatchInputOutput AsyncDataLoader::next() {
   m_impl->check_background_error();
   
   if (!m_impl->has_start()) {
-    m_impl->start(*this, *m_dataset);
-    for (uint32_t i = 0; i < m_impl->prefetch_factor; ++i) {
-      if (!m_impl->index_queue->push(i)) {
-        throw std::runtime_error("Failed to initialize index queue");
-      }
-    }
+    reset();
   } else {
-    if (!m_impl->index_queue->push(m_impl->last_using_buffer_idx)) {
-      throw std::runtime_error("Failed to return buffer index to queue");
+    if (m_impl->last_using_buffer_idx >= 0) {
+      if (!m_impl->index_queue->push((uint32_t) m_impl->last_using_buffer_idx)) {
+        throw std::runtime_error("Failed to return buffer index to queue");
+      }
     }
   }
 
@@ -307,7 +328,26 @@ json AsyncDataLoader::get_params() const {
 }
 
 void AsyncDataLoader::reset() {
+  // Ensure base preallocations (e.g., device scratch buffer) happen once
+  DataLoaderBase::reset();
+  // Stop current prefetching thread and queues
+  m_impl->shutdown();
+
+  // Update impl output shape to match the latest dataloader output shape
+  {
+    std::lock_guard<std::mutex> lock(m_impl->state_mutex_);
+    m_impl->m_output_shape = m_output_shape;
+    // Clear previous error state and buffer index
+    m_impl->error_occurred_ = false;
+    m_impl->error_message_.clear();
+    m_impl->last_using_buffer_idx = -1;
+  }
+
+  // Regenerate dataset permutation
   m_impl->generate_permutation(m_dataset->size());
+
+  // Relaunch prefetch thread and prime index queue
+  m_impl->start(*this, *m_dataset);
 }
 
 } // namespace tinygs

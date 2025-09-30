@@ -47,6 +47,15 @@ struct OrchestratorConfig {
 
   float grad_scaler = 1.0f;
 
+  // Progressive resolution training configuration
+  bool enable_progressive_resolution = false;       ///< Enable progressive resolution training
+  std::vector<size_t> resolution_milestones{0, 5000, 8000};  ///< Specific steps for resolution changes, must start from 0
+  std::vector<float> resolution_scales{0.25, 0.5, 1.0};     ///< Scales corresponding to milestones
+
+  // Strategy parameters
+  size_t scene_scale_recompute_interval = 1000;     ///< Interval for recomputing scene scale in strategy steps
+  size_t reorder_gaussians_interval = 1000;         ///< Interval for reordering gaussians in strategy steps
+
   /// @brief Convert config to JSON
   json to_json() const;
   /// @brief Load config from JSON
@@ -77,7 +86,7 @@ public:
 
   ~Orchestrator() = default;
 
-  // Core setup methods
+  ////////////////////////////// Core setup methods //////////////////////////////
 
   /// @brief Set the gaussians data and gradients
   void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gradients);
@@ -133,7 +142,7 @@ public:
   /// @brief Execute a test step
   void test_step();
 
-  /// @brief Accumulate the loss
+  /// @brief Accumulate the loss in current loss buffer.
   float accumulate_loss();
 
   /// @brief Stop training
@@ -212,9 +221,10 @@ private:
   RasterizeContext m_rasterize_ctx;
   LossContext m_loss_ctx;
 
+  // cuda stream for training, do not block.
   cudaStream_t m_major_stream = 0;
 
-  // Helper methods
+  ////////////////////////////// Helper methods //////////////////////////////
 
   /// @brief Initialize GPU memory buffers
   void initialize();
@@ -237,6 +247,30 @@ private:
 
   /// @brief Recompute the scene scale
   void recompute_scene_scale();
+
+  /// @brief Reorder gaussians to encourage spatial-storage continuity (Morton)
+  void reorder_gaussians();
+
+  ////////////////////////////// Progressive Resolution Training //////////////////////////////
+
+  /// @brief Calculate the resolution scale factor based on current training step
+  /// @param current_step Current training step
+  /// @return Resolution scale factor (1.0 = full resolution)
+  float calculate_resolution_scale(size_t current_step) const;
+
+  /// @brief Scale image shape by resolution factor, and round up to kImageTile
+  /// @param original_shape Original image shape
+  /// @param scale Resolution scale factor
+  /// @return Scaled image shape
+  static ImageShape scale_image_shape(const ImageShape& original_shape, float scale);
+
+  /// @brief Reallocate GPU buffers for new resolution
+  /// @param new_shape New image shape after scaling
+  void set_render_resolution(const ImageShape& new_shape);
+
+  /// @brief Update resolution based on current training step
+  /// @param current_step Current training step
+  void update_resolution(size_t current_step);
 };
 
 }  // namespace tinygs

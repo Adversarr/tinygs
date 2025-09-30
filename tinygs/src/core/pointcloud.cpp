@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "./happly.h"
+#include "tinygs/core/gaussian.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 #include <nvtx3/nvtx3.hpp>
 
@@ -104,6 +105,22 @@ PointCloud load_point_cloud(const std::string& filename) {
     log_error("Filename too short to determine format: {}", filename);
     return PointCloud();
   }
+}
+
+void save_gaussians(const Gaussian3d& gs) {
+  auto& sh0 = gs.sh_coefficient_0;
+  auto& sh_rest = gs.sh_coefficients_rest;
+  auto& xyz = gs.means;
+  auto& scal = gs.scales;
+  auto& opa = gs.opacities;
+  auto& rot = gs.rotations;
+
+  std::vector<std::array<double, 3>> vertex_positions;
+  std::vector<std::array<unsigned char, 3>> vertex_colors;
+
+  happly::PLYData ply_out;
+  // ply_out.addVertexPositions()
+  ply_out.addElement("vertex", gs.means.size());
 }
 
 }  // namespace tinygs

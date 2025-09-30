@@ -75,6 +75,7 @@ void GPUGaussian3d::memset(char value) {
 
 
 
+template<typename IndexType>
 __global__ void copy_gaussian_items(
   const vec3 * __restrict__ src_means,
   vec3 * __restrict__ dst_means,
@@ -88,13 +89,13 @@ __global__ void copy_gaussian_items(
   vec3 * __restrict__ dst_sh_coefficient_0,
   const vec3 * __restrict__ src_sh_coefficients_rest,
   vec3 * __restrict__ dst_sh_coefficients_rest,
-  const int * __restrict__ mapping,
-  int num_kept
+  const IndexType * __restrict__ mapping,
+  int num_items
 ) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= num_kept) return;
+  if (idx >= num_items) return;
 
-  int src_idx = mapping[idx];
+  IndexType src_idx = mapping[idx];
   
   // Copy all fields
   dst_means[idx] = src_means[src_idx];
@@ -110,6 +111,8 @@ __global__ void copy_gaussian_items(
     dst_sh_coefficients_rest[dst_rest_start + i] = src_sh_coefficients_rest[src_rest_start + i];
   }
 }
+
+// reorder_gaussian_items kernel is now replaced by the templated copy_gaussian_items
 
 void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
   size_t original_size = size();
@@ -130,7 +133,7 @@ void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
 
   // Copy all items using the mapping
   const int grid = (num_kept + 255) / 256;
-  copy_gaussian_items<<<grid, 256>>>(
+  copy_gaussian_items<int><<<grid, 256>>>(
       thrust::raw_pointer_cast(m_means.data()),
       thrust::raw_pointer_cast(means.data()),
       thrust::raw_pointer_cast(m_opacities.data()),
@@ -265,6 +268,46 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
       sizeof(float3) * m_sh_coefficients_rest.size(),
       cudaMemcpyDeviceToDevice));
   return gaussians;
+}
+
+void GPUGaussian3d::reorder(uint* indices, cudaStream_t stream) {
+  NVTX3_FUNC_RANGE();
+  const size_t num_gaussians = size();
+  
+  // Create temporary vectors for reordered data
+  thrust::device_vector<vec3> means(num_gaussians);
+  thrust::device_vector<float> opacities(num_gaussians);
+  thrust::device_vector<vec4> rotations(num_gaussians);
+  thrust::device_vector<vec3> scales(num_gaussians);
+  thrust::device_vector<vec3> sh_coefficient_0(num_gaussians);
+  thrust::device_vector<vec3> sh_coefficients_rest(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
+
+  // Reorder all items using the indices
+  const int grid = (num_gaussians + 255) / 256;
+  copy_gaussian_items<uint><<<grid, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_means.data()),
+      thrust::raw_pointer_cast(means.data()),
+      thrust::raw_pointer_cast(m_opacities.data()),
+      thrust::raw_pointer_cast(opacities.data()),
+      thrust::raw_pointer_cast(m_rotations.data()),
+      thrust::raw_pointer_cast(rotations.data()),
+      thrust::raw_pointer_cast(m_scales.data()),
+      thrust::raw_pointer_cast(scales.data()),
+      thrust::raw_pointer_cast(m_sh_coefficient_0.data()),
+      thrust::raw_pointer_cast(sh_coefficient_0.data()),
+      thrust::raw_pointer_cast(m_sh_coefficients_rest.data()),
+      thrust::raw_pointer_cast(sh_coefficients_rest.data()),
+      indices,
+      num_gaussians
+  );
+
+  // Move the reordered vectors to replace the original ones
+  m_means = std::move(means);
+  m_opacities = std::move(opacities);
+  m_rotations = std::move(rotations);
+  m_scales = std::move(scales);
+  m_sh_coefficient_0 = std::move(sh_coefficient_0);
+  m_sh_coefficients_rest = std::move(sh_coefficients_rest);
 }
 
 }  // namespace tinygs

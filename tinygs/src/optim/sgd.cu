@@ -179,4 +179,8 @@ void SGDParameters::from_json(const json& config) {
   (void)config;
 }
 
+/// @brief Reorder Gaussians based on provided indices
+void SGD::reorder(uint* /* indices */) {
+  // Nothing to do.
+}
 }  // namespace tinygs

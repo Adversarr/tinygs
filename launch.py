@@ -1,11 +1,22 @@
+from subprocess import run
+from pathlib import Path
+from argparse import ArgumentParser
+
+PATH_TO_BUILT = Path(__file__).parent / 'build' / 'examples' / 'config_train'
+parser = ArgumentParser(description='Train TinyGS')
+parser.add_argument('--data', type=str, required=True, help='Path to the scene.')
+parser.add_argument('--id', type=str, required=False, help='ID of the scene, infer from `data` if not provided.')
+
+
+config_template = """
 {
   "dataloader": {
     "type": "async"
   },
   "dataset": {
-    "extrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/images.txt",
-    "folder_path": "/data/yzr/Final/1747834320424/inputs/images/",
-    "intrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/cameras.txt",
+    "extrinsics_file_path": "ARG_data/inputs/slam/images.txt",
+    "folder_path": "ARG_data/inputs/images/",
+    "intrinsics_file_path": "ARG_data/inputs/slam/cameras.txt",
     "extension": "png",
     "type": "png_folder"
   },
@@ -21,7 +32,7 @@
     "sh_degree": 3,
     "type": "knn"
   },
-  "input_pc_file": "/data/yzr/Final/1747834320424/aligned_points/1747834320424.ply",
+  "input_pc_file": "ARG_data/inputs/slam/points3D.txt",
   "losses": [
     {
       "type": "l1",
@@ -33,7 +44,7 @@
     }
   ],
   "lr_scheduler": {
-    "decay_rate": 0.999769,
+    "decay_rate": 0.99769,
     "initial_lr": 1.0,
     "step_count": 0,
     "type": "exponential"
@@ -88,13 +99,9 @@
     "max_steps": 30000,
     "near_plane": 0.01,
     "sh_degree_interval": 1000,
-    "scene_scale_recompute_interval": 1000,
-    "reorder_gaussians_interval": 1000,
-    "enable_progressive_resolution": true,
-    "resolution_milestones": [0, 3000, 5000, 7000],
-    "resolution_scales": [0.25, 0.5, 0.75, 1.0],
-    "test_steps": [2000, 4000, 6000, 8000, 10000],
+    "test_steps": [3000, 7000, 30000],
     "out_dir": "outputs",
     "export_rasterized": false
   }
 }
+"""

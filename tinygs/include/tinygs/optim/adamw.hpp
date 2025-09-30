@@ -53,6 +53,9 @@ public:
   /// @brief Reset opacity-related optimizer state
   void reset_opacity() override;
   
+  /// @brief Reorder gaussians according to the indices
+  void reorder(uint* indices) override;
+  
   /// @brief Set optimizer parameters from JSON
   void set_params(const json& config) override;
   

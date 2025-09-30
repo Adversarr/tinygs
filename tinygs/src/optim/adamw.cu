@@ -423,6 +423,62 @@ AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussi
   AdamW::reset();
 }
 
+__global__ void copy_optimizer_state(
+  const vec3 * __restrict__ src_means,
+  vec3 * __restrict__ dst_means,
+  const float * __restrict__ src_opacities,
+  float * __restrict__ dst_opacities,
+  const vec4 * __restrict__ src_rotations,
+  vec4 * __restrict__ dst_rotations,
+  const vec3 * __restrict__ src_scales,
+  vec3 * __restrict__ dst_scales,
+  const vec3 * __restrict__ src_sh_coefficient_0,
+  vec3 * __restrict__ dst_sh_coefficient_0,
+  const vec3 * __restrict__ src_sh_coefficients_rest,
+  vec3 * __restrict__ dst_sh_coefficients_rest,
+  const uint32_t* __restrict__ src_gaussian_steps,
+  uint32_t* __restrict__ dst_gaussian_steps,
+  const uint * __restrict__ mapping,
+  int num_items
+) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_items) return;
+
+  uint src_idx = mapping[idx];
+
+  // Copy first/second moments for means
+  dst_means[idx * 2] = src_means[src_idx * 2];
+  dst_means[idx * 2 + 1] = src_means[src_idx * 2 + 1];
+
+  // Copy first/second moments for opacities
+  dst_opacities[idx * 2] = src_opacities[src_idx * 2];
+  dst_opacities[idx * 2 + 1] = src_opacities[src_idx * 2 + 1];
+
+  // Copy first/second moments for rotations
+  dst_rotations[idx * 2] = src_rotations[src_idx * 2];
+  dst_rotations[idx * 2 + 1] = src_rotations[src_idx * 2 + 1];
+
+  // Copy first/second moments for scales
+  dst_scales[idx * 2] = src_scales[src_idx * 2];
+  dst_scales[idx * 2 + 1] = src_scales[src_idx * 2 + 1];
+
+  // Copy first/second moments for SH coefficient 0
+  dst_sh_coefficient_0[idx * 2] = src_sh_coefficient_0[src_idx * 2];
+  dst_sh_coefficient_0[idx * 2 + 1] = src_sh_coefficient_0[src_idx * 2 + 1];
+
+  // Copy gaussian steps
+  dst_gaussian_steps[idx] = src_gaussian_steps[src_idx];
+
+  // Copy first/second moments for rest SH coefficients
+  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1) * 2;
+  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1) * 2;
+  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
+    dst_sh_coefficients_rest[dst_rest_start + i * 2] = src_sh_coefficients_rest[src_rest_start + i * 2];
+    dst_sh_coefficients_rest[dst_rest_start + i * 2 + 1] = src_sh_coefficients_rest[src_rest_start + i * 2 + 1];
+  }
+}
+
+// Legacy kernel for backward compatibility
 __global__ void copy_items(
   const vec3 * __restrict__ src_means,
   vec3 * __restrict__ dst_means,
@@ -481,12 +537,12 @@ __global__ void copy_items(
 void AdamW::remove(char* kept_flag, int num_kept) {
   // filters the gaussians' first second.
   size_t original_size = m_gaussians->size();
-  thrust::device_vector<int> mapping(original_size); // mapping[idx] = original_idx
+  thrust::device_vector<uint> mapping(original_size); // mapping[idx] = original_idx
 
   thrust::copy_if(
     thrust::device,
-    thrust::make_counting_iterator<int>(0), thrust::make_counting_iterator<int>(original_size),
-    mapping.begin(), [kept_flag] __device__ (int orig) { return static_cast<bool>(kept_flag[orig]); });
+    thrust::make_counting_iterator<uint>(0), thrust::make_counting_iterator<uint>(original_size),
+    mapping.begin(), [kept_flag] __device__ (uint orig) { return static_cast<bool>(kept_flag[orig]); });
 
   thrust::device_vector<vec3> means(2 * num_kept);
   thrust::device_vector<float> opacities(2 * num_kept);
@@ -497,7 +553,7 @@ void AdamW::remove(char* kept_flag, int num_kept) {
   thrust::device_vector<uint32_t> gaussian_steps(num_kept);
 
   const int grid = (num_kept + 255) / 256;
-  copy_items<<<grid, 256>>>(
+  copy_optimizer_state<<<grid, 256>>>(
       thrust::raw_pointer_cast(m_means_first_second.data()),
       thrust::raw_pointer_cast(means.data()),
       thrust::raw_pointer_cast(m_opacities_first_second.data()),
@@ -658,6 +714,48 @@ void AdamW::reset(int* indices, int num_reset) {
       gaussian_steps[idx] = 0;
     }
   );
+}
+
+/// @brief Reorder Gaussians based on provided indices
+void AdamW::reorder(uint* indices) {
+  int num_gaussians = m_means_first_second.size() / 2;
+  // Create temporary vectors for reordered data
+  thrust::device_vector<vec3> means(num_gaussians * 2);
+  thrust::device_vector<float> opacities(num_gaussians * 2);
+  thrust::device_vector<vec4> rotations(num_gaussians * 2);
+  thrust::device_vector<vec3> scales(num_gaussians * 2);
+  thrust::device_vector<vec3> sh_coefficients_0(num_gaussians * 2);
+  thrust::device_vector<vec3> sh_coefficients_rest(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1) * 2);
+  thrust::device_vector<uint32_t> gaussian_steps(num_gaussians);
+
+  const int grid = (num_gaussians + 255) / 256;
+  copy_optimizer_state<<<grid, 256>>>(
+      thrust::raw_pointer_cast(m_means_first_second.data()),
+      thrust::raw_pointer_cast(means.data()),
+      thrust::raw_pointer_cast(m_opacities_first_second.data()),
+      thrust::raw_pointer_cast(opacities.data()),
+      thrust::raw_pointer_cast(m_rotations_first_second.data()),
+      thrust::raw_pointer_cast(rotations.data()),
+      thrust::raw_pointer_cast(m_scales_first_second.data()),
+      thrust::raw_pointer_cast(scales.data()),
+      thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
+      thrust::raw_pointer_cast(sh_coefficients_0.data()),
+      thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
+      thrust::raw_pointer_cast(sh_coefficients_rest.data()),
+      thrust::raw_pointer_cast(m_gaussian_steps.data()),
+      thrust::raw_pointer_cast(gaussian_steps.data()),
+      indices,
+      num_gaussians
+  );
+
+  // Move reordered data back to member variables
+  m_means_first_second = std::move(means);
+  m_opacities_first_second = std::move(opacities);
+  m_rotations_first_second = std::move(rotations);
+  m_scales_first_second = std::move(scales);
+  m_sh_coefficient_0_first_second = std::move(sh_coefficients_0);
+  m_sh_coefficients_rest_first_second = std::move(sh_coefficients_rest);
+  m_gaussian_steps = std::move(gaussian_steps);
 }
 
 void AdamW::reset_opacity() {

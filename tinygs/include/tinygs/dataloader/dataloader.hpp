@@ -26,7 +26,7 @@ struct GPUBatchInputOutput {
 
 class DataLoaderBase {
 public:
-  explicit DataLoaderBase(std::shared_ptr<DatasetBase> dataset) : m_dataset(dataset) {}
+  explicit DataLoaderBase(std::shared_ptr<DatasetBase> dataset);
 
   virtual ~DataLoaderBase() = default;
 
@@ -35,6 +35,10 @@ public:
 
   /// @brief Reset the dataloader to its initial states
   virtual void reset();
+
+  /// @brief Set the desired output image shape for the dataloader
+  /// @param shape Desired output image shape (width, height, channel). Only width and height are used.
+  virtual void set_output_shape(const ImageShape& shape);
 
   /**
    * @brief Transfers image data from host memory to GPU memory with optional type conversion.
@@ -72,9 +76,11 @@ public:
 
 protected:
   std::shared_ptr<DatasetBase> m_dataset;
+  ImageShape m_output_shape;
 
 private:
   GPUMemory<char> m_raw_data;
+  std::mutex m_mutex;
 };
 
 

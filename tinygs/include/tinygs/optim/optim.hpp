@@ -65,6 +65,11 @@ public:
   /// @brief Reset momentum buffers for specified gaussians
   virtual void reset(int* indices, int num_reset) = 0;
 
+  /// @brief Reorder gaussians according to the indices.
+  ///        It performs a gather: new[i] = old[indices[i]]
+  /// @note the indices buffer must be on device memory.
+  virtual void reorder(uint* indices) = 0;
+
   /// @brief Reset opacity implementation
   virtual void reset_opacity() = 0;
 

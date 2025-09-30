@@ -15,8 +15,85 @@
 #include "tinygs/orchestrator.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
-
+#include <cub/device/device_radix_sort.cuh>
+#include "tinygs/cuda/common_device.cuh"
 namespace tinygs {
+
+static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaStream_t stream) {
+  thrust::device_vector<uint> idx_in(n), idx_out(n);
+  thrust::device_vector<uint> enc_in(n), enc_out(n);
+
+  thrust::copy(
+    thrust::cuda::par.on(stream),
+    thrust::make_counting_iterator<uint>(0),
+    thrust::make_counting_iterator<uint>(n),
+    idx_in.begin()
+  );
+
+  vec3 min_pos = thrust::reduce(
+    thrust::cuda::par.on(stream),
+    positions, positions + n,
+    vec3(FLT_MAX, FLT_MAX, FLT_MAX),
+    [] __host__ __device__ (const vec3& a, const vec3& b) -> vec3 { return vec3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z)); }
+  );
+
+  vec3 max_pos = thrust::reduce(
+    thrust::cuda::par.on(stream),
+    positions, positions + n,
+    vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX),
+    [] __host__ __device__ (const vec3& a, const vec3& b) -> vec3 { return vec3(fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z)); }
+  );
+
+  // Precompute inverse deltas on host to avoid per-element device computation
+  const float inv_dx = 1.0f / std::max(max_pos.x - min_pos.x, 1e-8f);
+  const float inv_dy = 1.0f / std::max(max_pos.y - min_pos.y, 1e-8f);
+  const float inv_dz = 1.0f / std::max(max_pos.z - min_pos.z, 1e-8f);
+
+  thrust::transform(
+    thrust::cuda::par.on(stream),
+    positions, positions + n,
+    enc_in.begin(), [min_pos, inv_dx, inv_dy, inv_dz] __device__ (const vec3& p) -> uint {
+      // Normalize position to [0,1] within the bounding box
+      const float nx = fminf(fmaxf((p.x - min_pos.x) * inv_dx, 0.0f), 1.0f);
+      const float ny = fminf(fmaxf((p.y - min_pos.y) * inv_dy, 0.0f), 1.0f);
+      const float nz = fminf(fmaxf((p.z - min_pos.z) * inv_dz, 0.0f), 1.0f);
+
+      // Map to 10-bit integer grid per axis and compute Morton code
+      const uint32_t xi = static_cast<uint32_t>(nx * 1023.0f);
+      const uint32_t yi = static_cast<uint32_t>(ny * 1023.0f);
+      const uint32_t zi = static_cast<uint32_t>(nz * 1023.0f);
+      return morton3D(xi, yi, zi);
+    }
+  );
+
+  // sort.
+  void* d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  // Query temporary storage size
+  cub::DeviceRadixSort::SortPairs(
+    d_temp_storage, temp_storage_bytes,
+    thrust::raw_pointer_cast(enc_in.data()),
+    thrust::raw_pointer_cast(enc_out.data()),
+    thrust::raw_pointer_cast(idx_in.data()),
+    thrust::raw_pointer_cast(idx_out.data()),
+    n, 0, 30, stream
+  );
+
+  // Allocate temporary storage and perform sort
+  thrust::device_vector<uint8_t> temp_storage(temp_storage_bytes);
+  d_temp_storage = thrust::raw_pointer_cast(temp_storage.data());
+  cub::DeviceRadixSort::SortPairs(
+    d_temp_storage, temp_storage_bytes,
+    thrust::raw_pointer_cast(enc_in.data()),
+    thrust::raw_pointer_cast(enc_out.data()),
+    thrust::raw_pointer_cast(idx_in.data()),
+    thrust::raw_pointer_cast(idx_out.data()),
+    n, 0, 30, stream
+  );
+  
+
+  return idx_out;
+}
 
 // TrainerConfig serialization methods
 json OrchestratorConfig::to_json() const {
@@ -35,6 +112,10 @@ json OrchestratorConfig::to_json() const {
   j["grad_scaler"] = grad_scaler;
   j["out_dir"] = out_dir;
   j["export_rasterized"] = export_rasterized;
+  j["enable_progressive_resolution"] = enable_progressive_resolution;
+  j["resolution_milestones"] = resolution_milestones;
+  j["resolution_scales"] = resolution_scales;
+  j["scene_scale_recompute_interval"] = scene_scale_recompute_interval;
   return j;
 }
 
@@ -64,6 +145,32 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("grad_scaler")) grad_scaler = j["grad_scaler"].get<float>();
   if (j.contains("out_dir")) out_dir = j["out_dir"].get<std::string>();
   if (j.contains("export_rasterized")) export_rasterized = j["export_rasterized"].get<bool>();
+  if (j.contains("enable_progressive_resolution")) enable_progressive_resolution = j["enable_progressive_resolution"].get<bool>();
+  if (j.contains("resolution_milestones")) {
+    try {
+      const json::array_t milestones = j.at("resolution_milestones");
+      std::vector<size_t> new_milestones;
+      for (const auto& milestone : milestones) {
+        new_milestones.push_back(milestone.get<size_t>());
+      }
+      resolution_milestones = new_milestones;
+    } catch (const json::exception& e) {
+      throw std::invalid_argument("Expect resolution_milestones to be array of integers.");
+    }
+  }
+  if (j.contains("resolution_scales")) {
+    try {
+      const json::array_t scales = j.at("resolution_scales");
+      std::vector<float> new_scales;
+      for (const auto& scale : scales) {
+        new_scales.push_back(scale.get<float>());
+      }
+      resolution_scales = new_scales;
+    } catch (const json::exception& e) {
+      throw std::invalid_argument("Expect resolution_scales to be array of floats.");
+    }
+  }
+  if (j.contains("scene_scale_recompute_interval")) scene_scale_recompute_interval = j["scene_scale_recompute_interval"].get<size_t>();
 }
 
 void mean(const vec3* data, size_t size, vec3& out) {
@@ -71,7 +178,7 @@ void mean(const vec3* data, size_t size, vec3& out) {
     thrust::device,
     data,
     data + size,
-    [inv_s = 1.0f / static_cast<float>(size)] __device__(const vec3& p) -> vec3 { return p * inv_s; },
+    [inv_s = 1.0f / static_cast<float>(size)] __device__ (const vec3& p) -> vec3 { return p * inv_s; },
     vec3{0.0f, 0.0f, 0.0f},
     thrust::plus<vec3>()
   );
@@ -177,11 +284,17 @@ TrainingState Orchestrator::train() {
 
 void Orchestrator::train_step() {
   NVTX3_FUNC_RANGE();
+  // Check and update resolution for progressive training
+  if (m_config.enable_progressive_resolution) {
+    update_resolution(m_state.current_step);
+  }
+
   // Pre-step callback
   if (m_pre_step_callback) {
     m_pre_step_callback(m_state);
   }
 
+  // TODO: async, not in the major/default stream.
   // Clear gradients and buffers
   m_gradients->memset(0);
   m_loss_buffer->memset(0);
@@ -202,11 +315,12 @@ void Orchestrator::train_step() {
   // Setup gradient output for backward pass
   m_rasterize_ctx.grad_output.image = m_loss_ctx.grad;
 
+  // TODO: remove the alpha support, we only consider RGB image.
   // Create alpha gradient image
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
   m_rasterize_ctx.grad_output.alpha =
       Image({shape.width, shape.height, 1}, ImageDataType::Float32,
-            m_loss_buffer->data() + shape.width * shape.height * 3);
+             m_loss_buffer->data() + shape.padded_size());
 
   // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
@@ -226,8 +340,14 @@ void Orchestrator::train_step() {
   // Strategy step (densification)
   if (m_strategy) {
     m_strategy->step(m_rasterize_ctx);
-    if (m_state.current_step % 1000 == 0) {
+  }
+
+  if (m_state.current_step > 0) {
+    if (m_state.current_step % m_config.scene_scale_recompute_interval == 0) {
       recompute_scene_scale();
+    }
+    if (m_state.current_step % m_config.reorder_gaussians_interval == 0) {
+      reorder_gaussians();
     }
   }
 
@@ -249,6 +369,18 @@ void Orchestrator::train_step() {
 
 void Orchestrator::test_step() {
   NVTX3_FUNC_RANGE();
+
+  // Store current resolution for restoration later
+  ImageShape current_shape{m_rasterize_ctx.fwd_input.width, m_rasterize_ctx.fwd_input.height, 3};
+  
+  // Force full resolution for testing if progressive resolution is enabled
+  if (m_config.enable_progressive_resolution) {
+    ImageShape full_shape = m_dataloader->get_dataset()->image_shape();
+    if (full_shape.width != current_shape.width || full_shape.height != current_shape.height) {
+      log_info("Switching to full resolution {}x{} for testing", full_shape.width, full_shape.height);
+      set_render_resolution({full_shape.width, full_shape.height, 1});
+    }
+  }
 
   m_dataloader->reset(); // reset the permutation.
   std::string out_dir = m_config.out_dir + "/" + std::to_string(m_state.current_step);
@@ -351,6 +483,16 @@ void Orchestrator::test_step() {
     // log_info("Metric {}: mean = {:.6f}, std = {:.6f}", metric_pair.first, mean, std);
     std::cout << fmt::format("Metric {}: mean = {:.6f}, std = {:.6f}\n", metric_pair.first, mean, std);
   }
+  
+  // Restore training resolution if progressive resolution is enabled
+  if (m_config.enable_progressive_resolution) {
+    ImageShape training_shape = scale_image_shape(m_dataloader->get_dataset()->image_shape(), 
+                                                  calculate_resolution_scale(m_state.current_step));
+    if (training_shape.width != current_shape.width || training_shape.height != current_shape.height) {
+      log_info("Restoring training resolution {}x{} after testing", training_shape.width, training_shape.height);
+      set_render_resolution({training_shape.width, training_shape.height, 1});
+    }
+  }
 }
 
 float Orchestrator::accumulate_loss() {
@@ -359,6 +501,8 @@ float Orchestrator::accumulate_loss() {
   }
 
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
+  //? the unused pixels in the padded area are set to zero during loss computation
+  //! fix the shape is not compatible with the tile-based design.
   return gpu_sum(m_loss_buffer->data(), shape.width * shape.height * 3);
 }
 
@@ -401,24 +545,44 @@ void Orchestrator::initialize() {
 
   m_rasterize_ctx.stream = m_major_stream;
 
-  m_dataloader->reset();
   // Get image dimensions from the first data sample
-  auto shape = m_dataloader->get_dataset()->image_shape();
-
-  uint32_t width = shape.padded_width();
-  uint32_t height = shape.padded_height();
+  auto base_shape = m_dataloader->get_dataset()->image_shape();
   
-  // Initialize GPU memory buffers
-  m_loss_buffer = std::make_unique<GPUMemory<float>>(width * height * 4);
-  m_render_buffer = std::make_unique<GPUMemory<float>>(width * height * 4);
-  m_image_grad_buffer = std::make_unique<GPUMemory<float>>(width * height * 4);
+  // Always allocate buffers for full resolution to avoid reallocations during training
+  uint32_t full_pad_width = base_shape.padded_width();
+  uint32_t full_pad_height = base_shape.padded_height();
+  size_t full_buffer_size = full_pad_width * full_pad_height * 4;  // RGBA
+  
+  // Initialize GPU memory buffers with full resolution size
+  m_loss_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
+  m_render_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
+  m_image_grad_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
+  
+  log_info("Allocated GPU buffers for full resolution {}x{} (size: {} MB)", 
+           base_shape.width, base_shape.height, 
+           (full_buffer_size * sizeof(float) * 3) / (1024 * 1024));
+  
+  // Determine initial training resolution
+  ImageShape training_shape = base_shape;
+  if (m_config.enable_progressive_resolution) {
+    float initial_scale = calculate_resolution_scale(0);  // Get scale for step 0
+    training_shape = scale_image_shape(base_shape, initial_scale);
+    log_info("Starting with progressive resolution {}x{} (scale: {:.2f})", 
+             training_shape.width, training_shape.height, initial_scale);
+  } else {
+    log_info("Start from full resolution {}x{}", training_shape.width, training_shape.height);
+  }
+  set_render_resolution({training_shape.width, training_shape.height, 1});
+
+  uint32_t width = training_shape.width;
+  uint32_t height = training_shape.height;
 
   ImageShape rgb_shape{width, height, 3};
   ImageShape alpha_shape{width, height, 1};
   Image render_rgb = Image(rgb_shape, ImageDataType::Float32, m_render_buffer->data());
-  Image render_alpha = Image(alpha_shape, ImageDataType::Float32, m_render_buffer->data() + width * height * 3);
+  Image render_alpha = Image(alpha_shape, ImageDataType::Float32, m_render_buffer->data() + rgb_shape.padded_size());
   Image grad_rgb = Image(rgb_shape, ImageDataType::Float32, m_image_grad_buffer->data());
-  Image grad_alpha = Image(alpha_shape, ImageDataType::Float32, m_image_grad_buffer->data() + width * height * 3);
+  Image grad_alpha = Image(alpha_shape, ImageDataType::Float32, m_image_grad_buffer->data() + rgb_shape.padded_size());
 
   // Setup rasterization context
   m_rasterize_ctx.inference = false; // Training mode
@@ -438,14 +602,15 @@ void Orchestrator::initialize() {
   m_rasterize_ctx.gaussians_grad = m_gradients;
 
   // Setup loss context
-  m_loss_ctx.loss = Image(shape, ImageDataType::Float32, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, ImageDataType::Float32, m_loss_buffer->data());
   // TODO: alpha is ignored for now
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
-  log_info("Setup trainer buffers with image shape: {}", to_string(shape));
+  log_info("Setup trainer buffers with image shape: {}", to_string(rgb_shape));
 
   // Setup output folder
   ensure(m_config.out_dir);
+  reorder_gaussians();
 }
 
 float Orchestrator::compute_learning_rate() const {
@@ -542,6 +707,38 @@ void Orchestrator::validate_setup() const {
   if (m_losses.empty()) {
     throw std::runtime_error("No loss functions added. Call add_loss() before training.");
   }
+  
+  // Validate progressive resolution configuration
+  if (m_config.enable_progressive_resolution) {
+    if (m_config.resolution_milestones.empty()) {
+      throw std::runtime_error("Progressive resolution enabled but no milestones specified.");
+    }
+    if (m_config.resolution_scales.empty()) {
+      throw std::runtime_error("Progressive resolution enabled but no scales specified.");
+    }
+    if (m_config.resolution_milestones.size() != m_config.resolution_scales.size()) {
+      throw std::runtime_error("Resolution milestones and scales must have the same size.");
+    }
+    
+    // Check that milestones are in ascending order
+    for (size_t i = 1; i < m_config.resolution_milestones.size(); ++i) {
+      if (m_config.resolution_milestones[i] <= m_config.resolution_milestones[i-1]) {
+        throw std::runtime_error("Resolution milestones must be in ascending order.");
+      }
+    }
+    
+    // Check that scales are valid (between 0 and 1)
+    for (float scale : m_config.resolution_scales) {
+      if (scale <= 0.0f || scale > 1.0f) {
+        throw std::runtime_error("Resolution scales must be between 0 and 1.");
+      }
+    }
+    
+    log_info("Progressive resolution validation passed: {} milestones, scales from {:.2f} to {:.2f}", 
+             m_config.resolution_milestones.size(), 
+             m_config.resolution_scales.front(), 
+             m_config.resolution_scales.back());
+  }
 }
 
 cv::Mat Orchestrator::to_opencv() const {
@@ -558,8 +755,10 @@ cv::Mat Orchestrator::to_opencv() const {
   // Copy GPU rendered image to CPU for visualization
   std::vector<float> cpu_image(shape.padded_size());
   CUDA_CHECK_THROW(
-      cudaMemcpy(cpu_image.data(), m_rasterize_ctx.fwd_output.image.data,
-                 shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
+      cudaMemcpy(cpu_image.data(), 
+        m_rasterize_ctx.fwd_output.image.data,
+        // m_loss_ctx.target.data,
+        shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
   // Convert float RGB to 8-bit BGR for OpenCV
   cv::Mat img(height, width, CV_8UC3);
   for (int y = 0; y < height; ++y) {
@@ -577,6 +776,142 @@ cv::Mat Orchestrator::to_opencv() const {
     }
   }
   return img;
+}
+
+float Orchestrator::calculate_resolution_scale(size_t current_step) const {
+  if (!m_config.enable_progressive_resolution || m_config.resolution_milestones.empty()) {
+    return 1.0f;  // Full resolution if disabled
+  }
+  
+  // Find the appropriate scale for the current step
+  float current_scale = 1.0f;
+  for (size_t i = 0; i < m_config.resolution_milestones.size(); ++i) {
+    if (current_step >= m_config.resolution_milestones[i]) {
+      if (i < m_config.resolution_scales.size()) {
+        current_scale = m_config.resolution_scales[i];
+      }
+    } else {
+      break;
+    }
+  }
+  
+  return current_scale;
+}
+
+ImageShape Orchestrator::scale_image_shape(const ImageShape& original_shape, float scale) {
+  if (scale <= 0.0f || scale > 1.0f) {
+    throw std::invalid_argument("Resolution scale must be in range (0, 1]");
+  }
+  if (fabs(scale - 1.0f) < 1e-6) {
+    return original_shape;  // No scaling needed, also no rounding is needed.
+  }
+
+  // Calculate scaled dimensions, ensuring they're at least 1
+  uint32_t scaled_width_tile = std::clamp(kImageTile * (static_cast<uint32_t>(original_shape.width * (scale / kImageTile))),
+                                          kImageTile, original_shape.width);
+  uint32_t scaled_height_tile = std::clamp(kImageTile * (static_cast<uint32_t>(original_shape.height * (scale / kImageTile))),
+                                           kImageTile, original_shape.height);
+
+  return ImageShape{scaled_width_tile, scaled_height_tile, original_shape.channel};
+}
+
+void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
+  // Calculate padded dimensions for the new shape
+  uint32_t padded_width = new_shape.padded_width();
+  uint32_t padded_height = new_shape.padded_height();
+  uint32_t channel_stride = padded_width * padded_height;
+
+  if (new_shape.width  > m_dataloader->get_dataset()->image_shape().width ||
+      new_shape.height > m_dataloader->get_dataset()->image_shape().height) {
+    throw std::invalid_argument("Not a valid buffer shape.");
+  }
+
+  // Create new image objects with the reallocated buffers
+  ImageShape rgb_shape{new_shape.width, new_shape.height, 3};
+  ImageShape alpha_shape{new_shape.width, new_shape.height, 1};
+
+  Image render_rgb = Image(rgb_shape, ImageDataType::Float32, m_render_buffer->data());
+  Image render_alpha = Image(alpha_shape, ImageDataType::Float32, m_render_buffer->data() + channel_stride * 3);
+  Image grad_rgb = Image(rgb_shape, ImageDataType::Float32, m_image_grad_buffer->data());
+  Image grad_alpha = Image(alpha_shape, ImageDataType::Float32, m_image_grad_buffer->data() + channel_stride * 3);
+
+  // Update rasterization context with new dimensions and images
+  m_rasterize_ctx.fwd_input.width = new_shape.width;
+  m_rasterize_ctx.fwd_input.height = new_shape.height;
+
+  // Update output images
+  m_rasterize_ctx.fwd_output.image = render_rgb;
+  m_rasterize_ctx.fwd_output.alpha = render_alpha;
+  m_rasterize_ctx.grad_output.image = grad_rgb;
+  m_rasterize_ctx.grad_output.alpha = grad_alpha;
+
+  // Update loss context
+  m_loss_ctx.loss = Image(rgb_shape, ImageDataType::Float32, m_loss_buffer->data());
+  m_loss_ctx.pred = render_rgb;
+  m_loss_ctx.grad = grad_rgb;
+
+  m_dataloader->set_output_shape(rgb_shape);
+}
+
+void Orchestrator::update_resolution(size_t current_step) {
+  // Calculate current resolution scale
+  float scale = calculate_resolution_scale(current_step);
+  
+  // Get base shape from dataset
+  ImageShape base_shape = m_dataloader->get_dataset()->image_shape();
+  
+  // Scale the image shape
+  ImageShape new_shape = scale_image_shape(base_shape, scale);
+  
+  // Check if resolution has changed
+  if (new_shape.width != m_rasterize_ctx.fwd_input.width || 
+      new_shape.height != m_rasterize_ctx.fwd_input.height) {
+    
+    log_info("Updating resolution from {}x{} to {}x{} at step {}", 
+             m_rasterize_ctx.fwd_input.width, m_rasterize_ctx.fwd_input.height,
+             new_shape.width, new_shape.height, current_step);
+    
+    // Reallocate buffers for new resolution
+    set_render_resolution({new_shape.width, new_shape.height, 1});
+  }
+}
+
+static __global__ void densification_update(const float *__restrict__ old_info,
+                                            float *__restrict__ new_info,
+                                            uint n, uint *old_idx) {
+  uint i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+
+#pragma unroll
+  for (uint coef = 0; coef < 2u; ++ coef) {
+    float old_density = old_info[old_idx[i] + coef * n];
+    new_info[i + coef * n] = old_density;
+  }
+}
+
+void Orchestrator::reorder_gaussians() {
+  NVTX3_FUNC_RANGE();
+  log_info("Reordering gaussians by Morton code for better spatial locality...");
+  auto& pos = m_gaussians->means();
+  uint n = m_gaussians->size();
+
+  // Reorder gaussians by Morton code
+  auto idx = reorder(thrust::raw_pointer_cast(pos.data()), n, nullptr);
+  
+  // Apply reordering to gaussians
+  m_gaussians->reorder(thrust::raw_pointer_cast(idx.data()));
+  m_gradients->reorder(thrust::raw_pointer_cast(idx.data()));
+  m_optimizer->reorder(thrust::raw_pointer_cast(idx.data()));
+
+  if (m_rasterize_ctx.densification_info) {
+    auto new_info = std::make_shared<GPUBuffer<float>>(n * 2);
+    densification_update<<<(n + 255) / 256, 256>>>(
+      m_rasterize_ctx.densification_info->data(),
+      new_info->data(),
+      n,
+      thrust::raw_pointer_cast(idx.data()));
+    m_rasterize_ctx.densification_info = new_info;
+  }
 }
 
 }  // namespace tinygs

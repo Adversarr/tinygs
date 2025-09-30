@@ -57,8 +57,8 @@ void SingleCameraLoader::resize_sensor(uint32_t width, uint32_t height) {
   float sy = static_cast<float>(height) / static_cast<float>(intr.height);
 
   float rel_diff = std::fabs(sx - sy) / std::max(sx, sy);
-  if (rel_diff > 1e-4f) {
-    throw std::runtime_error("resize_sensor: aspect ratio change detected (scales differ)");
+  if (rel_diff > 1e-2f) {
+    log_warning("resize_sensor: aspect ratio change detected (scales differ): {:.6f}", rel_diff);
   }
 
   // Use sx (≈ sy) as scale

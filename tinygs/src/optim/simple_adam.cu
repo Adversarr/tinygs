@@ -533,6 +533,69 @@ SimpleAdam::SimpleAdam(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr
   SimpleAdam::reset();
 }
 
+__global__ void copy_optimizer_state(
+  const vec3 * __restrict__ src_means_first,
+  const vec3 * __restrict__ src_means_second,
+  vec3 * __restrict__ dst_means_first,
+  vec3 * __restrict__ dst_means_second,
+  const float * __restrict__ src_opacities_first,
+  const float * __restrict__ src_opacities_second,
+  float * __restrict__ dst_opacities_first,
+  float * __restrict__ dst_opacities_second,
+  const vec4 * __restrict__ src_rotations_first,
+  const vec4 * __restrict__ src_rotations_second,
+  vec4 * __restrict__ dst_rotations_first,
+  vec4 * __restrict__ dst_rotations_second,
+  const vec3 * __restrict__ src_scales_first,
+  const vec3 * __restrict__ src_scales_second,
+  vec3 * __restrict__ dst_scales_first,
+  vec3 * __restrict__ dst_scales_second,
+  const vec3 * __restrict__ src_sh_coefficient_0_first,
+  const vec3 * __restrict__ src_sh_coefficient_0_second,
+  vec3 * __restrict__ dst_sh_coefficient_0_first,
+  vec3 * __restrict__ dst_sh_coefficient_0_second,
+  const vec3 * __restrict__ src_sh_coefficients_rest_first,
+  const vec3 * __restrict__ src_sh_coefficients_rest_second,
+  vec3 * __restrict__ dst_sh_coefficients_rest_first,
+  vec3 * __restrict__ dst_sh_coefficients_rest_second,
+  const uint * __restrict__ mapping,
+  int num_items
+) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= num_items) return;
+
+  uint src_idx = mapping[idx];
+
+  // Copy first/second moments for means
+  dst_means_first[idx] = src_means_first[src_idx];
+  dst_means_second[idx] = src_means_second[src_idx];
+
+  // Copy first/second moments for opacities
+  dst_opacities_first[idx] = src_opacities_first[src_idx];
+  dst_opacities_second[idx] = src_opacities_second[src_idx];
+
+  // Copy first/second moments for rotations
+  dst_rotations_first[idx] = src_rotations_first[src_idx];
+  dst_rotations_second[idx] = src_rotations_second[src_idx];
+
+  // Copy first/second moments for scales
+  dst_scales_first[idx] = src_scales_first[src_idx];
+  dst_scales_second[idx] = src_scales_second[src_idx];
+
+  // Copy first/second moments for SH coefficient 0
+  dst_sh_coefficient_0_first[idx] = src_sh_coefficient_0_first[src_idx];
+  dst_sh_coefficient_0_second[idx] = src_sh_coefficient_0_second[src_idx];
+
+  // Copy first/second moments for rest SH coefficients
+  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1);
+  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
+  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
+    dst_sh_coefficients_rest_first[dst_rest_start + i] = src_sh_coefficients_rest_first[src_rest_start + i];
+    dst_sh_coefficients_rest_second[dst_rest_start + i] = src_sh_coefficients_rest_second[src_rest_start + i];
+  }
+}
+
+// Legacy kernel for backward compatibility
 __global__ void copy_items(
   const vec3 * __restrict__ src_means_first,
   const vec3 * __restrict__ src_means_second,
@@ -598,12 +661,12 @@ __global__ void copy_items(
 void SimpleAdam::remove(char* kept_flag, int num_kept) {
   // filters the gaussians' first second.
   size_t original_size = m_gaussians->size();
-  thrust::device_vector<int> mapping(original_size); // mapping[idx] = original_idx
+  thrust::device_vector<uint> mapping(original_size); // mapping[idx] = original_idx
 
   thrust::copy_if(
     thrust::device,
-    thrust::make_counting_iterator<int>(0), thrust::make_counting_iterator<int>(original_size),
-    mapping.begin(), [kept_flag] __device__ (int orig) { return static_cast<bool>(kept_flag[orig]); });
+    thrust::make_counting_iterator<uint>(0), thrust::make_counting_iterator<uint>(original_size),
+    mapping.begin(), [kept_flag] __device__ (uint orig) { return static_cast<bool>(kept_flag[orig]); });
 
   thrust::device_vector<vec3> means_first(num_kept);
   thrust::device_vector<vec3> means_second(num_kept);
@@ -619,7 +682,7 @@ void SimpleAdam::remove(char* kept_flag, int num_kept) {
   thrust::device_vector<vec3> sh_coefficients_rest_second(num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
 
   const int grid = (num_kept + 255) / 256;
-  copy_items<<<grid, 256>>>(
+  copy_optimizer_state<<<grid, 256>>>(
       thrust::raw_pointer_cast(m_means_first.data()),
       thrust::raw_pointer_cast(m_means_second.data()),
       thrust::raw_pointer_cast(means_first.data()),
@@ -873,6 +936,69 @@ void SimpleAdamParameters::from_json(const json& config) {
     // Removed enable_adabound
   }
   if (config.contains("decouple_decay")) decouple_decay = config.at("decouple_decay").get<bool>();
+}
+
+/// @brief Reorder Gaussians based on provided indices
+void SimpleAdam::reorder(uint* indices) {
+  int num_gaussians = m_means_first.size();
+  
+  // Create temporary vectors for reordered data
+  thrust::device_vector<vec3> means_first(num_gaussians);
+  thrust::device_vector<vec3> means_second(num_gaussians);
+  thrust::device_vector<float> opacities_first(num_gaussians);
+  thrust::device_vector<float> opacities_second(num_gaussians);
+  thrust::device_vector<vec4> rotations_first(num_gaussians);
+  thrust::device_vector<vec4> rotations_second(num_gaussians);
+  thrust::device_vector<vec3> scales_first(num_gaussians);
+  thrust::device_vector<vec3> scales_second(num_gaussians);
+  thrust::device_vector<vec3> sh_coefficients_0_first(num_gaussians);
+  thrust::device_vector<vec3> sh_coefficients_0_second(num_gaussians);
+  thrust::device_vector<vec3> sh_coefficients_rest_first(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
+  thrust::device_vector<vec3> sh_coefficients_rest_second(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
+
+  const int grid = (num_gaussians + 255) / 256;
+  copy_optimizer_state<<<grid, 256>>>(
+      thrust::raw_pointer_cast(m_means_first.data()),
+      thrust::raw_pointer_cast(m_means_second.data()),
+      thrust::raw_pointer_cast(means_first.data()),
+      thrust::raw_pointer_cast(means_second.data()),
+      thrust::raw_pointer_cast(m_opacities_first.data()),
+      thrust::raw_pointer_cast(m_opacities_second.data()),
+      thrust::raw_pointer_cast(opacities_first.data()),
+      thrust::raw_pointer_cast(opacities_second.data()),
+      thrust::raw_pointer_cast(m_rotations_first.data()),
+      thrust::raw_pointer_cast(m_rotations_second.data()),
+      thrust::raw_pointer_cast(rotations_first.data()),
+      thrust::raw_pointer_cast(rotations_second.data()),
+      thrust::raw_pointer_cast(m_scales_first.data()),
+      thrust::raw_pointer_cast(m_scales_second.data()),
+      thrust::raw_pointer_cast(scales_first.data()),
+      thrust::raw_pointer_cast(scales_second.data()),
+      thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
+      thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
+      thrust::raw_pointer_cast(sh_coefficients_0_first.data()),
+      thrust::raw_pointer_cast(sh_coefficients_0_second.data()),
+      thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
+      thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
+      thrust::raw_pointer_cast(sh_coefficients_rest_first.data()),
+      thrust::raw_pointer_cast(sh_coefficients_rest_second.data()),
+      indices,
+      num_gaussians
+  );
+
+  // Move reordered data back to member variables
+  m_means_first = std::move(means_first);
+  m_means_second = std::move(means_second);
+  m_opacities_first = std::move(opacities_first);
+  m_opacities_second = std::move(opacities_second);
+  m_rotations_first = std::move(rotations_first);
+  m_rotations_second = std::move(rotations_second);
+  m_scales_first = std::move(scales_first);
+  m_scales_second = std::move(scales_second);
+  m_sh_coefficient_0_first = std::move(sh_coefficients_0_first);
+  m_sh_coefficient_0_second = std::move(sh_coefficients_0_second);
+  m_sh_coefficients_rest_first = std::move(sh_coefficients_rest_first);
+  m_sh_coefficients_rest_second = std::move(sh_coefficients_rest_second);
 }
 
 } // namespace tinygs

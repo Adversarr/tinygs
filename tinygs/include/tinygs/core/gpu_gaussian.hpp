@@ -40,6 +40,11 @@ public:
 
   void remove(char* kept_flag, int num_kept);
 
+  /// @brief Reorder gaussians according to the indices.
+  //         It performs a gather: new[i] = old[indices[i]]
+  /// @note the indices buffer must be on device memory.
+  void reorder(uint* indices, cudaStream_t stream = 0);
+
   void append(int num_dup);
 
   float scene_scale() const { return m_scene_scale; }

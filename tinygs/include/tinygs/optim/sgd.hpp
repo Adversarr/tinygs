@@ -53,6 +53,9 @@ public:
   /// @brief Get current optimizer parameters as JSON
   json get_params() const override;
 
+  /// @brief Reorder Gaussians based on provided indices
+  void reorder(uint* indices) override;
+
 private:
   SGDParameters m_sgd_params;
 };
