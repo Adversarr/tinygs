@@ -209,9 +209,7 @@ __global__ void reduce_sum_4x4_soa_inplace_f32x4_kernel(float* __restrict__ a,
 }
 void fast_gs::rasterization::backward( 
     const float* grad_image,
-    const float* grad_alpha,
     const float* image,
-    const float* alpha,
     const float3* means,
     const float3* scales_raw,
     const float4* rotations_raw,

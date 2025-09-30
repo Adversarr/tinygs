@@ -15,7 +15,7 @@ struct GPUBatchInput {
 
 struct GPUBatchOutput {
   Image image;
-  Image alpha;
+  // other output still in development.
 };
 
 /// @brief Input/output data structure for 3DGS batch processing

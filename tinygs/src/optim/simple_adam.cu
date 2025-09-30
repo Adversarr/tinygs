@@ -13,6 +13,9 @@
 
 namespace cg = cooperative_groups;
 
+constexpr float kShRestScale = 1;
+// constexpr float kShRestScale = 0.05f;
+
 namespace tinygs {
 
 __device__ static __forceinline__ float lerp(float v0, float v1, float t) {
@@ -395,7 +398,7 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
       m_adam_params,
-      m_params.shs_lr * 0.05f,
+      m_params.shs_lr * kShRestScale,
       sh_rest_size,
       gradient_scale,
       bias_correction1,
@@ -517,7 +520,7 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
       m_adam_params,
-      m_params.shs_lr * 0.05f,
+      m_params.shs_lr * kShRestScale,
       sh_rest_size,
       gradient_scale,
       bias_correction1,

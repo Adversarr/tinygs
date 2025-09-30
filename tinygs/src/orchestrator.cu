@@ -317,13 +317,6 @@ void Orchestrator::train_step() {
   // Setup gradient output for backward pass
   m_rasterize_ctx.grad_output.image = m_loss_ctx.grad;
 
-  // TODO: remove the alpha support, we only consider RGB image.
-  // Create alpha gradient image
-  ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
-  m_rasterize_ctx.grad_output.alpha =
-      Image({shape.width, shape.height, 1}, ImageDataType::Float32,
-             m_loss_buffer->data() + shape.padded_size());
-
   // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
 
@@ -507,7 +500,7 @@ float Orchestrator::accumulate_loss() {
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
   //? the unused pixels in the padded area are set to zero during loss computation
   //! fix the shape is not compatible with the tile-based design.
-  return gpu_sum(m_loss_buffer->data(), shape.width * shape.height * 3);
+  return gpu_sum(m_loss_buffer->data(), shape.padded_size());
 }
 
 void Orchestrator::stop_training() {
@@ -555,17 +548,17 @@ void Orchestrator::initialize() {
   // Always allocate buffers for full resolution to avoid reallocations during training
   uint32_t full_pad_width = base_shape.padded_width();
   uint32_t full_pad_height = base_shape.padded_height();
-  size_t full_buffer_size = full_pad_width * full_pad_height * 4;  // RGBA
+  size_t full_buffer_size = full_pad_width * full_pad_height * 3;  // RGB
   
   // Initialize GPU memory buffers with full resolution size
   m_loss_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
   m_render_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
   m_image_grad_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
-  
+
   log_info("Allocated GPU buffers for full resolution {}x{} (size: {} MB)", 
            base_shape.width, base_shape.height, 
            (full_buffer_size * sizeof(float) * 3) / (1024 * 1024));
-  
+
   // Determine initial training resolution
   ImageShape training_shape = base_shape;
   if (m_config.enable_progressive_resolution) {
@@ -576,17 +569,14 @@ void Orchestrator::initialize() {
   } else {
     log_info("Start from full resolution {}x{}", training_shape.width, training_shape.height);
   }
-  set_render_resolution({training_shape.width, training_shape.height, 1});
+  set_render_resolution(training_shape);
 
   uint32_t width = training_shape.width;
   uint32_t height = training_shape.height;
 
   ImageShape rgb_shape{width, height, 3};
-  ImageShape alpha_shape{width, height, 1};
   Image render_rgb = Image(rgb_shape, ImageDataType::Float32, m_render_buffer->data());
-  Image render_alpha = Image(alpha_shape, ImageDataType::Float32, m_render_buffer->data() + rgb_shape.padded_size());
   Image grad_rgb = Image(rgb_shape, ImageDataType::Float32, m_image_grad_buffer->data());
-  Image grad_alpha = Image(alpha_shape, ImageDataType::Float32, m_image_grad_buffer->data() + rgb_shape.padded_size());
 
   // Setup rasterization context
   m_rasterize_ctx.inference = false; // Training mode
@@ -598,10 +588,8 @@ void Orchestrator::initialize() {
 
   // Setup output images
   m_rasterize_ctx.fwd_output.image = render_rgb;
-  m_rasterize_ctx.fwd_output.alpha = render_alpha;
   // ... gradient to output image
   m_rasterize_ctx.grad_output.image = grad_rgb;
-  m_rasterize_ctx.grad_output.alpha = grad_alpha;
   // ... gradient to gaussian parameters
   m_rasterize_ctx.gaussians_grad = m_gradients;
 
@@ -614,7 +602,9 @@ void Orchestrator::initialize() {
 
   // Setup output folder
   ensure(m_config.out_dir);
-  reorder_gaussians();
+  if (m_config.reorder_gaussians_interval > 0) {
+    reorder_gaussians();
+  }
 }
 
 float Orchestrator::compute_learning_rate() const {
@@ -656,6 +646,10 @@ void Orchestrator::update_sh_degree() {
 void Orchestrator::evaluate_losses(const GPUBatchInputOutput& data) {
   m_loss_ctx.target = data.output.image;
   m_loss_ctx.pred = m_rasterize_ctx.fwd_output.image;
+  if (m_loss_ctx.pred.shape !=  m_loss_ctx.target.shape) {
+    throw std::runtime_error("Prediction and target image shapes do not match in loss evaluation.");
+  }
+
   for (const auto& loss_component : m_losses) {
     // Apply gradient scaler to loss weight
     const float w = loss_component.weight * m_config.grad_scaler;
@@ -832,12 +826,8 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
 
   // Create new image objects with the reallocated buffers
   ImageShape rgb_shape{new_shape.width, new_shape.height, 3};
-  ImageShape alpha_shape{new_shape.width, new_shape.height, 1};
-
   Image render_rgb = Image(rgb_shape, ImageDataType::Float32, m_render_buffer->data());
-  Image render_alpha = Image(alpha_shape, ImageDataType::Float32, m_render_buffer->data() + channel_stride * 3);
   Image grad_rgb = Image(rgb_shape, ImageDataType::Float32, m_image_grad_buffer->data());
-  Image grad_alpha = Image(alpha_shape, ImageDataType::Float32, m_image_grad_buffer->data() + channel_stride * 3);
 
   // Update rasterization context with new dimensions and images
   m_rasterize_ctx.fwd_input.width = new_shape.width;
@@ -845,9 +835,7 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
 
   // Update output images
   m_rasterize_ctx.fwd_output.image = render_rgb;
-  m_rasterize_ctx.fwd_output.alpha = render_alpha;
   m_rasterize_ctx.grad_output.image = grad_rgb;
-  m_rasterize_ctx.grad_output.alpha = grad_alpha;
 
   // Update loss context
   m_loss_ctx.loss = Image(rgb_shape, ImageDataType::Float32, m_loss_buffer->data());

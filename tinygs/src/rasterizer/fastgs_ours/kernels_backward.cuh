@@ -201,7 +201,7 @@ __global__ void preprocess_backward_cu(
         grad_conic[2 * n_primitives + primitive_idx]);
     const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
                                                         2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
-                                                        2.0f * (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
+                                                        /* 2.0f * */ (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
                                                         2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
 
     // 3d covariance gradient
@@ -503,6 +503,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             }
             local.color_pixel_after = local.color_pixel_after - make_float3(color_transmittance);
             fast_copy(cached_per_pixel[lane_idx], local);
+            __syncwarp(); // Synchronize after writing to shared memory
         }
 
 #pragma unroll
@@ -541,7 +542,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
                     : "=f"(dst_view_next->x), "=f"(dst_view_next->y), "=f"(dst_view_next->z), "=f"(dst_view_next->w)
                     : "l"(saddr + (i % 32) * sizeof(PerPixel) + 16ul));
             }
-            // __syncwarp(); // Synchronize after reading from shared memory
+            __syncwarp(); // Synchronize after reading from shared memory
             const bool skip = !valid_general || tile_primitive_idx >= last_contributor;
             const float alpha_prepare = opacity * gaussian;
             const float color_dot_grad_color_pixel = dot(color, grad_color_pixel);

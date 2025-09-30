@@ -31,6 +31,8 @@ struct FastGSRasterizer::Impl {
   cudaStream_t helper_stream;
   char* zero_copy = nullptr;
 
+  thrust::device_vector<float> m_alpha_buffer;
+
   // CUDA events for synchronization
   cudaEvent_t memset_per_tile_done;
   cudaEvent_t copy_n_instances_done;
@@ -120,6 +122,12 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     const float cx = ctx.fwd_input.K[2][0];
     const float cy = ctx.fwd_input.K[2][1];
 
+    const auto width = ctx.fwd_input.width;
+    const auto height = ctx.fwd_input.height;
+    if (m_impl->m_alpha_buffer.size() < width * height) {
+      m_impl->m_alpha_buffer.resize(width * height);
+    }
+
     const auto& means = m_gaussians->means();
     const auto& scales = m_gaussians->scales();
     const auto& rotations = m_gaussians->rotations();
@@ -146,7 +154,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* w2c */ reinterpret_cast<const float4*>(&m_impl->device_block.at(0).w2c),
             /* cam_position */ &m_impl->device_block.at(0).cam_position,
             /* image */ static_cast<float*>(ctx.fwd_output.image.data),
-            /* alpha */ static_cast<float*>(ctx.fwd_output.alpha.data),
+            /* alpha */ thrust::raw_pointer_cast(m_impl->m_alpha_buffer.data()),
             /* n_primitives */ m_gaussians->size(),
             /* active_sh_bases */ activated_bases,
             /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
@@ -205,9 +213,7 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
   int activated_bases = (m_gaussians->get_sh_degree() + 1) * (m_gaussians->get_sh_degree() + 1);
   fast_gs::rasterization::backward(
     /* grad_image */ static_cast<float*>(params.grad_output.image.data),
-    /* grad_alpha */ static_cast<float*>(params.grad_output.alpha.data),
     /* image */ static_cast<float*>(params.fwd_output.image.data),
-    /* alpha */ static_cast<float*>(params.fwd_output.alpha.data),
     /* means */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
     /* scales */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
     /* rotations */ reinterpret_cast<const float4*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
