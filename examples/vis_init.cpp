@@ -60,13 +60,10 @@ int main() {
     io.input.far = 10000.0f;
 
     tinygs::GPUMemory<float> out_image(width * height * 3);
-    tinygs::GPUMemory<float> out_alpha(width * height * 1);
-    io.output.image.shape.width = io.output.alpha.shape.width = width;
-    io.output.image.shape.height = io.output.alpha.shape.height = height;
+    io.output.image.shape.width = width;
+    io.output.image.shape.height = height;
     io.output.image.shape.channel = 3;
-    io.output.alpha.shape.channel = 1;
     io.output.image.data = out_image.data();
-    io.output.alpha.data = out_alpha.data();
     tinygs::RasterizeContext params;
     params.inference = true;
     params.fwd_input = io.input;
@@ -91,13 +88,12 @@ int main() {
       io.input.w2c = data.input.w2c;
       params.fwd_input = io.input;
 
-      params.gaussians_grad = gs3d; // TODO: impl
+      params.gaussians_grad = gs3d;
       
       // Render the frame
       rasterizer.forward(params);
 
       params.grad_output.image = params.fwd_output.image;
-      params.grad_output.alpha = params.fwd_output.alpha;
 
       // rasterizer.backward(params);
       

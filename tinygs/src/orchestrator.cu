@@ -458,7 +458,7 @@ void Orchestrator::test_step() {
 
       // Check for write errors
       if (csv_file.fail()) {
-        throw std::runtime_error("Error writing to CSV file: " + csv_path);
+        log_error("Error writing to CSV file: {}", csv_path);
       }
     }
 
@@ -477,7 +477,6 @@ void Orchestrator::test_step() {
                                                 std::plus<float>(),
                                                 [mean](float x) { return (x - mean) * (x - mean); }) 
                          / metric_pair.second.size());
-    // log_info("Metric {}: mean = {:.6f}, std = {:.6f}", metric_pair.first, mean, std);
     std::cout << fmt::format("Metric {}: mean = {:.6f}, std = {:.6f}\n", metric_pair.first, mean, std);
   }
   

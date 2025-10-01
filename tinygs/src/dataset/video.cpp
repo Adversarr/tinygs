@@ -36,6 +36,49 @@ static std::unordered_map<uuid_t, uuid_t> load_video_info(const std::string& vid
   return frame_info_list;
 }
 
+/**
+ * @brief Load a single video frame and convert from BGR HWC to RGB CHW+Tiled format in uint8
+ * @param index Index of the frame in the dataset
+ * @param frame OpenCV Mat containing the video frame in BGR HWC format
+ * @param data_buffer Pointer to the uint8_t buffer to store the frame data
+ * @param expected_width Expected width of the frame
+ * @param expected_height Expected height of the frame
+ * @param channels Number of channels (should be 3 for RGB)
+ */
+static void load_single_frame(size_t index, const cv::Mat& frame, uint8_t* data_buffer, 
+                              uint32_t expected_width, uint32_t expected_height, uint32_t channels) {
+  if (static_cast<uint32_t>(frame.cols) != expected_width || 
+      static_cast<uint32_t>(frame.rows) != expected_height) {
+    throw std::runtime_error("Frame dimensions mismatch. Expected: " + 
+                             std::to_string(expected_width) + "x" + std::to_string(expected_height) +
+                             ", Got: " + std::to_string(frame.cols) + "x" + std::to_string(frame.rows));
+  }
+
+  // Calculate padded image shape for tile-based storage
+  ImageShape temp_shape;
+  temp_shape.width = expected_width;
+  temp_shape.height = expected_height;
+  temp_shape.channel = channels;
+  
+  uint8_t* dest_ptr = data_buffer + index * temp_shape.padded_size();
+  auto total_pix = temp_shape.padded_width() * temp_shape.padded_height();
+
+  // frame is in BGR HWC format (3 channels)
+  // dest_ptr should be in RGB CHW format (3 channels) + tiled.
+  for (uint32_t c = 0; c < channels; ++c) {
+    for (uint32_t h = 0; h < expected_height; ++h) {
+      for (uint32_t w = 0; w < expected_width; ++w) {
+        const auto dst_pix_idx = get_linear_index_tiled(h, w, temp_shape.tiled_width());
+        // Source: HWC format with 3 channels (BGR)
+        cv::Vec3b pixel = frame.at<cv::Vec3b>(h, w);
+        // Destination: CHW format with 3 channels (RGB) - convert BGR to RGB
+        // BGR to RGB: B(0)->R(2), G(1)->G(1), R(2)->B(0)
+        dest_ptr[c * total_pix + dst_pix_idx] = pixel[2 - c];
+      }
+    }
+  }
+}
+
 
 VideoDataset::VideoDataset() 
     : m_data(nullptr), m_size(0) {
@@ -86,8 +129,8 @@ void VideoDataset::load() {
 
   log_info("Video properties: {}x{}, {} frames, {:.2f} fps", video_width, video_height, total_frames, fps);
 
-  // Allocate pinned memory for all frames
-  const size_t total_size = m_size * m_image_shape.height * m_image_shape.width * m_image_shape.channel * sizeof(uint8_t);
+  // Allocate pinned memory for all frames using padded_size for tile-based storage
+  const size_t total_size = m_size * m_image_shape.padded_size();
   CUDA_CHECK_THROW(cudaMallocHost(&m_data, total_size));
 
   // Load frames sequentially leveraging sorted property of camera extrinsics
@@ -134,24 +177,10 @@ void VideoDataset::load() {
       frame = resized_frame;
     }
 
-    // Process frame in HWC format (RGB) - no format conversion needed
-    uint8_t* dest_ptr = m_data + i * m_image_shape.height * m_image_shape.width * m_image_shape.channel;
-
-    // frame is in HWC format with 3 channels (BGR)
-    // dest_ptr will be in HWC format with 3 channels (RGB) - convert BGR to RGB
-    for (uint32_t h = 0; h < m_image_shape.height; ++h) {
-      for (uint32_t w = 0; w < m_image_shape.width; ++w) {
-        for (uint32_t c = 0; c < 3; ++c) {
-          // Source: HWC format with 3 channels (BGR)
-          cv::Vec3b pixel = frame.at<cv::Vec3b>(h, w);
-          // Destination: HWC format with 3 channels (RGB) - convert BGR to RGB by reversing channel order
-          uint32_t dst_idx = h * m_image_shape.width * m_image_shape.channel + w * m_image_shape.channel + c;
-          dest_ptr[dst_idx] = pixel[2 - c]; // BGR to RGB: B(0)->R(2), G(1)->G(1), R(2)->B(0)
-        }
-      }
-    }
-
-    m_timestamp_data[target_timestamp] = dest_ptr;
+    // Convert frame from BGR HWC to RGB CHW+Tiled format
+     load_single_frame(i, frame, m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
+ 
+     m_timestamp_data[target_timestamp] = m_data + i * m_image_shape.padded_size();
   }
 
   // Release video capture resources

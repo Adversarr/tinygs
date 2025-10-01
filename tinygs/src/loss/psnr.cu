@@ -41,12 +41,19 @@ float PsnrMetric::evaluate(Image pred, Image target) {
   int n = pred.shape.padded_size(); // physical
   int npix = pred.shape.size();     // actual
   
+  if (pred.shape != target.shape) {
+    throw std::runtime_error(fmt::format(
+      "Prediction and target shapes must match, got: {} vs {}", 
+      to_string(pred.shape), to_string(target.shape)));
+  }
+
   // Allocate temporary memory for squared differences
   if (m_sqr_diff.size() < n) {
     m_sqr_diff = GPUBuffer<float>(n);
   }
+  m_sqr_diff.memset(0);
+
   float* squared_diff = m_sqr_diff.data();
-  
   // Compute squared differences
   linear_kernel(psnr_squared_diff_kernel, 0, nullptr, n,
     static_cast<const float*>(pred.data),

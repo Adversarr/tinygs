@@ -1,4 +1,5 @@
 #include "tinygs/utils/image_format.hpp"
+#include "tinygs/common.hpp"
 #include <stdexcept>
 
 namespace tinygs {
@@ -57,6 +58,56 @@ void chw_to_hwc(const uint8_t* src, uint8_t* dst, const ImageShape& shape) {
         for (int w = 0; w < width; ++w) {
             for (int c = 0; c < channels; ++c) {
                 dst[HWC(h, w, c)] = src[CHW(c, h, w)];
+            }
+        }
+    }
+}
+
+// Convert standard cv2 image (HWC, BGR) to our CHW+Tiled format (RGB)
+void from_cv2(uint8_t* dst, const uint8_t* src, const ImageShape& shape) {
+    const uint32_t width = shape.width;
+    const uint32_t height = shape.height;
+    const uint32_t channels = shape.channel;
+
+    if (channels != 3) {
+        throw std::runtime_error("from_cv2 expects 3 channels (RGB)");
+    }
+
+    const uint32_t tiled_w = shape.tiled_width();
+    const uint32_t total_pix = shape.padded_width() * shape.padded_height();
+
+    for (uint32_t c = 0; c < channels; ++c) {
+        for (uint32_t h = 0; h < height; ++h) {
+            for (uint32_t w = 0; w < width; ++w) {
+                const uint32_t lin = get_linear_index_tiled(h, w, tiled_w);
+                // src is HWC in BGR order; map to RGB
+                const uint32_t src_idx = h * width * channels + w * channels + (2 - c);
+                dst[c * total_pix + lin] = src[src_idx];
+            }
+        }
+    }
+}
+
+// Convert our CHW+Tiled format (RGB) to standard cv2 image (HWC, BGR)
+void to_cv2(uint8_t* dst, const uint8_t* src, const ImageShape& shape) {
+    const uint32_t width = shape.width;
+    const uint32_t height = shape.height;
+    const uint32_t channels = shape.channel;
+
+    if (channels != 3) {
+        throw std::runtime_error("to_cv2 expects 3 channels (RGB)");
+    }
+
+    const uint32_t tiled_w = shape.tiled_width();
+    const uint32_t total_pix = shape.padded_width() * shape.padded_height();
+
+    for (uint32_t h = 0; h < height; ++h) {
+        for (uint32_t w = 0; w < width; ++w) {
+            const uint32_t lin = get_linear_index_tiled(h, w, tiled_w);
+            for (uint32_t c = 0; c < channels; ++c) {
+                const uint8_t val = src[c * total_pix + lin]; // RGB
+                const uint32_t dst_idx = h * width * channels + w * channels + (2 - c); // BGR
+                dst[dst_idx] = val;
             }
         }
     }

@@ -180,7 +180,6 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
 }
 
 void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
-  // TODO: a better way to get these
   auto gs3d = orchestrator->get_optimizer()->get_gaussians();
   auto grads = orchestrator->get_optimizer()->get_gaussians_grad();
   
