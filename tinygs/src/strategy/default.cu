@@ -200,10 +200,17 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
         scales3d[target_idx] = scales3d[src_idx];
         opacities[target_idx] = opacities[src_idx];
       } else {
-        const mat3x3 rot = quat_to_mat3(normalize(quat{    //
-          rotations[src_idx].x, rotations[src_idx].y, //
-          rotations[src_idx].z, rotations[src_idx].w  //
-        }));
+        // NOTE: It is a little bit confusing, but (w, x, y, z) is a standard representation in
+        // 3dgs, while (x, y, z, w) is the way to access it.
+        const float r = rotations[src_idx].x;
+        const float x = rotations[src_idx].y;
+        const float y = rotations[src_idx].z;
+        const float z = rotations[src_idx].w;
+        glm::mat3 rot = glm::mat3(
+          1.f - 2.f * (y * y + z * z), 2.f * (x * y - r * z), 2.f * (x * z + r * y),
+          2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),
+          2.f * (x * z - r * y), 2.f * (y * z + r * x), 1.f - 2.f * (x * x + y * y)
+        );
         const vec3 actual_scale = activate_scale(scales3d[src_idx]);
         const float new_opacity = 1.0f - sqrtf(1.0f - activate_opacity(opacities[src_idx]));
         const vec3 rand1 = vec3(device_scales[i * 6 + 0], device_scales[i * 6 + 1], device_scales[i * 6 + 2]);

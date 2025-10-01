@@ -242,7 +242,7 @@ __global__ void preprocess_cu(
     pipeline.consumer_release();
 
     const float opacity = tinygs::activate_opacity(raw_opacity);
-    if (raw_opacity < config::min_alpha_threshold_deactivated)
+    if (opacity < config::min_alpha_threshold)
         active = false;
 
     // compute 3d covariance from raw scale and rotation

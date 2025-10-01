@@ -141,25 +141,6 @@ __global__ void fusedssimCUDA(
                     sTile[stile_y][stile_x] = xy;
                 }
             }
-
-            // const int tileStartY = block.group_index().y * BLOCK_Y; // mul of 16
-            // const int tileStartX = block.group_index().x * BLOCK_X; // mul of 16
-            // for (int s = 0; s < steps; ++s) {
-            //     int tid = s * threads + block.thread_rank();
-            //     if (tid < tileSize) {
-            //       const int local_y = tid / SHARED_X; // 0..26
-            //       const int local_x = tid % SHARED_X; // 0..26
-            //       const int gy = tileStartY + local_y - HALO;
-            //       const int gx = tileStartX + local_x - HALO;
-            //       const uint physical_idx =  get_linear_index_tiled(gy, gx, width_in_tile);
-            //       float X = 0.f, Y = 0.f;
-            //       if (gx < W && gy < H && 0 <= gx && 0 <= gy) [[likely]] {
-            //         X = img1[physical_idx + c * channel_stride];
-            //         Y = img2[physical_idx + c * channel_stride];
-            //       }
-            //       sTile[local_y][local_x] = __float22half2_rn({X, Y});
-            //     }
-            // }
         }
         block.sync();
 
@@ -183,8 +164,6 @@ __global__ void fusedssimCUDA(
                 const __half2 stile_item = sTile[ly][threadIdx.x + d];
                 const float X = __half2float(stile_item.x);
                 const float Y = __half2float(stile_item.y);
-                // const float X = sTile[ly][threadIdx.x + d][0];
-                // const float Y = sTile[ly][threadIdx.x + d][1];
                 sumX  += X * w;
                 sumX2 += (X * X) * w;
                 sumY  += Y * w;

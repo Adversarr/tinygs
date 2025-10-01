@@ -121,51 +121,6 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
             cy,
             near_,
             far_);
-
-        // // 1. 确定 Block 大小
-        // int block_size = fast_gs::rasterization::config::block_size_preprocess;
-        // static int grid_size = 0;
-        // if (!(grid_size > 0)) {
-        //     int sm_count = 0;
-        //     int device;
-        //     cudaGetDevice(&device);
-        //     cudaDeviceGetAttribute(&sm_count, cudaDevAttrMultiProcessorCount, device);
-        //     const int gridDimX  = sm_count * 4;     // 2~4 都可，视寄存器与占用率调优
-        //     grid_size = gridDimX;
-        //     log_info("Determined preprocess grid_size: {}", grid_size);
-        // }
-
-        // kernels::forward::preprocess_cu2<<<grid_size, block_size, 0, major_stream>>>(
-        //     means,
-        //     scales_raw,
-        //     rotations_raw,
-        //     opacities_raw,
-        //     sh_coefficients_0,
-        //     sh_coefficients_rest,
-        //     w2c,
-        //     cam_position,
-        //     per_primitive_buffers.depth_keys.Current(),
-        //     per_primitive_buffers.primitive_indices.Current(),
-        //     per_primitive_buffers.n_touched_tiles,
-        //     per_primitive_buffers.screen_bounds,
-        //     per_primitive_buffers.mean2d,
-        //     per_primitive_buffers.conic_opacity,
-        //     per_primitive_buffers.color,
-        //     per_primitive_buffers.n_visible_primitives,
-        //     per_primitive_buffers.n_instances,
-        //     n_primitives,
-        //     grid.x,
-        //     grid.y,
-        //     active_sh_bases,
-        //     total_bases_sh_rest,
-        //     static_cast<float>(width),
-        //     static_cast<float>(height),
-        //     fx,
-        //     fy,
-        //     cx,
-        //     cy,
-        //     near_,
-        //     far_);
         CHECK_CUDA(config::debug, "preprocess");
         CUDA_CHECK_THROW(cudaEventRecord(preprocess_done, major_stream));
         tinygs::maybe_sync(major_stream);
