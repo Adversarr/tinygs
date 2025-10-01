@@ -1,22 +1,23 @@
+#include <cuda_runtime.h>
+#include <nvtx3/nvtx3.hpp>
+#include <opencv2/opencv.hpp>
 #include <spdlog/spdlog.h>
 #include <thrust/execution_policy.h>
 #include <thrust/transform_reduce.h>
-#include <cuda_runtime.h>
-#include <opencv2/opencv.hpp>
-#include <nvtx3/nvtx3.hpp>
 
 #include <algorithm>
 #include <iomanip>
 #include <stdexcept>
 #include <vector>
 
+#include "tinygs/core/pointcloud.hpp"
+#include "tinygs/cuda/common_device.cuh"
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/cuda/reduce.hpp"
 #include "tinygs/orchestrator.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 #include <cub/device/device_radix_sort.cuh>
-#include "tinygs/cuda/common_device.cuh"
 namespace tinygs {
 
 static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaStream_t stream) {
@@ -489,6 +490,10 @@ void Orchestrator::test_step() {
       set_render_resolution({training_shape.width, training_shape.height, 1});
     }
   }
+
+  Gaussian3d gs_host;
+  m_gaussians->copy_to_host(gs_host);
+  save_ply(out_dir + "/points.ply", gs_host);
 }
 
 float Orchestrator::accumulate_loss() {

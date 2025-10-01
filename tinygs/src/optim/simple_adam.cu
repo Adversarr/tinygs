@@ -230,7 +230,7 @@ float l0_norm(It begin, It end) {
 template<typename VecT, typename AbsFunctor>
 float l1_vec(const thrust::device_vector<VecT>& v, AbsFunctor f) {
   if (v.empty()) return 0.f;
-  return l1_norm(v.begin(), v.end(), f) / l0_norm<VecT>(v.begin(), v.end());
+  return l1_norm(v.begin(), v.end(), f) / (l0_norm<VecT>(v.begin(), v.end()) + FLT_EPSILON);
 }
 } // anonymous namespace
 

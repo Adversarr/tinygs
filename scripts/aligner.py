@@ -73,7 +73,7 @@ class Aligner:
         self.downsampling = 4
 
     def run_ransac(self, points, cam: CameraExtrinsic, depth):
-        aligner = DepthAlignment(max_trials=1000, stop_score=0.99)
+        aligner = DepthAlignment(max_trials=1000, stop_score=0.999)
         result: DepthAlignmentResult = aligner.estimate_scale(
             points, self.undistorted, cam, depth
         )
@@ -192,26 +192,18 @@ class Aligner:
         self.point_cloud_running.save_to_file(filename)
 
 if __name__ == "__main__":
-    # # ID = "1747834320424"
-    # ID = '1748422612463'
-    # # ID = '1751090600427'
-    # PC_FILE = f"/data/accgs/{ID}/inputs/slam/points3D.txt"
-    # EXTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/images.txt"
-    # INTRIN_FILE = f"/data/accgs/{ID}/inputs/slam/cameras.txt"
-    # INPUT_FOLDER = f"/data/accgs/{ID}/inputs/images"
-    # VIDEO_INFO_FILE = f'/data/accgs/{ID}/inputs/videoInfo.txt'
-
     parser = ArgumentParser()
-    parser.add_argument("--root", type=str, help="Root directory of all scenes", default='/data/accgs')
-    parser.add_argument("--id", type=str, help="ID of the scene", default='1748422612463')
+    parser.add_argument("--root", type=str, help="Root directory of all scenes", default='/data/yzr/Final')
+    parser.add_argument("--id", type=str, help="ID of the scene", default='1747834320424')
     parser.add_argument("--out", type=str, help="Output file path", default='aligned_points/')
+    parser.add_argument("--working_dir", type=str, help="Working directory", default='outputs/')
     args = parser.parse_args()
     ID = args.id
     ROOT = args.root
     PC_FILE = f"{ROOT}/{ID}/inputs/slam/points3D.txt"
     EXTRIN_FILE = f"{ROOT}/{ID}/inputs/slam/images.txt"
     INTRIN_FILE = f"{ROOT}/{ID}/inputs/slam/cameras.txt"
-    INPUT_FOLDER = f"{ROOT}/{ID}/inputs/images"
+    INPUT_FOLDER = f"{args.working_dir}/images/"
     VIDEO_INFO_FILE = f"{ROOT}/{ID}/inputs/videoInfo.txt"
     OUT_FILE = f"{args.out}/{ID}.ply"
     Path(args.out).mkdir(exist_ok=True)
@@ -237,6 +229,10 @@ if __name__ == "__main__":
         else:
             camera_extrinsics.remove(cam)
 
+    print(f"Loaded {len(images)} images")
+    if not images:
+        print("Error: no images found")
+        exit(1)
     aligner = Aligner(
         points,
         colors,

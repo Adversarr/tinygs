@@ -4,6 +4,7 @@ compile_commands.json
 out
 .idea
 cmake-build*
+output
 
 # Python
 .mypy_cache
@@ -27,3 +28,5 @@ aligned_points
 outputs
 *.ncu-rep
 *.nsys-rep
+config_train
+video_to_png

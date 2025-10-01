@@ -12,11 +12,18 @@ int main(int argc, char** argv) {
   spdlog::set_level(spdlog::level::debug);
   cxxopts::Options options("video_to_png", "Convert video to png folder");
   options.add_options()("f,folder", "Video folder path",
-                        cxxopts::value<std::string>()->default_value("/data/yzr/Final/1747834320424/"))(
-      "i,id", "Video id", cxxopts::value<uuid_t>()->default_value("1747834320424"))(
-      "o,output", "Output folder path", cxxopts::value<std::string>()->default_value("./images"));
+                        cxxopts::value<std::string>()->default_value("/data/yzr/Final/1747834320424/"))
+      ("i,id", "Video id", cxxopts::value<uuid_t>()->default_value("1747834320424"))
+      ("o,output", "Output folder path", cxxopts::value<std::string>()->default_value("./images"))
+      ("h,help", "Print help");
 
   auto result = options.parse(argc, argv);
+
+  if (result.count("help")) {
+    std::cout << options.help() << std::endl;
+    return 0;
+  }
+
   std::string folder = result["folder"].as<std::string>();
   uuid_t id = result["id"].as<uuid_t>();
   std::string output = result["output"].as<std::string>();

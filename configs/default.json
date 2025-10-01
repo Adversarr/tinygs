@@ -12,8 +12,8 @@
   "initializer": {
     "default_distance": 0.001,
     "enable_radius_outlier_removal": false,
-    "init_opacity": 0.5,
-    "init_scaling": 0.5,
+    "init_opacity": 0.1,
+    "init_scaling": 1.0,
     "min_distance": 1.0e-07,
     "nb_points": 16,
     "num_neighbors": 3,
@@ -51,7 +51,7 @@
     "means_lr": 0.00016,
     "opacities_l1": 0.01,
     "decouple_decay": true,
-    "decay_reduction": "mean",
+    "decay_reduction": "sum",
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
     "scales_l1": 0.01,
@@ -67,14 +67,15 @@
     "duplicate_grad_threshold": 0.0002,
     "duplicate_scale_threshold": 0.005,
     "end_refine": 25000,
-    "max_num_gaussians": 1000000,
+    "max_num_gaussians": 1500000,
     "max_screen_size": 20,
     "pruning_opacity_threshold": 0.005,
     "pruning_scale_threshold": 0.1,
     "refine_every": 100,
-    "reset_every": 3000,
+    "reset_every": 0,
     "seed": 42,
     "start_refine": 500,
+    "noise_lr_init": 80.0,
     "type": "default"
   },
   "trainer": {
@@ -91,11 +92,11 @@
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 1000,
-    "enable_progressive_resolution": true,
+    "enable_progressive_resolution": false,
     "resolution_milestones": [0, 1500, 3000],
     "resolution_scales": [0.25, 0.75, 1.0],
     "test_steps": [2000, 4000, 6000, 8000, 10000],
     "out_dir": "outputs",
-    "export_rasterized": false
+    "export_rasterized": true
   }
 }

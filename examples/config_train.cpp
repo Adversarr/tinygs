@@ -211,16 +211,7 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
       }
     }
   });
-
-  orchestrator->set_checkpoint_callback([orchestrator] (const TrainingState& state) {
-    Gaussian3d host;
-    orchestrator->get_gaussians()->copy_to_host(host);
-
-    save_ply("out.ply", host);
-  });
-
   auto final_state = orchestrator->train();
-  
   log_info("Training completed after {} steps", final_state.current_step);
   if (visualize) {
     cv::waitKey(0);

@@ -36,6 +36,7 @@ void reset_opacity(const std::shared_ptr<GPUGaussian3d>& gaussians, float min_op
 
 void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
+  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream)); // make sure the operations on training stream are done.
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<float>>(num_gaussians * 2);
@@ -46,7 +47,9 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   if (step % m_params.refine_every == 0 &&
       step >= m_params.start_refine &&
       step <= m_params.end_refine) {
-    duplicate(ctx);
+    if (m_gaussians->size() < m_params.max_num_gaussians) {
+      duplicate(ctx);
+    }
     // res contains marks the duplication gaussians, disable the pruning for them.
     prune(ctx);
     // after pruning, we need to reset the densification info since the indices have changed.
@@ -55,14 +58,15 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
     ctx.densification_info->memset(0);
   }
 
-  if (step % m_params.reset_every == 0 && step >= m_params.start_refine && step <= m_params.end_refine) {
+  if (m_params.reset_every > 0 && step % m_params.reset_every == 0 && step >= m_params.start_refine
+      && step <= m_params.end_refine) {
     reset_opacity(m_gaussians, 2 * m_params.pruning_opacity_threshold, ctx.stream);
     on_reset_opacity();
   }
 }
 
 void DefaultStrategy::reset() {
-  // TODO: implement reset
+  // Nothing to do here.
 }
 
 void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
@@ -187,8 +191,8 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
 
       rotations[target_idx] = rotations[src_idx];
       sh0[target_idx] = sh0[src_idx];
-      for (int i = 0; i < 15; i++) {
-        sh_rest[target_idx * 15 + i] = sh_rest[src_idx * 15 + i];
+      for (int c = 0; c < 15; c++) {
+        sh_rest[target_idx * 15 + c] = sh_rest[src_idx * 15 + c];
       }
       if (d_grow_flags[src_idx] == kDuplicate) {
         // keep everything same as src gs

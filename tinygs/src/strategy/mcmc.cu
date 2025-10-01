@@ -164,6 +164,9 @@ MCMCStrategy::MCMCStrategy(
 
 
 void MCMCStrategy::step_impl(const RasterizeContext& ctx) {
+  NVTX3_FUNC_RANGE();
+  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream)); // make sure the operations on training stream are done.
+
   ctx.densification_info.reset();
   const size_t step = this_step();
   if (step % m_params.refine_every == 0 && step >= m_params.start_refine && step <= m_params.end_refine) {
