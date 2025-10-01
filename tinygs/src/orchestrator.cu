@@ -395,6 +395,9 @@ void Orchestrator::test_step() {
     m_rasterize_ctx.fwd_input = data.input;
     m_rasterizer->forward(m_rasterize_ctx);
 
+    // Wait for the rasterization to finish
+    cudaStreamSynchronize(m_major_stream);
+
     // Export the rasterized image if enabled
     if (m_config.export_rasterized) {
       cv::Mat img = to_opencv();

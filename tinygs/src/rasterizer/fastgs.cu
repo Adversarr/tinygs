@@ -124,8 +124,10 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
 
     const auto width = ctx.fwd_input.width;
     const auto height = ctx.fwd_input.height;
-    if (m_impl->m_alpha_buffer.size() < width * height) {
-      m_impl->m_alpha_buffer.resize(width * height);
+    const auto pw = ((width + kImageTileMask) >> kImageTileLog2) * kImageTile;
+    const auto ph = ((height + kImageTileMask) >> kImageTileLog2) * kImageTile;
+    if (m_impl->m_alpha_buffer.size() < pw * ph) {
+      m_impl->m_alpha_buffer.resize(pw * ph);
     }
 
     const auto& means = m_gaussians->means();
