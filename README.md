@@ -16,8 +16,12 @@ Known Issues:
 ## Setup and Run the competetion (SIGA 2025)
 
 ```bash
-uv sync         # install dependencies for python part.
-bash build.sh   # build the project with cmake
+# install dependencies for python part.
+uv sync
+source .venv/bin/activate
+# build the project with cmake
+bash build.sh
+# Per scene run
 bash launch.sh  PATH_TO_DATASETS SCENE_ID # run the project with the dataset and scene id.
 ```
 

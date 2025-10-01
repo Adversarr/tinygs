@@ -22,23 +22,6 @@ __device__ static __forceinline__ float lerp(float v0, float v1, float t) {
     return fmaf(t, v1, fmaf(-t, v0, v0));
 }
 
-__device__ static __forceinline__ vec3 lerp(vec3 v0, vec3 v1, float t) {
-  return {
-      lerp(v0.x, v1.x, t),
-      lerp(v0.y, v1.y, t),
-      lerp(v0.z, v1.z, t),
-  };
-}
-
-__device__ static __forceinline__ vec4 lerp(vec4 v0, vec4 v1, float t) {
-  return {
-      lerp(v0.x, v1.x, t),
-      lerp(v0.y, v1.y, t),
-      lerp(v0.z, v1.z, t),
-      lerp(v0.w, v1.w, t),
-  };
-}
-
 struct NoDecay {
   template <typename T>
   __forceinline__ __device__ auto operator()(const T& /* theta */, const T &g) const noexcept {
