@@ -370,9 +370,6 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      // [d=m_params.scales_l1, invn = 1.0f / n] __device__(float x, float g) { 
-      //   return (activate_scale_deriv(x) * d) * invn + g;
-      // }
       ScaleDecay(m_params.scales_l1 * g_scale)
     );
 

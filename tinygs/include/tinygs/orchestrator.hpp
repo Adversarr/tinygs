@@ -182,6 +182,12 @@ public:
   /// @brief convert current rasterizer result to opencv mat
   cv::Mat to_opencv() const;
 
+  /// @brief Get the current Gaussian splatting model
+  std::shared_ptr<GPUGaussian3d> get_gaussians() const { return m_gaussians; }
+
+  /// @brief Get the current Gaussian gradients
+  std::shared_ptr<GPUGaussian3d> get_gradients() const { return m_gradients; }
+
 private:
   // Core training components
   std::shared_ptr<GPUGaussian3d> m_gaussians;

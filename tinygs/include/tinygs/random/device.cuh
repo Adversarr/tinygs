@@ -83,4 +83,34 @@ void generate_random_logistic(RNG& rng, size_t n_elements, T* out, const T mean 
 	generate_random_logistic(nullptr, rng, n_elements, out, mean, stddev);
 }
 
+/// @brief Generate random integers using a custom transformation function
+template <typename RNG, size_t N_TO_GENERATE>
+__global__ void generate_random_int_kernel(const size_t n_elements, RNG rng, uint32_t* __restrict__ out, const uint32_t bound) {
+	const size_t i = threadIdx.x + blockIdx.x * blockDim.x;
+	const size_t n_threads = blockDim.x * gridDim.x;
+
+	rng.advance(i*N_TO_GENERATE);
+
+	TINYGS_PRAGMA_UNROLL
+	for (size_t j = 0; j < N_TO_GENERATE; ++j) {
+		const size_t idx = i + n_threads * j;
+		if (idx >= n_elements) {
+			return;
+		}
+
+		out[idx] = rng.next_uint(bound);
+	}
+}
+
+/// @brief Generate random integers using a custom transformation function
+template <typename RNG>
+void generate_random_ui32(cudaStream_t stream, RNG& rng, size_t n_elements, uint32_t* out, uint32_t bound) {
+	static constexpr size_t N_TO_GENERATE = 4;
+	size_t n_threads = div_round_up(n_elements, N_TO_GENERATE);
+	generate_random_int_kernel<RNG, N_TO_GENERATE>
+			<<<n_blocks_linear(n_threads), N_THREADS_LINEAR, 0, stream>>>(
+					n_elements, rng, out, bound);
+
+	rng.advance(n_elements);
+}
 }

@@ -38,6 +38,8 @@ namespace fast_gs::rasterization::config {
 
   DEF int blend_bwd_n_warps = 8; // number of warps per block
   DEF int blend_bwd2_n_warps = 4; // number of warps per block
+
+  DEF float math_pi = 3.14159265358979323846f;
 } // namespace fast_gs::rasterization::config
 
 namespace config = fast_gs::rasterization::config;

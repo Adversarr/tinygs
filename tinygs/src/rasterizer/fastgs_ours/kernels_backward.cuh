@@ -189,7 +189,9 @@ __global__ void preprocess_backward_cu(
         jw_r2.x * cov3d.m13 + jw_r2.y * cov3d.m23 + jw_r2.z * cov3d.m33);
 
     // 2d covariance gradient
-    const float a = dot(jwc_r1, jw_r1) + config::dilation, b = dot(jwc_r1, jw_r2), c = dot(jwc_r2, jw_r2) + config::dilation;
+    /// TrickGS: HW / 9Pi N
+    const float dilation = fmaxf(config::dilation, float(h * w) / (9.0f * config::math_pi * n_primitives));
+    const float a = dot(jwc_r1, jw_r1) + dilation, b = dot(jwc_r1, jw_r2), c = dot(jwc_r2, jw_r2) + dilation;
     const float aa = a * a, bb = b * b, cc = c * c;
     const float ac = a * c, ab = a * b, bc = b * c;
     const float determinant = ac - bb;
@@ -200,9 +202,10 @@ __global__ void preprocess_backward_cu(
         grad_conic[n_primitives + primitive_idx],
         grad_conic[2 * n_primitives + primitive_idx]);
     const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
-                                                        2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
-                                                        /* 2.0f * */ (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
-                                                        2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
+                2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
+                // GPT-5 claims here should have a 2.0f
+                2.0f * (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
+                2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
 
     // 3d covariance gradient
     const mat3x3_triu dL_dcov3d = {
@@ -444,9 +447,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     float dL_draw_opacity_partial_accum = 0.0f;
     float3 dL_dcolor_accum = {0.0f, 0.0f, 0.0f};
 
-    alignas(32) union {
-      PerPixel per_pixel_registers;
-      uint64_t regfile[4];
+    union {
+      alignas(32) PerPixel per_pixel_registers;
+      alignas(32) uint64_t regfile[4];
     };
     fast_zero(per_pixel_registers);
 
@@ -479,7 +482,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             assert(dy < config::tile_height);
             const uint2 pixel_coords = {start_pixel_coords.x + dx,
                                         start_pixel_coords.y + dy};
-            const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
+            // const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
             const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
                 /* row */ pixel_coords.y,
                 /* col */ pixel_coords.x,

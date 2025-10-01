@@ -1,3 +1,4 @@
+#include "random/device.cuh"
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/utils/scope_timer.hpp"
@@ -6,6 +7,8 @@
 #include "tinygs/common.hpp"
 #include <algorithm>
 #include <nvtx3/nvtx3.hpp>
+#include <random>
+#include <thrust/host_vector.h>
 #include "tinygs/dataloader/nvtx_dl.h"
 
 namespace tinygs {
@@ -63,9 +66,9 @@ __global__ static void resize_nn_u8_to_float_tiled(
   }
 }
 
-// Nearest-neighbor resize from tiled CHW Float32 to tiled CHW Float32
-__global__ static void resize_nn_float_to_float_tiled(
-    const float* __restrict__ src, float* __restrict__ dst,
+__global__ static void resize_u8_to_float_tiled_stochastic_blur(
+    const uint8_t* __restrict__ src, float* __restrict__ dst,
+    uint64_t* __restrict__ rng_state,
     uint32_t src_w, uint32_t src_h,
     uint32_t dst_w, uint32_t dst_h,
     uint32_t src_tiled_w, uint32_t dst_tiled_w,
@@ -76,11 +79,22 @@ __global__ static void resize_nn_float_to_float_tiled(
   if (x >= dst_w || y >= dst_h) return;
   const uint32_t src_x = min((uint32_t)((float)x * (float)src_w / (float)dst_w), src_w - 1);
   const uint32_t src_y = min((uint32_t)((float)y * (float)src_h / (float)dst_h), src_h - 1);
+  const uint32_t src_x_next = min((uint32_t)((float)(x + 1) * (float)src_w / (float)dst_w), src_w - 1);
+  const uint32_t src_y_next = min((uint32_t)((float)(y + 1) * (float)src_h / (float)dst_h), src_h - 1);
+
   const uint32_t dst_idx_base = get_linear_index_tiled(y, x, dst_tiled_w);
-  const uint32_t src_idx_base = get_linear_index_tiled(src_y, src_x, src_tiled_w);
+  constexpr float CHAR_TO_FLOAT = 1.0f / 255.0f;
   for (uint32_t c = 0; c < channels; ++c) {
-    const float v = src[src_idx_base + c * src_channel_stride];
-    dst[dst_idx_base + c * dst_channel_stride] = v;
+    const uint64_t state = rng_state[dst_idx_base + c * dst_channel_stride];
+    // randomly pick a pixel in x ... x_next and y ... y_next
+    pcg32 rng(state, 1u);
+    const uint32_t dx = rng.next_uint() % (src_x_next - src_x + 1);
+    const uint32_t dy = rng.next_uint() % (src_y_next - src_y + 1);
+    const uint32_t src_idx = get_linear_index_tiled(src_y + dy, src_x + dx, src_tiled_w);
+    const uint8_t v = src[src_idx + c * src_channel_stride];
+
+    dst[dst_idx_base + c * dst_channel_stride] = CHAR_TO_FLOAT * (float)v;
+    rng_state[dst_idx_base + c * dst_channel_stride] = rng.state;
   }
 }
 
@@ -163,43 +177,23 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
       const uint32_t src_channel_stride = compute_channel_stride(src_width, src_height);
       dim3 block(16, 16);
       dim3 grid((dst_width + block.x - 1) / block.x, (dst_height + block.y - 1) / block.y);
-      resize_nn_u8_to_float_tiled<<<grid, block, 0, stream>>>(reinterpret_cast<const uint8_t*>(raw_data),
+      // resize_nn_u8_to_float_tiled<<<grid, block, 0, stream>>>(reinterpret_cast<const uint8_t*>(raw_data),
+      //                                                         reinterpret_cast<float*>(gpu_data.data),
+      //                                                         src_width, src_height, dst_width, dst_height,
+      //                                                         src_tiled_w, dst_tiled_w,
+      //                                                         src_channel_stride, dst_channel_stride,
+      //                                                         channels);
+
+      resize_u8_to_float_tiled_stochastic_blur<<<grid, block, 0, stream>>>(reinterpret_cast<const uint8_t*>(raw_data),
                                                               reinterpret_cast<float*>(gpu_data.data),
+                                                              m_rng_state.data(),
                                                               src_width, src_height, dst_width, dst_height,
                                                               src_tiled_w, dst_tiled_w,
                                                               src_channel_stride, dst_channel_stride,
                                                               channels);
     }
   } else if (host_data.data_type == ImageDataType::Float32) {
-    if (same_shape) {
-      const size_t bytes = static_cast<size_t>(gpu_data.shape.padded_size()) * sizeof(float);
-      CUDA_CHECK_THROW(cudaMemcpyAsync(gpu_data.data, host_data.data, bytes,
-                                       cudaMemcpyHostToDevice, stream));
-    } else {
-      // Copy source floats to device scratch and resize (nearest)
-      const size_t src_total_bytes = static_cast<size_t>(host_data.shape.padded_size()) * sizeof(float);
-      if (m_raw_data.size() < src_total_bytes) {
-        throw std::runtime_error("Internal GPU scratch buffer insufficient; preallocate via reset().");
-      }
-      char* raw_data = m_raw_data.data();
-      CUDA_CHECK_THROW(cudaMemcpyAsync(raw_data, host_data.data, src_total_bytes,
-                                       cudaMemcpyHostToDevice, stream));
-      if (host_data.shape.channel != channels) {
-        throw std::runtime_error("Channel mismatch (host vs gpu) not supported for resize.");
-      }
-      const uint32_t dst_tiled_w = (dst_width + kImageTileMask) >> kImageTileLog2;
-      const uint32_t src_tiled_w = (src_width + kImageTileMask) >> kImageTileLog2;
-      const uint32_t dst_channel_stride = compute_channel_stride(dst_width, dst_height);
-      const uint32_t src_channel_stride = compute_channel_stride(src_width, src_height);
-      dim3 block(16, 16);
-      dim3 grid((dst_width + block.x - 1) / block.x, (dst_height + block.y - 1) / block.y);
-      resize_nn_float_to_float_tiled<<<grid, block, 0, stream>>>(reinterpret_cast<const float*>(raw_data),
-                                                                 reinterpret_cast<float*>(gpu_data.data),
-                                                                 src_width, src_height, dst_width, dst_height,
-                                                                 src_tiled_w, dst_tiled_w,
-                                                                 src_channel_stride, dst_channel_stride,
-                                                                 channels);
-    }
+    throw std::runtime_error("Host-side float32 data type not supported for transfer.");
   } else {
     throw std::runtime_error("Unsupported host image data type for transfer.");
   }
@@ -226,6 +220,21 @@ void DataLoaderBase::reset() {
     const size_t max_bytes = max_elements * sizeof(float); // reserve enough for float-sized scratch
     if (m_raw_data.size() < max_bytes) {
       m_raw_data.resize(max_bytes);
+    }
+
+    if (m_rng_state.size() < max_elements) {
+      m_rng_state.resize(max_elements);
+
+      std::vector<uint64_t> h_rng_state;
+      h_rng_state.reserve(max_elements);
+      pcg32 rng(0, 1u);
+      for (size_t i = 0; i < max_elements; ++i) {
+        uint64_t up = rng.next_uint();
+        uint64_t lo = rng.next_uint();
+        h_rng_state.emplace_back((up << 32) | lo);
+      }
+      CUDA_CHECK_THROW(cudaMemcpy(m_rng_state.data(), h_rng_state.data(),
+                                  max_bytes, cudaMemcpyHostToDevice));
     }
   }
 }

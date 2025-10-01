@@ -80,6 +80,7 @@ protected:
 
 private:
   GPUMemory<char> m_raw_data;
+  GPUMemory<uint64_t> m_rng_state;
   std::mutex m_mutex;
 };
 

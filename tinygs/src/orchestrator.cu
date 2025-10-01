@@ -539,7 +539,7 @@ void Orchestrator::initialize() {
   }
   CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&m_major_stream, cudaStreamNonBlocking));
 
-  m_rasterize_ctx.stream = m_major_stream;
+  m_loss_ctx.stream = m_rasterize_ctx.stream = m_major_stream;
 
   // Get image dimensions from the first data sample
   auto base_shape = m_dataloader->get_dataset()->image_shape();
@@ -813,11 +813,6 @@ ImageShape Orchestrator::scale_image_shape(const ImageShape& original_shape, flo
 }
 
 void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
-  // Calculate padded dimensions for the new shape
-  uint32_t padded_width = new_shape.padded_width();
-  uint32_t padded_height = new_shape.padded_height();
-  uint32_t channel_stride = padded_width * padded_height;
-
   if (new_shape.width  > m_dataloader->get_dataset()->image_shape().width ||
       new_shape.height > m_dataloader->get_dataset()->image_shape().height) {
     throw std::invalid_argument("Not a valid buffer shape.");
@@ -867,9 +862,9 @@ void Orchestrator::update_resolution(size_t current_step) {
   }
 }
 
-static __global__ void densification_update(const float *__restrict__ old_info,
-                                            float *__restrict__ new_info,
-                                            uint n, uint *old_idx) {
+static __global__ void densification_update( //
+    uint n, const float *__restrict__ old_info, float *__restrict__ new_info,
+    uint *old_idx) {
   uint i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) return;
 
@@ -896,11 +891,10 @@ void Orchestrator::reorder_gaussians() {
 
   if (m_rasterize_ctx.densification_info) {
     auto new_info = std::make_shared<GPUBuffer<float>>(n * 2);
-    densification_update<<<(n + 255) / 256, 256>>>(
-      m_rasterize_ctx.densification_info->data(),
-      new_info->data(),
-      n,
-      thrust::raw_pointer_cast(idx.data()));
+    linear_kernel(densification_update, 0, nullptr, n,
+                  (const float*) m_rasterize_ctx.densification_info->data(),
+                  new_info->data(),
+                  thrust::raw_pointer_cast(idx.data()));
     m_rasterize_ctx.densification_info = new_info;
   }
 }

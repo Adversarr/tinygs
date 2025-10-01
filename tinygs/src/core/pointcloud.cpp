@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "./happly.h"
+#include "tinygs/common.hpp"
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 #include <nvtx3/nvtx3.hpp>
@@ -107,7 +108,7 @@ PointCloud load_point_cloud(const std::string& filename) {
   }
 }
 
-void save_gaussians(const Gaussian3d& gs) {
+void save_ply(const std::string& filename, const Gaussian3d& gs) {
   auto& sh0 = gs.sh_coefficient_0;
   auto& sh_rest = gs.sh_coefficients_rest;
   auto& xyz = gs.means;
@@ -115,12 +116,112 @@ void save_gaussians(const Gaussian3d& gs) {
   auto& opa = gs.opacities;
   auto& rot = gs.rotations;
 
-  std::vector<std::array<double, 3>> vertex_positions;
-  std::vector<std::array<unsigned char, 3>> vertex_colors;
+  // Create PLY data object
+  happly::PLYData plyData;
 
-  happly::PLYData ply_out;
-  // ply_out.addVertexPositions()
-  ply_out.addElement("vertex", gs.means.size());
+  // Add vertex element
+  size_t num_points = xyz.size();
+  plyData.addElement("vertex", num_points);
+
+  // Extract and add xyz coordinates
+  std::vector<float> x, y, z;
+  x.reserve(num_points);
+  y.reserve(num_points);
+  z.reserve(num_points);
+
+  for (const auto& pos : xyz) {
+    x.push_back(pos.x);
+    y.push_back(pos.y);
+    z.push_back(pos.z);
+  }
+
+  plyData.getElement("vertex").addProperty<float>("x", x);
+  plyData.getElement("vertex").addProperty<float>("y", y);
+  plyData.getElement("vertex").addProperty<float>("z", z);
+
+  // Extract and add SH coefficients (DC components)
+  std::vector<float> f_dc_0, f_dc_1, f_dc_2;
+  f_dc_0.reserve(num_points);
+  f_dc_1.reserve(num_points);
+  f_dc_2.reserve(num_points);
+
+  for (const auto& dc : sh0) {
+    f_dc_0.push_back(dc.x);
+    f_dc_1.push_back(dc.y);
+    f_dc_2.push_back(dc.z);
+  }
+
+  plyData.getElement("vertex").addProperty<float>("f_dc_r", f_dc_0);
+  plyData.getElement("vertex").addProperty<float>("f_dc_g", f_dc_1);
+  plyData.getElement("vertex").addProperty<float>("f_dc_b", f_dc_2);
+
+  // Extract and add rest of SH coefficients
+  if (!sh_rest.empty()) {
+    // sh_rest is a flat array where each gaussian has 15 vec3 coefficients stored contiguously
+    constexpr int num_rest_coeffs = kMaxSphericalHarmonicsCoefficients - 1; // 15
+    
+    for (int coeff_idx = 0; coeff_idx < num_rest_coeffs; ++coeff_idx) {
+      std::vector<float> f_rest_x, f_rest_y, f_rest_z;
+      f_rest_x.reserve(num_points);
+      f_rest_y.reserve(num_points);
+      f_rest_z.reserve(num_points);
+
+      for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
+        size_t array_idx = point_idx * num_rest_coeffs + coeff_idx;
+        const vec3& coeff = sh_rest[array_idx];
+        f_rest_x.push_back(coeff.x);
+        f_rest_y.push_back(coeff.y);
+        f_rest_z.push_back(coeff.z);
+      }
+
+      plyData.getElement("vertex").addProperty<float>("f_rest_r_" + std::to_string(coeff_idx), f_rest_x);
+      plyData.getElement("vertex").addProperty<float>("f_rest_g_" + std::to_string(coeff_idx), f_rest_y);
+      plyData.getElement("vertex").addProperty<float>("f_rest_b_" + std::to_string(coeff_idx), f_rest_z);
+    }
+  }
+
+  // Add opacity
+  plyData.getElement("vertex").addProperty<float>("opacity", opa);
+
+  // Extract and add scale
+  std::vector<float> scale_0, scale_1, scale_2;
+  scale_0.reserve(num_points);
+  scale_1.reserve(num_points);
+  scale_2.reserve(num_points);
+
+  for (const auto& s : scal) {
+    scale_0.push_back(s.x);
+    scale_1.push_back(s.y);
+    scale_2.push_back(s.z);
+  }
+
+  plyData.getElement("vertex").addProperty<float>("scale_0", scale_0);
+  plyData.getElement("vertex").addProperty<float>("scale_1", scale_1);
+  plyData.getElement("vertex").addProperty<float>("scale_2", scale_2);
+
+  // Extract and add rotation
+  std::vector<float> rot_0, rot_1, rot_2, rot_3;
+  rot_0.reserve(num_points);
+  rot_1.reserve(num_points);
+  rot_2.reserve(num_points);
+  rot_3.reserve(num_points);
+
+  for (const auto& r : rot) {
+    rot_0.push_back(r.x);
+    rot_1.push_back(r.y);
+    rot_2.push_back(r.z);
+    rot_3.push_back(r.w);
+  }
+
+  plyData.getElement("vertex").addProperty<float>("rot_w", rot_0);
+  plyData.getElement("vertex").addProperty<float>("rot_x", rot_1);
+  plyData.getElement("vertex").addProperty<float>("rot_y", rot_2);
+  plyData.getElement("vertex").addProperty<float>("rot_z", rot_3);
+
+  // Write to file
+  plyData.write(filename, happly::DataFormat::Binary);
+  
+  log_info("Saved {} gaussians to PLY file: {}", num_points, filename);
 }
 
 }  // namespace tinygs

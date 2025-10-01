@@ -17,7 +17,6 @@
 #include "tinygs/common.hpp"
 
 namespace cg = cooperative_groups;
-
 namespace fast_gs::rasterization::kernels::forward {
 
 __device__ float3 convert_sh_to_color(
@@ -322,8 +321,12 @@ __global__ void preprocess_cu(
         dot(jwc_r1, jw_r1),
         dot(jwc_r1, jw_r2),
         dot(jwc_r2, jw_r2));
-    cov2d.x += config::dilation;
-    cov2d.z += config::dilation;
+
+    /// TrickGS: HW / 9Pi N
+    const float dilation = fmaxf(config::dilation, float(h * w) / (9.0f * config::math_pi * n_primitives));
+    cov2d.x += dilation;
+    cov2d.z += dilation;
+
     const float determinant = cov2d.x * cov2d.z - cov2d.y * cov2d.y;
     if (determinant < 1e-8f)
         active = false;

@@ -92,8 +92,8 @@
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 1000,
     "enable_progressive_resolution": true,
-    "resolution_milestones": [0, 3000, 6000],
-    "resolution_scales": [0.5, 0.75, 1.0],
+    "resolution_milestones": [0, 1500, 3000],
+    "resolution_scales": [0.25, 0.75, 1.0],
     "test_steps": [2000, 4000, 6000, 8000, 10000],
     "out_dir": "outputs",
     "export_rasterized": false
