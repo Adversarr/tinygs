@@ -1,21 +1,17 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <cxxopts.hpp>
+#include <iomanip>
 #include <iostream>
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 
-#include <cxxopts.hpp>
 #include "glm/gtx/string_cast.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
-#include "tinygs/core/pointcloud.hpp"
-#include "tinygs/cuda/common_host.hpp"
-#include "tinygs/dataloader/simple.hpp"
-#include "tinygs/dataset/png_folder.hpp"
-#include "tinygs/initialization/knn.hpp"
-#include "tinygs/rasterizer/default.hpp"
-#include "tinygs/rasterizer/fastgs.hpp"
-#include "tinygs/utils/file.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/random/pcg32.hpp"
+#include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/utils/image_format.hpp"
 
 int main(int argc, char** argv) {
@@ -106,11 +102,11 @@ int main(int argc, char** argv) {
   params.fwd_input = io.input;
   params.fwd_output = io.output;
 
-  auto fastgs_rasterizer = create_rasterizer(rasterizer);
-  fastgs_rasterizer->set_gaussians(gpu_gaussian);
+  auto rast = create_rasterizer(rasterizer);
+  rast->set_gaussians(gpu_gaussian);
   params.fwd_input = io.input;
   params.fwd_output = io.output;
-  fastgs_rasterizer->forward(params);
+  rast->forward(params);
 
   cv::Mat image(height, width, CV_8UC3);
   std::vector<float> image_host(width * height * 3);
@@ -170,6 +166,47 @@ int main(int argc, char** argv) {
 
   cv::imwrite("image.png", image);
   std::cout << "Image saved to image.png" << std::endl;
+
+  // backward pass
+  GPUMemory<float> out_image_grad(width * height * 3);
+  std::vector<float> out_image_grad_host(width * height * 3);
+  pcg32 rng(0, 1u);
+  for (int i = 0; i < width * height * 3; ++i) {
+    out_image_grad_host[i] = (static_cast<float>(rng.next_uint(256)) / 255.0f) / total_pixels;
+  }
+  out_image_grad.copy_from_host(out_image_grad_host);
+  std::shared_ptr<GPUGaussian3d> grad = gpu_gaussian->clone();
+  params.grad_output.image = Image(shape, ImageDataType::Float32, out_image_grad.data());
+  params.gaussians_grad = grad;
+  grad->memset(0);
+  rast->backward(params);
+
+  Gaussian3d gaussian_grad;
+  grad->copy_to_host(gaussian_grad);
+  const std::vector<vec3>& means_grad = gaussian_grad.means;
+  const std::vector<vec3>& scales_grad = gaussian_grad.scales;
+  const std::vector<vec4>& rotations_grad = gaussian_grad.rotations;
+  const std::vector<float>& opacities_grad = gaussian_grad.opacities;
+  const std::vector<vec3>& sh_coefficient_0_grad = gaussian_grad.sh_coefficient_0;
+
+  // Print gradients for the two Gaussians
+  std::cout << std::fixed << std::setprecision(6);
+  std::cout << "=== Gaussian Gradients ===" << std::endl;
+  for (size_t i = 0; i < means_grad.size() && i < 2; ++i) {
+    const auto& m = means_grad[i];
+    const auto& s = scales_grad[i];
+    const auto& r = rotations_grad[i];
+    float o = opacities_grad[i];
+    const auto& c0 = sh_coefficient_0_grad[i];
+
+    std::cout << "Gaussian " << i << ":" << std::endl;
+    std::cout << "  dMeans: [" << m.x << ", " << m.y << ", " << m.z << "]" << std::endl;
+    std::cout << "  dScales: [" << s.x << ", " << s.y << ", " << s.z << "]" << std::endl;
+    std::cout << "  dRotations: [" << r.x << ", " << r.y << ", " << r.z << ", " << r.w << "]" << std::endl;
+    std::cout << "  dOpacities: " << o << std::endl;
+    std::cout << "  dSH0: [" << c0.x << ", " << c0.y << ", " << c0.z << "]" << std::endl;
+  }
+
   cv::waitKey(0);
   return 0;
 }

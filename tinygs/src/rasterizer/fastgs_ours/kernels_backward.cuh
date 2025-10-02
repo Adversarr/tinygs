@@ -118,6 +118,8 @@ __global__ void preprocess_backward_cu(
     // load 3d mean
     const float3 mean3d = means[primitive_idx];
 
+    // printf("%d: dl_dsh0: %f %f %f\n", (int)primitive_idx, grad_sh_coefficients_0[primitive_idx].x, grad_sh_coefficients_0[primitive_idx].y, grad_sh_coefficients_0[primitive_idx].z);
+
     // sh evaluation backward
     const float3 dL_dmean3d_from_color = convert_sh_to_color_backward(
         sh_coefficients_rest, grad_sh_coefficients_0, grad_sh_coefficients_rest,
@@ -324,6 +326,9 @@ __global__ void preprocess_backward_cu(
     assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif
     grad_raw_rotations[primitive_idx] = dL_draw_rotation;
+
+	// printf("%d: dL_ddc: %f %f %f\n", 
+    //     (int)primitive_idx, grad_sh_coefficients_0[primitive_idx].x, grad_sh_coefficients_0[primitive_idx].y, grad_sh_coefficients_0[primitive_idx].z);
 
     if (densification_info != nullptr) {
 #ifndef NDEBUG
@@ -559,7 +564,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const float blending_weight = transmittance * alpha;
             const float one_minus_alpha = 1.0f - alpha;
             // color gradient
-            const float3 dL_dcolor = blending_weight * grad_color_pixel * color_grad_factor;
+            const float3 dL_dcolor = blending_weight * (grad_color_pixel * color_grad_factor);
             dL_dcolor_accum += dL_dcolor;
             color_pixel_after -= blending_weight * color;
             const float color_pixel_after_dot_grad_color_pixel = dot(color_pixel_after, grad_color_pixel);

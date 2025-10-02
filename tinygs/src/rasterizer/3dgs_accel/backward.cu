@@ -440,6 +440,7 @@ __global__ void preprocessCUDA_backward(
 	// of cov2D and following SH conversion also affects it.
 	dL_dmeans[idx] += dL_dmean;
 
+	// printf("%d: dL_dcolor: %f %f %f\n", (int)idx, dL_dcolor[idx * C], dL_dcolor[idx * C + 1], dL_dcolor[idx * C + 2]);
 	// Compute gradient updates due to computing colors from SHs
 	if (shs)
 		computeColorFromSH(idx, D, M, (glm::vec3*)means, *campos, dc, shs, clamped, (glm::vec3*)dL_dcolor, (glm::vec3*)dL_dmeans, (glm::vec3*)dL_ddc, (glm::vec3*)dL_dsh);
@@ -447,6 +448,8 @@ __global__ void preprocessCUDA_backward(
 	// Compute gradient updates due to computing covariance from scale/rotation
 	if (scales)
 		computeCov3D(idx, scales[idx], scale_modifier, rotations[idx], dL_dcov3D, dL_dscale, dL_drot);
+
+	// printf("%d: dL_ddc: %f %f %f\n", (int)idx, dL_ddc[idx * C], dL_ddc[idx * C + 1], dL_ddc[idx * C + 2]);
 }
 
 template<uint32_t C>
@@ -658,6 +661,8 @@ PerGaussianRenderCUDA_backward(
 			atomicAdd(&dL_dcolors[gaussian_idx * C + ch], Register_dL_dcolors[ch]);
 		}
 		atomicAdd(&dL_dinvdepths[gaussian_idx], Register_dL_dinvdepths);
+		// printf("%d: dL_dcolor_accum: %f %f %f\n", (int)gaussian_idx,
+		// 				Register_dL_dcolors[0], Register_dL_dcolors[1], Register_dL_dcolors[2]);
 	}
 }
 
@@ -695,7 +700,7 @@ void BACKWARD::preprocess(
 	// Somewhat long, thus it is its own kernel rather than being part of 
 	// "preprocess". When done, loss gradient w.r.t. 3D means has been
 	// modified and gradient w.r.t. 3D covariance matrix has been computed.	
-	computeCov2DCUDA_backward << <(P + 255) / 256, 256 >> > (
+	computeCov2DCUDA_backward <<<(P + 255) / 256, 256 >>> (
 		P,
 		means3D,
 		radii,
@@ -716,7 +721,7 @@ void BACKWARD::preprocess(
 	// Propagate gradients for remaining steps: finish 3D mean gradients,
 	// propagate color gradients to SH (if desireD), propagate 3D covariance
 	// matrix gradients to scale and rotation.
-	preprocessCUDA_backward<NUM_CHANNELS_3DGS> << < (P + 255) / 256, 256 >> > (
+	preprocessCUDA_backward<NUM_CHANNELS_3DGS> <<< (P + 255) / 256, 256 >>> (
 		P, D, M,
 		(float3*)means3D,
 		radii,

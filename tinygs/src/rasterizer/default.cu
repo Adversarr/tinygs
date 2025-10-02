@@ -320,7 +320,7 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
       
       // transform opacity gradients
       const float grad_sigmoid_opacity = grad_opacities_normalized[i];;
-      grad_opacities[i] = grad_sigmoid_opacity * activate_scale_deriv(opacities[i]);
+      grad_opacities[i] = grad_sigmoid_opacity * activate_opacity_deriv(opacities[i]);
       
       // transform scale gradients
       const vec3 grad_scale = grad_exp_scales[i];
