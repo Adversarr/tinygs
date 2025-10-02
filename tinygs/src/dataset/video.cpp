@@ -25,12 +25,19 @@ static std::unordered_map<uuid_t, uuid_t> load_video_info(const std::string& vid
   std::string line;
   while (std::getline(infile, line)) {
     std::istringstream iss(line);
-    uuid_t frame_uid, timestamp;
-    if (!(iss >> frame_uid >> timestamp)) {
+    uuid_t frame_uid, timestamp, unuse;
+    if (!(iss >> frame_uid >> timestamp >> unuse)) {
       throw std::runtime_error("Malformed line in video info file: " + line);
     }
-    // frame_info_list[frame_uid] = timestamp;
+    if (frame_info_list.find(timestamp) != frame_info_list.end()) {
+      throw std::runtime_error("Duplicate timestamp in video info file: " + std::to_string(timestamp));
+    }
+
     frame_info_list[timestamp] = frame_uid;
+
+    if (frame_uid != frame_info_list.size()) {
+      log_warning("Frame uid {} does not match expected index {}", frame_uid, frame_info_list.size());
+    }
   }
 
   return frame_info_list;
