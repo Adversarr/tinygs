@@ -206,8 +206,8 @@ __global__ void preprocess_backward_cu(
         grad_conic[2 * n_primitives + primitive_idx]);
     const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
                 2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
-                // GPT-5 claims here should have a 2.0f
-                2.0f * (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
+                // GPT-5 claims here should have a 2.0f, but the reference does not have it
+                /* 2.0f * */ (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
                 2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
 
     // 3d covariance gradient
@@ -321,7 +321,11 @@ __global__ void preprocess_backward_cu(
     // The following formula for quaternion gradient appears to be a custom implementation.
     // It's recommended to verify its correctness against the original 3DGS paper or standard quaternion calculus references.
     const float dL_dq_norm_helper = qxx * dL_dqxx + qyy * dL_dqyy + qzz * dL_dqzz + qxy * dL_dqxy + qxz * dL_dqxz + qyz * dL_dqyz + qrx * dL_dqrx + qry * dL_dqry + qrz * dL_dqrz;
-    const float4 dL_draw_rotation = 2.0f * make_float4(qx * dL_dqrx + qy * dL_dqry + qz * dL_dqrz - qr * dL_dq_norm_helper, 2.0f * qx * dL_dqxx + qy * dL_dqxy + qz * dL_dqxz + qr * dL_dqrx - qx * dL_dq_norm_helper, 2.0f * qy * dL_dqyy + qx * dL_dqxy + qz * dL_dqyz + qr * dL_dqry - qy * dL_dq_norm_helper, 2.0f * qz * dL_dqzz + qx * dL_dqxz + qy * dL_dqyz + qr * dL_dqrz - qz * dL_dq_norm_helper) / q_norm_sq;
+    const float4 dL_draw_rotation = 2.0f * make_float4(
+        qx * dL_dqrx + qy * dL_dqry + qz * dL_dqrz - qr * dL_dq_norm_helper,
+        2.0f * qx * dL_dqxx + qy * dL_dqxy + qz * dL_dqxz + qr * dL_dqrx - qx * dL_dq_norm_helper,
+        2.0f * qy * dL_dqyy + qx * dL_dqxy + qz * dL_dqyz + qr * dL_dqry - qy * dL_dq_norm_helper,
+        2.0f * qz * dL_dqzz + qx * dL_dqxz + qy * dL_dqyz + qr * dL_dqrz - qz * dL_dq_norm_helper) / (q_norm_sq * __fsqrt_rn(q_norm_sq));
 #ifndef NDEBUG
     assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif

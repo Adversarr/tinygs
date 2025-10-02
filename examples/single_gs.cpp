@@ -45,8 +45,8 @@ int main(int argc, char** argv) {
   using namespace tinygs;
   Gaussian3d gaussian;
   gaussian.means.push_back({0.0f, 0.0f, 0.0f});
-  gaussian.scales.push_back({scale1, scale1, scale1});
-  gaussian.rotations.push_back({1.0f, 0.0f, 0.0f, 0.0f});
+  gaussian.scales.push_back({scale1, -scale1, 0.3f * scale1});
+  gaussian.rotations.push_back(/* glm::normalize */(vec4{-1.0f, 0.0f, 1.0f, 1.0f} * 3.0f));
   // Use partial opacity to allow blending
   gaussian.opacities.push_back(opacity1);
   gaussian.sh_coefficient_0.push_back({0.0f, 0.0f, 1.0f});
@@ -56,8 +56,8 @@ int main(int argc, char** argv) {
 
   // Second Gaussian: slightly behind the first and different color
   gaussian.means.push_back({0.5f, 0.3f, 0.1f});
-  gaussian.scales.push_back({scale2, scale2, scale2});
-  gaussian.rotations.push_back({1.0f, 0.0f, 0.0f, 0.0f});
+  gaussian.scales.push_back({scale2, -scale2, 0.3f * scale2});
+  gaussian.rotations.push_back(/* glm::normalize */(vec4{1.0f, 1.0f, 0.0f, -1.0f} * 3.0f));
   gaussian.opacities.push_back(opacity2);
   gaussian.sh_coefficient_0.push_back({1.0f, 0.0f, 0.0f});
   for (int i = 0; i < 15; ++i) {
@@ -164,9 +164,6 @@ int main(int argc, char** argv) {
   std::cout << "Avg color: R=" << avg_r << " G=" << avg_g << " B=" << avg_b << std::endl;
   std::cout << "Std color: R=" << std_r << " G=" << std_g << " B=" << std_b << std::endl;
 
-  cv::imwrite("image.png", image);
-  std::cout << "Image saved to image.png" << std::endl;
-
   // backward pass
   GPUMemory<float> out_image_grad(width * height * 3);
   std::vector<float> out_image_grad_host(width * height * 3);
@@ -206,7 +203,5 @@ int main(int argc, char** argv) {
     std::cout << "  dOpacities: " << o << std::endl;
     std::cout << "  dSH0: [" << c0.x << ", " << c0.y << ", " << c0.z << "]" << std::endl;
   }
-
-  cv::waitKey(0);
   return 0;
 }
