@@ -190,7 +190,8 @@ __global__ void preprocess_backward_cu(
 
     // 2d covariance gradient
     /// TrickGS: HW / 9Pi N
-    const float dilation = fmaxf(config::dilation, float(h * w) / (9.0f * config::math_pi * n_primitives));
+    // const float dilation = fmaxf(config::dilation, float(h * w) / (9.0f * config::math_pi * n_primitives));
+    const float dilation = config::dilation;
     const float a = dot(jwc_r1, jw_r1) + dilation, b = dot(jwc_r1, jw_r2), c = dot(jwc_r2, jw_r2) + dilation;
     const float aa = a * a, bb = b * b, cc = c * c;
     const float ac = a * c, ab = a * b, bc = b * c;

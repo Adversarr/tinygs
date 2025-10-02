@@ -238,7 +238,8 @@ __global__ void preprocess_cu(
 
     // load opacity
     pipeline.consumer_wait();
-    const float raw_opacity = shm_opacities[block.thread_rank()];
+    // const float raw_opacity = shm_opacities[block.thread_rank()];
+    const float raw_opacity = raw_opacities[primitive_idx];
     pipeline.consumer_release();
 
     const float opacity = tinygs::activate_opacity(raw_opacity);
@@ -247,14 +248,16 @@ __global__ void preprocess_cu(
 
     // compute 3d covariance from raw scale and rotation
     pipeline.consumer_wait();
-    const float3 raw_scale = shm_raw_scales[block.thread_rank()];
+    // const float3 raw_scale = shm_raw_scales[block.thread_rank()];
+    const float3 raw_scale = raw_scales[primitive_idx];
     pipeline.consumer_release();
     const float3 variance = make_float3(
         tinygs::activate_scale(raw_scale.x) * tinygs::activate_scale(raw_scale.x),
         tinygs::activate_scale(raw_scale.y) * tinygs::activate_scale(raw_scale.y), 
         tinygs::activate_scale(raw_scale.z) * tinygs::activate_scale(raw_scale.z));
     pipeline.consumer_wait();
-    auto [qr, qx, qy, qz] = shm_raw_rotations[block.thread_rank()];
+    // auto [qr, qx, qy, qz] = shm_raw_rotations[block.thread_rank()];
+    auto [qr, qx, qy, qz] = raw_rotations[primitive_idx];
     pipeline.consumer_release();
 
     const float qrr_raw = qr * qr, qxx_raw = qx * qx, qyy_raw = qy * qy, qzz_raw = qz * qz;
@@ -323,7 +326,8 @@ __global__ void preprocess_cu(
         dot(jwc_r2, jw_r2));
 
     /// TrickGS: HW / 9Pi N
-    const float dilation = fmaxf(config::dilation, float(h * w) / (9.0f * config::math_pi * n_primitives));
+    // const float dilation = fmaxf(config::dilation, float(h * w) / (9.0f * config::math_pi * n_primitives));
+    const float dilation = config::dilation;
     cov2d.x += dilation;
     cov2d.z += dilation;
 
@@ -387,6 +391,10 @@ __global__ void preprocess_cu(
         sh_coefficients_0, sh_coefficients_rest,
         mean3d, cam_position[0],
         primitive_idx, active_sh_bases, total_bases_sh_rest);
+
+    // printf("%d: conic.x=%.6f, .y=%.6f, .z=%6f, opacity=%.6f\n", 
+    //     (int) primitive_idx,
+    //     conic.x, conic.y, conic.z, opacity);
 
     const uint offset = atomicAdd(n_visible_primitives, 1);
     const uint depth_key = __float_as_uint(depth);

@@ -5,6 +5,7 @@
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 
+#include <cxxopts.hpp>
 #include "glm/gtx/string_cast.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/core/pointcloud.hpp"
@@ -17,24 +18,51 @@
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/image_format.hpp"
 
-int main() {
+int main(int argc, char** argv) {
+  cxxopts::Options options("single_gs", "Single Gaussian Splatting");
+  options.add_options()
+    ("h,help", "Print help")
+    ("r,rasterizer", "Rasterizer to use", cxxopts::value<std::string>()->default_value("default"))
+    ("o1,opacity1", "Opacity of the Gaussian 1", cxxopts::value<float>()->default_value("0.6"))
+    ("o2,opacity2", "Opacity of the Gaussian 2", cxxopts::value<float>()->default_value("0.6"))
+    ("s1,scale1", "Scale of the Gaussian 1", cxxopts::value<float>()->default_value("0.1"))
+    ("s2,scale2", "Scale of the Gaussian 2", cxxopts::value<float>()->default_value("0.1"));
+
+  auto result = options.parse(argc, argv);
+  if (result.count("help")) {
+    std::cout << options.help() << std::endl;
+    return 0;
+  }
+
+  float opacity1 = result["opacity1"].as<float>();
+  float opacity2 = result["opacity2"].as<float>();
+  float scale1 = result["scale1"].as<float>();
+  float scale2 = result["scale2"].as<float>();
+  std::string rasterizer = result["rasterizer"].as<std::string>();
+
+  std::cout<< "opacity1: " << opacity1 << std::endl;
+  std::cout<< "opacity2: " << opacity2 << std::endl;
+  std::cout<< "scale1: " << scale1 << std::endl;
+  std::cout<< "scale2: " << scale2 << std::endl;
+  std::cout<< "rasterizer: " << rasterizer << std::endl;
+
   using namespace tinygs;
   Gaussian3d gaussian;
   gaussian.means.push_back({0.0f, 0.0f, 0.0f});
-  gaussian.scales.push_back({0.1f, 0.1f, 0.1f});
-  gaussian.rotations.push_back({0.0f, 0.0f, 0.0f, 1.0f});
+  gaussian.scales.push_back({scale1, scale1, scale1});
+  gaussian.rotations.push_back({1.0f, 0.0f, 0.0f, 0.0f});
   // Use partial opacity to allow blending
-  gaussian.opacities.push_back(0.6f);
+  gaussian.opacities.push_back(opacity1);
   gaussian.sh_coefficient_0.push_back({0.0f, 0.0f, 1.0f});
   for (int i = 0; i < 15; ++i) {
     gaussian.sh_coefficients_rest.push_back({0.0f, 0.0f, 0.0f});
   }
 
   // Second Gaussian: slightly behind the first and different color
-  gaussian.means.push_back({0.3f, 0.3f, 0.2f});
-  gaussian.scales.push_back({0.1f, 0.1f, 0.1f});
-  gaussian.rotations.push_back({0.0f, 0.0f, 0.0f, 1.0f});
-  gaussian.opacities.push_back(0.6f);
+  gaussian.means.push_back({0.5f, 0.3f, 0.1f});
+  gaussian.scales.push_back({scale2, scale2, scale2});
+  gaussian.rotations.push_back({1.0f, 0.0f, 0.0f, 0.0f});
+  gaussian.opacities.push_back(opacity2);
   gaussian.sh_coefficient_0.push_back({1.0f, 0.0f, 0.0f});
   for (int i = 0; i < 15; ++i) {
     gaussian.sh_coefficients_rest.push_back({0.0f, 0.0f, 0.0f});
@@ -42,8 +70,8 @@ int main() {
   auto gpu_gaussian = std::make_shared<GPUGaussian3d>();
   gpu_gaussian->copy_from_host(gaussian);
 
-  int width = 1280;
-  int height = 720;
+  int width = 480;
+  int height = 360;
 
   tinygs::GPUBatchInputOutput io;
   io.input.width = width;
@@ -55,8 +83,8 @@ int main() {
     tinygs::CameraModel::Pinhole,
     width,
     height,
-    /*fx=*/1000.0f,
-    /*fy=*/1000.0f,
+    /*fx=*/375.0f,
+    /*fy=*/375.0f,
     /*cx=*/width / 2.0f,
     /*cy=*/height / 2.0f,
   };
@@ -78,12 +106,11 @@ int main() {
   params.fwd_input = io.input;
   params.fwd_output = io.output;
 
-  FastGSRasterizer fastgs_rasterizer;
-  fastgs_rasterizer.set_gaussians(gpu_gaussian);
+  auto fastgs_rasterizer = create_rasterizer(rasterizer);
+  fastgs_rasterizer->set_gaussians(gpu_gaussian);
   params.fwd_input = io.input;
   params.fwd_output = io.output;
-
-  fastgs_rasterizer.forward(params);
+  fastgs_rasterizer->forward(params);
 
   cv::Mat image(height, width, CV_8UC3);
   std::vector<float> image_host(width * height * 3);
@@ -99,7 +126,50 @@ int main() {
   shape.channel = 3;
   to_cv2(image.data, image_host_8uc3.data(), shape);
 
-  cv::imshow("image", image);
+  // Compute comprehensive image statistics for each channel
+  float max_r = 0.0f, max_g = 0.0f, max_b = 0.0f;
+  float min_r = 1.0f, min_g = 1.0f, min_b = 1.0f;
+  float sum_r = 0.0f, sum_g = 0.0f, sum_b = 0.0f;
+  float sum_sq_r = 0.0f, sum_sq_g = 0.0f, sum_sq_b = 0.0f;
+  
+  for (int i = 0; i < width * height; ++i) {
+    float r = image_host[i * 3 + 0];
+    float g = image_host[i * 3 + 1];
+    float b = image_host[i * 3 + 2];
+    
+    max_r = std::max(max_r, r);
+    max_g = std::max(max_g, g);
+    max_b = std::max(max_b, b);
+    
+    min_r = std::min(min_r, r);
+    min_g = std::min(min_g, g);
+    min_b = std::min(min_b, b);
+    
+    sum_r += r;
+    sum_g += g;
+    sum_b += b;
+    
+    sum_sq_r += r * r;
+    sum_sq_g += g * g;
+    sum_sq_b += b * b;
+  }
+  
+  int total_pixels = width * height;
+  float avg_r = sum_r / total_pixels;
+  float avg_g = sum_g / total_pixels;
+  float avg_b = sum_b / total_pixels;
+  
+  float std_r = std::sqrt(sum_sq_r / total_pixels - avg_r * avg_r);
+  float std_g = std::sqrt(sum_sq_g / total_pixels - avg_g * avg_g);
+  float std_b = std::sqrt(sum_sq_b / total_pixels - avg_b * avg_b);
+  
+  std::cout << "Max color: R=" << max_r << " G=" << max_g << " B=" << max_b << std::endl;
+  std::cout << "Min color: R=" << min_r << " G=" << min_g << " B=" << min_b << std::endl;
+  std::cout << "Avg color: R=" << avg_r << " G=" << avg_g << " B=" << avg_b << std::endl;
+  std::cout << "Std color: R=" << std_r << " G=" << std_g << " B=" << std_b << std::endl;
+
+  cv::imwrite("image.png", image);
+  std::cout << "Image saved to image.png" << std::endl;
   cv::waitKey(0);
   return 0;
 }

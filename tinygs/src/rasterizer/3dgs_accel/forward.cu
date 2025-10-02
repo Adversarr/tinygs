@@ -258,7 +258,10 @@ __global__ void preprocessCUDA(int P, int D, int M,
 
 
 	conic_opacity[idx] = { conic.x, conic.y, conic.z, opacity * h_convolution_scaling };
-
+	
+	// printf("%d: conic.x=%.6f, .y=%.6f, .z=%6f, opacity=%.6f\n", 
+	// 		(int) idx,
+	// 		conic.x, conic.y, conic.z, opacity);
 
 	tiles_touched[idx] = (rect_max.y - rect_min.y) * (rect_max.x - rect_min.x);
 }
