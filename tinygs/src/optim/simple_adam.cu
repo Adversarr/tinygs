@@ -76,6 +76,7 @@ __global__ static void adam(
     float gradient_scale,
     float bias_correction1,     // (1 - beta_1^t)
     float bias_correction2_sqrt, // sqrt(1 - beta_2^t)
+    float max_grad_1,
     DecayFunc f = DecayFunc()
 ) {
   const auto block_first = blockIdx.x * blockDim.x;
@@ -86,7 +87,10 @@ __global__ static void adam(
 
   // Load
   float theta = thetas[idx];
-  const float g = f(theta, gradient_scale * thetas_grad[idx]);
+  float g = f(theta, gradient_scale * thetas_grad[idx]);
+  if (max_grad_1 != 0.0f) {
+    g = copysignf(fminf(fabsf(g), max_grad_1), g);
+  }
   float m = thetas_first[idx];
   float v = thetas_second[idx];
   const float g_sq = g * g;
@@ -123,6 +127,7 @@ __global__ static void adamw(
     float gradient_scale,
     float bias_correction1,     // (1 - beta_1^t)
     float bias_correction2_sqrt, // sqrt(1 - beta_2^t)
+    float max_grad_1,
     DecayFunc f = DecayFunc()
 ) {
   const auto block_first = blockIdx.x * blockDim.x;
@@ -134,7 +139,10 @@ __global__ static void adamw(
   // Load
   float theta = thetas[idx];
   theta -= lr * f(theta);
-  const float g = gradient_scale * thetas_grad[idx];
+  float g = gradient_scale * thetas_grad[idx];
+  if (max_grad_1 != 0.0f) {
+    g = copysignf(fminf(fabsf(g), max_grad_1), g);
+  }
   float m = thetas_first[idx];
   float v = thetas_second[idx];
   const float g_sq = g * g;
@@ -305,11 +313,12 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_means_first.data()),
       (float*) thrust::raw_pointer_cast(m_means_second.data()),
       m_adam_params,
-      m_params.means_lr * scene_scale,
+      m_params.means_lr * scene_scale * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      m_params.max_grad_1
     );
 
     // Opacities
@@ -319,11 +328,12 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_opacities_first.data()),
       (float*) thrust::raw_pointer_cast(m_opacities_second.data()),
       m_adam_params,
-      m_params.opacities_lr,
+      m_params.opacities_lr * m_global_lr,
       n,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
+      m_params.max_grad_1,
       OpacityDecay(m_params.opacities_l1 * g_scale)
     );
 
@@ -334,11 +344,12 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_rotations_first.data()),
       (float*) thrust::raw_pointer_cast(m_rotations_second.data()),
       m_adam_params,
-      m_params.rotations_lr,
+      m_params.rotations_lr * m_global_lr,
       n * 4,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      m_params.max_grad_1
     );
 
     // Scales
@@ -348,11 +359,12 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_scales_first.data()),
       (float*) thrust::raw_pointer_cast(m_scales_second.data()),
       m_adam_params,
-      m_params.scales_lr,
+      m_params.scales_lr * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
+      m_params.max_grad_1,
       ScaleDecay(m_params.scales_l1 * g_scale)
     );
 
@@ -363,11 +375,12 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
       m_adam_params,
-      m_params.shs_lr,
+      m_params.shs_lr * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      m_params.max_grad_1
     );
 
     // SH Coefficients Rest
@@ -378,11 +391,12 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale,
+      m_params.shs_lr * kShRestScale * m_global_lr,
       sh_rest_size,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      m_params.max_grad_1
     );
     maybe_sync(stream);
   }
@@ -427,11 +441,12 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_means_first.data()),
       (float*) thrust::raw_pointer_cast(m_means_second.data()),
       m_adam_params,
-      m_params.means_lr * scene_scale,
+      m_params.means_lr * scene_scale * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      m_params.max_grad_1
     );
 
     // Opacities
@@ -441,11 +456,12 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_opacities_first.data()),
       (float*) thrust::raw_pointer_cast(m_opacities_second.data()),
       m_adam_params,
-      m_params.opacities_lr,
+      m_params.opacities_lr * m_global_lr,
       n,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
+      m_params.max_grad_1,
       OpacityDecay(m_params.opacities_l1 * g_scale)
     );
 
@@ -456,11 +472,12 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_rotations_first.data()),
       (float*) thrust::raw_pointer_cast(m_rotations_second.data()),
       m_adam_params,
-      m_params.rotations_lr,
+      m_params.rotations_lr * m_global_lr,
       n * 4,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      m_params.max_grad_1
     );
 
     // Scales
@@ -470,11 +487,12 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_scales_first.data()),
       (float*) thrust::raw_pointer_cast(m_scales_second.data()),
       m_adam_params,
-      m_params.scales_lr,
+      m_params.scales_lr * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
+      m_params.max_grad_1,
       ScaleDecay(m_params.scales_l1 * g_scale)
     );
 
@@ -485,11 +503,12 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
       m_adam_params,
-      m_params.shs_lr,
+      m_params.shs_lr * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      m_params.max_grad_1
     );
 
     // SH Coefficients Rest
@@ -500,11 +519,12 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
       (float*) thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale,
+      m_params.shs_lr * kShRestScale * m_global_lr,
       sh_rest_size,
       gradient_scale,
       bias_correction1,
-      bias_correction2_sqrt
+      bias_correction2_sqrt,
+      m_params.max_grad_1
     );
     maybe_sync(stream);
   }

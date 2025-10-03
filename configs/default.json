@@ -64,7 +64,7 @@
     "type": "fastgs"
   },
   "strategy": {
-    "duplicate_grad_threshold": 0.0008,
+    "duplicate_grad_threshold": 0.0004,
     "duplicate_scale_threshold": 0.005,
     "end_refine": 25000,
     "max_num_gaussians": 3000000,
@@ -92,7 +92,7 @@
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 1000,
-    "enable_progressive_resolution": true,
+    "enable_progressive_resolution": false,
     "record_trajectory": true,
     "resolution_milestones": [0, 3000, 6000, 10000],
     "resolution_scales": [0.25, 0.5, 0.75, 1.0],

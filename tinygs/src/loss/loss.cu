@@ -2,6 +2,8 @@
 #include <thrust/reduce.h>
 #include "tinygs/loss/loss.hpp"
 #include "tinygs/loss/l1.hpp"
+#include "tinygs/loss/l2.hpp"
+#include "tinygs/loss/huber.hpp"
 #include "tinygs/loss/fused_ssim.hpp"
 #include "tinygs/loss/psnr.hpp"
 #include <algorithm>
@@ -13,6 +15,10 @@ std::unique_ptr<LossBase> create_loss(const std::string& loss_type) {
   
   if (lower_loss_type == "l1") {
     return std::make_unique<L1Loss>();
+  } else if (lower_loss_type == "l2") {
+    return std::make_unique<L2Loss>();
+  } else if (lower_loss_type == "huber") {
+    return std::make_unique<HuberLoss>();
   } else if (lower_loss_type == "fused_ssim") {
     return std::make_unique<FusedSSIMLoss>();
   } else {

@@ -7,6 +7,8 @@ namespace tinygs {
 
 struct GaussianOptimizationParams {
   /// Shared parameters
+  // Absolute gradient clipping threshold (L1 per element).
+  // Set to 0.0 to disable clipping.
   float max_grad_1 = 1.0f;
   bool skip_zero_grad = false;
 

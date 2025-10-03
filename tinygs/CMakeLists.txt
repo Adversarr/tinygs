@@ -30,6 +30,8 @@ set(TINYGS_SOURCES
     # Loss functions
     "src/loss/fused_ssim.cu"
     "src/loss/l1.cu"
+    "src/loss/l2.cu"
+    "src/loss/huber.cu"
     "src/loss/loss.cu"
     "src/loss/psnr.cu"
     
