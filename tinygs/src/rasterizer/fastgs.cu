@@ -181,41 +181,41 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     m_impl->instance_primitive_indices_selector = instance_primitive_indices_selector;
 }
 
-void FastGSRasterizer::backward(const RasterizeContext &params) {
+void FastGSRasterizer::backward(const RasterizeContext &ctx) {
   NVTX3_FUNC_RANGE();
-  if (!m_gaussians || !params.gaussians_grad) {
+  if (!m_gaussians || !ctx.gaussians_grad) {
     throw std::runtime_error("Gaussians or gradient gaussians not set");
   }
   const auto n_gaussians = m_gaussians->size();
   char* grad_mean2d_helper = m_impl->alloc("grad_mean2d_helper", sizeof(float2) * n_gaussians);
   char* grad_conic_helper = m_impl->alloc("grad_conic_helper", sizeof(float3) * n_gaussians);
   char* grad_w2c_per_gs = m_impl->alloc("grad_w2c_per_gs", sizeof(float4) * 4 * n_gaussians);
-  CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, params.stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, params.stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(&m_impl->device_block.at(0).w2c_grad, 0, sizeof(mat4x4), params.stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, ctx.stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, ctx.stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(&m_impl->device_block.at(0).w2c_grad, 0, sizeof(mat4x4), ctx.stream));
 
-  float fx = params.fwd_input.K[0][0];
-  float fy = params.fwd_input.K[1][1];
-  float cx = params.fwd_input.K[2][0];
-  float cy = params.fwd_input.K[2][1];
+  float fx = ctx.fwd_input.K[0][0];
+  float fy = ctx.fwd_input.K[1][1];
+  float cx = ctx.fwd_input.K[2][0];
+  float cy = ctx.fwd_input.K[2][1];
 
   // zero grad buffer.
-  auto& means_grad = params.gaussians_grad->means();
-  auto& scales_grad = params.gaussians_grad->scales();
-  auto& rotations_grad = params.gaussians_grad->rotations();
-  auto& opacities_grad = params.gaussians_grad->opacities();
-  auto& sh_coeffs_0_grad = params.gaussians_grad->sh_coefficient_0();
-  auto& sh_coeffs_rest_grad = params.gaussians_grad->sh_coefficients_rest();
+  auto& means_grad = ctx.gaussians_grad->means();
+  auto& scales_grad = ctx.gaussians_grad->scales();
+  auto& rotations_grad = ctx.gaussians_grad->rotations();
+  auto& opacities_grad = ctx.gaussians_grad->opacities();
+  auto& sh_coeffs_0_grad = ctx.gaussians_grad->sh_coefficient_0();
+  auto& sh_coeffs_rest_grad = ctx.gaussians_grad->sh_coefficients_rest();
 
   float* densification_info = nullptr;
-  if (params.densification_info) {
-    densification_info = params.densification_info->data();
+  if (ctx.densification_info) {
+    densification_info = ctx.densification_info->data();
   }
   
   int activated_bases = (m_gaussians->get_sh_degree() + 1) * (m_gaussians->get_sh_degree() + 1);
   fast_gs::rasterization::backward(
-    /* grad_image */ static_cast<float*>(params.grad_output.image.data),
-    /* image */ static_cast<float*>(params.fwd_output.image.data),
+    /* grad_image */ static_cast<float*>(ctx.grad_output.image.data),
+    /* image */ static_cast<float*>(ctx.fwd_output.image.data),
     /* means */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
     /* scales */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
     /* rotations */ reinterpret_cast<const float4*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
@@ -245,13 +245,13 @@ void FastGSRasterizer::backward(const RasterizeContext &params) {
     /* instance_primitive_indices_selector */ m_impl->instance_primitive_indices_selector,
     /* active_sh_bases */ activated_bases,
     /* total_bases_sh_rest */ kMaxSphericalHarmonicsCoefficients - 1,
-    /* width */ params.fwd_input.width,
-    /* height */ params.fwd_input.height,
+    /* width */ ctx.fwd_input.width,
+    /* height */ ctx.fwd_input.height,
     /* fx */ fx,
     /* fy */ fy,
     /* cx */ cx,
     /* cy */ cy,
-    /* stream */ params.stream
+    /* stream */ ctx.stream
   );
 }
 

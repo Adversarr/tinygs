@@ -252,13 +252,13 @@ void SimpleAdam::step(float scale, cudaStream_t stream) {
     cudaStreamSynchronize(stream);
 
     if (m_global_steps % g_momentum_log_interval == 0) {
-      std::printf("[SimpleAdam][step %llu] Momentum L1 | means=%.6g opacities=%.6g rotations=%.6g scales=%.6g sh0=%.6g shRest=%.6g total=%.6g\n",
+      std::printf("[SimpleAdam][step %llu] Momentum L1 | means=%.4g opacities=%.4g rotations=%.4g scales=%.4g sh0=%.4g shRest=%.4g total=%.4g\n",
                   (unsigned long long)m_global_steps,
                   m_means_l1, m_opacities_l1, m_rot_l1, m_scales_l1, m_sh0_l1, m_shrest_l1,
                   m_means_l1 + m_opacities_l1 + m_rot_l1 + m_scales_l1 + m_sh0_l1 + m_shrest_l1);
     }
     if (m_global_steps % g_gradient_log_interval == 0) {
-      std::printf("[SimpleAdam][step %llu] Grad L1     | means=%.6g opacities=%.6g rotations=%.6g scales=%.6g sh0=%.6g shRest=%.6g total=%.6g\n",
+      std::printf("[SimpleAdam][step %llu] Grad L1     | means=%.4g opacities=%.4g rotations=%.4g scales=%.4g sh0=%.4g shRest=%.4g total=%.4g\n",
                   (unsigned long long)m_global_steps,
                   g_means_l1, g_opacities_l1, g_rot_l1, g_scales_l1, g_sh0_l1, g_shrest_l1,
                   g_means_l1 + g_opacities_l1 + g_rot_l1 + g_scales_l1 + g_sh0_l1 + g_shrest_l1);

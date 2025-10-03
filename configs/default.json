@@ -42,8 +42,8 @@
     "psnr"
   ],
   "optimizer": {
-    "beta1": 0.9,
-    "beta2": 0.999,
+    "beta1": 0.7,
+    "beta2": 0.95,
     "enable_adabound": true,
     "gamma": 1e-3,
     "epsilon": 1.0e-8,
@@ -64,7 +64,7 @@
     "type": "fastgs"
   },
   "strategy": {
-    "duplicate_grad_threshold": 0.0002,
+    "duplicate_grad_threshold": 0.0008,
     "duplicate_scale_threshold": 0.005,
     "end_refine": 25000,
     "max_num_gaussians": 3000000,
@@ -84,7 +84,7 @@
     "early_stopping_threshold": 1.0e-6,
     "enable_early_stopping": false,
     "far_plane": 100.0,
-    "grad_scaler": 10.0,
+    "grad_scaler": 1.0,
     "log_interval": 100,
     "max_sh_degree": 3,
     "max_steps": 30000,
@@ -93,9 +93,10 @@
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 1000,
     "enable_progressive_resolution": true,
+    "record_trajectory": true,
     "resolution_milestones": [0, 3000, 6000, 10000],
     "resolution_scales": [0.25, 0.5, 0.75, 1.0],
-    "test_steps": [0, 2000, 5000, 7000, 15000, 30000],
+    "test_steps": [2000, 5000, 7000, 15000, 30000],
     "out_dir": "outputs",
     "export_rasterized": true
   }

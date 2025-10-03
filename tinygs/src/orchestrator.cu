@@ -113,6 +113,7 @@ json OrchestratorConfig::to_json() const {
   j["grad_scaler"] = grad_scaler;
   j["out_dir"] = out_dir;
   j["export_rasterized"] = export_rasterized;
+  j["record_trajectory"] = record_trajectory;
   j["enable_progressive_resolution"] = enable_progressive_resolution;
   j["resolution_milestones"] = resolution_milestones;
   j["resolution_scales"] = resolution_scales;
@@ -147,6 +148,7 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("grad_scaler")) grad_scaler = j["grad_scaler"].get<float>();
   if (j.contains("out_dir")) out_dir = j["out_dir"].get<std::string>();
   if (j.contains("export_rasterized")) export_rasterized = j["export_rasterized"].get<bool>();
+  if (j.contains("record_trajectory")) record_trajectory = j["record_trajectory"].get<bool>();
   if (j.contains("enable_progressive_resolution")) enable_progressive_resolution = j["enable_progressive_resolution"].get<bool>();
   if (j.contains("resolution_milestones")) {
     try {
@@ -657,10 +659,42 @@ void Orchestrator::evaluate_losses(const GPUBatchInputOutput& data) {
     throw std::runtime_error("Prediction and target image shapes do not match in loss evaluation.");
   }
 
+  float last_accum_loss = 0;
+  std::map<std::string, float> loss_values;
   for (const auto& loss_component : m_losses) {
     // Apply gradient scaler to loss weight
     const float w = loss_component.weight * m_config.grad_scaler;
     loss_component.loss->evaluate(m_loss_ctx, w);
+
+    if (m_config.record_trajectory) {
+      float accum_loss = accumulate_loss();
+      loss_values[loss_component.loss->name()] = accum_loss - last_accum_loss;
+      last_accum_loss = accum_loss;
+    }
+  }
+
+  if (m_config.record_trajectory) {
+    m_state.current_loss = last_accum_loss;
+    // write to file.
+    const auto openmode = m_state.current_step == 0 ? std::ios::out : std::ios::app;
+    std::ofstream loss_file(m_config.out_dir + "/loss.csv", openmode);
+    if (!loss_file.is_open()) {
+      log_error("Failed to open {}/loss.csv for writing.", m_config.out_dir);
+    }
+
+    if (m_state.current_step == 0) {
+      loss_file << "step,timestamp,";
+      for (const auto& loss_name : loss_values) {
+        loss_file << loss_name.first << ",";
+      }
+      loss_file << "total_loss" << std::endl;
+    } else {
+      loss_file << m_state.current_step << "," << m_rasterize_ctx.fwd_input.timestamp << ",";
+      for (const auto& loss_name : loss_values) {
+        loss_file << loss_name.second << ",";
+      }
+      loss_file << last_accum_loss << std::endl;
+    }
   }
 }
 

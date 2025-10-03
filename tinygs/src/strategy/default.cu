@@ -2,6 +2,9 @@
 #include <thrust/host_vector.h>
 #include <thrust/random.h>
 #include <thrust/transform_reduce.h>
+#include <thrust/device_ptr.h>
+#include <thrust/extrema.h>
+#include <thrust/reduce.h>
 
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/random/device.cuh"
@@ -87,6 +90,60 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
 
   constexpr int kDuplicate = 1;
   constexpr int kSplit = 2;
+
+#ifndef NDEBUG
+  // Compute gradient statistics
+  GPUBuffer<float> gradient_values(ctx.stream, num_gaussians);
+  auto *d_gradient_values = thrust::raw_pointer_cast(gradient_values.data());
+  
+  // First pass: compute and store all gradient values
+  thrust::for_each(                                       //
+      thrust::make_counting_iterator<int>(0),             //
+      thrust::make_counting_iterator<int>(num_gaussians), //
+      [d_densification_info, d_gradient_values, num_gaussians
+      ] __device__(int i) {
+        const float grad = d_densification_info[i + num_gaussians] /
+                           fmaxf(d_densification_info[i], 1.0f);
+        d_gradient_values[i] = grad;
+      } //
+  );
+  
+  // Create device pointers for thrust algorithms
+  thrust::device_ptr<float> grad_ptr = thrust::device_pointer_cast(d_gradient_values);
+  thrust::device_ptr<float> grad_end = grad_ptr + num_gaussians;
+  
+  // Compute statistics using thrust algorithms
+  auto minmax_result = thrust::minmax_element(exec, grad_ptr, grad_end);
+  float min_val = *minmax_result.first;
+  float max_val = *minmax_result.second;
+  
+  float mean = thrust::reduce(exec, grad_ptr, grad_end, 0.0f) / num_gaussians;
+  
+  // Compute standard deviation
+  float variance = thrust::transform_reduce(
+      exec,
+      grad_ptr,
+      grad_end,
+      [mean] __host__ __device__(float x) { float diff = x - mean; return diff * diff; },
+      0.0f,
+      thrust::plus<float>()
+  ) / num_gaussians;
+  float std = sqrtf(variance);
+
+  float nonzeros = thrust::transform_reduce(
+      exec,
+      grad_ptr,
+      grad_end,
+      [] __host__ __device__(float x) { return x > 0 ? 1 : 0; },
+      0,
+      thrust::plus<float>()
+  );
+  
+  // Print gradient statistics
+  printf("Gradient stats - Min: %.4g, Max: %.4g, Mean: %.4g, Std: %.4g, "
+         "Nonzeros: %.4g, threshold: %.4g\n",
+         min_val, max_val, mean, std, nonzeros, m_params.duplicate_grad_threshold * ctx.grad_scaler);
+#endif
 
   thrust::for_each(                                       //
       thrust::make_counting_iterator<int>(0),             //

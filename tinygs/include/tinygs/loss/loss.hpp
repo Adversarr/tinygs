@@ -18,7 +18,13 @@ public:
   virtual ~LossBase() = default;
 
   /// @brief Accumulate loss and gradient
+  /// @param ctx Loss context
+  /// @param scale Scaling factor for loss and gradient
   virtual void evaluate(LossContext ctx, float scale) = 0;
+
+  /// @brief Get name of loss function
+  /// @return Name of loss function
+  virtual std::string name() const = 0;
 };
 
 class MetricBase {
@@ -26,7 +32,14 @@ public:
   virtual ~MetricBase() = default;
 
   /// @brief Evaluate metric (no gradient computation)
+  /// @param pred Predicted image
+  /// @param target Target image
+  /// @return Metric value
   virtual float evaluate(Image pred, Image target) = 0;
+
+  /// @brief Get name of metric function
+  /// @return Name of metric function
+  virtual std::string name() const = 0;
 };
 
 /// @brief Create loss object

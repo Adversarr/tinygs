@@ -44,6 +44,7 @@ struct OrchestratorConfig {
   std::vector<size_t> test_steps{7'000, 30'000};
   std::string out_dir;
   bool export_rasterized = false;
+  bool record_trajectory = false;
 
   float grad_scaler = 1.0f;
 
