@@ -51,7 +51,7 @@ config_template = r"""
     }
   ],
   "lr_scheduler": {
-    "decay_rate": 0.9998,
+    "decay_rate": 0.99987,
     "initial_lr": 1.0,
     "step_count": 0,
     "type": "exponential"
@@ -108,6 +108,7 @@ config_template = r"""
     "max_steps": 7001,
     "near_plane": 0.01,
     "sh_degree_interval": 1000,
+    "reorder_gaussians_interval": 2000,
     "test_steps": [7000],
     "out_dir": "ARG_OUT",
     "export_rasterized": true

@@ -95,7 +95,7 @@
     "near_plane": 0.01,
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
-    "reorder_gaussians_interval": 1000,
+    "reorder_gaussians_interval": 2000,
     "enable_progressive_resolution": true,
     "record_trajectory": true,
     "resolution_milestones": [0, 5000, 10000],
