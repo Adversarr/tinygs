@@ -29,6 +29,12 @@ struct FastGSRasterizer::Impl {
   GPUMemory<PoseBlock> device_block;  // Contains w2c, w2c_grad, and cam_position
   size_t num_gaussians;
   cudaStream_t helper_stream;
+
+  GPUBuffer<float2> grad_mean2d_helper;
+  GPUBuffer<float3> grad_conic_helper;
+  GPUBuffer<float4> grad_w2c_per_gs;
+  GPUBuffer<float3> grad_color;
+
   char* zero_copy = nullptr;
 
   thrust::device_vector<float> m_alpha_buffer;
@@ -72,10 +78,6 @@ struct FastGSRasterizer::Impl {
       buffer.resize(size);
     }
     return thrust::raw_pointer_cast(buffer.data());
-    // if (buffer == nullptr || buffer->size() < size) {
-    //   buffer = std::make_unique<GPUBuffer<char>>(arena, size);
-    // }
-    // return buffer->data();
   }
 };
 
@@ -187,12 +189,23 @@ void FastGSRasterizer::backward(const RasterizeContext &ctx) {
     throw std::runtime_error("Gaussians or gradient gaussians not set");
   }
   const auto n_gaussians = m_gaussians->size();
-  char* grad_mean2d_helper = m_impl->alloc("grad_mean2d_helper", sizeof(float2) * n_gaussians);
-  char* grad_conic_helper = m_impl->alloc("grad_conic_helper", sizeof(float3) * n_gaussians);
-  char* grad_w2c_per_gs = m_impl->alloc("grad_w2c_per_gs", sizeof(float4) * 4 * n_gaussians);
-  CUDA_CHECK_THROW(cudaMemsetAsync(grad_mean2d_helper, 0, sizeof(float2) * n_gaussians, ctx.stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(grad_conic_helper, 0, sizeof(float3) * n_gaussians, ctx.stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(&m_impl->device_block.at(0).w2c_grad, 0, sizeof(mat4x4), ctx.stream));
+  if (m_impl->grad_mean2d_helper.size() < n_gaussians) {
+    m_impl->grad_mean2d_helper = GPUBuffer<float2>(ctx.stream, n_gaussians);
+  }
+  if (m_impl->grad_conic_helper.size() < n_gaussians) {
+    m_impl->grad_conic_helper = GPUBuffer<float3>(ctx.stream, n_gaussians);
+  }
+  if (m_impl->grad_w2c_per_gs.size() < 4 * n_gaussians) {
+    m_impl->grad_w2c_per_gs = GPUBuffer<float4>(ctx.stream, 4 * n_gaussians);
+  }
+  if (m_impl->grad_color.size() < n_gaussians) {
+    m_impl->grad_color = GPUBuffer<float3>(ctx.stream, n_gaussians);
+  }
+
+  m_impl->grad_w2c_per_gs.memset_async(ctx.stream, 0);
+  m_impl->grad_mean2d_helper.memset_async(ctx.stream, 0);
+  m_impl->grad_conic_helper.memset_async(ctx.stream, 0);
+  m_impl->grad_color.memset_async(ctx.stream, 0);
 
   float fx = ctx.fwd_input.K[0][0];
   float fy = ctx.fwd_input.K[1][1];
@@ -232,10 +245,11 @@ void FastGSRasterizer::backward(const RasterizeContext &ctx) {
     /* grad_opacities */ thrust::raw_pointer_cast(opacities_grad.data()),
     /* grad_sh_coeffs */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(sh_coeffs_0_grad.data())),
     /* grad_sh_coeffs_rest */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(sh_coeffs_rest_grad.data())),
-    /* grad_mean2d_helper */  reinterpret_cast<float2*>(grad_mean2d_helper),
-    /* grad_conic_helper */ reinterpret_cast<float*>(grad_conic_helper),
+    /* grad_mean2d_helper */  m_impl->grad_mean2d_helper.data(),
+    /* grad_conic_helper */ reinterpret_cast<float*>(m_impl->grad_conic_helper.data()),
+    /* grad_color_helper */ m_impl->grad_color.data(),
     /* grad_w2c */ reinterpret_cast<float4*>(&m_impl->device_block.at(0).w2c_grad),
-    /* grad_w2c_per_gs */ reinterpret_cast<float4*>(grad_w2c_per_gs),
+    /* grad_w2c_per_gs */ m_impl->grad_w2c_per_gs.data(),
     /* densification_info */ densification_info,
     /* n_primitives */ n_gaussians,
     /* n_visible_primitives */ m_impl->n_visible_primitives,

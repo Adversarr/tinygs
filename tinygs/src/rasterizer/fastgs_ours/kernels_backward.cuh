@@ -23,6 +23,7 @@ __device__ inline float3 convert_sh_to_color_backward(
     const float3* sh_coefficients_rest,
     float3* grad_sh_coefficients_0,
     float3* grad_sh_coefficients_rest,
+    const float3& grad_color,
     const float3& position,
     const float3& cam_position,
     const uint primitive_idx,
@@ -32,37 +33,36 @@ __device__ inline float3 convert_sh_to_color_backward(
     const int coefficients_base_idx = primitive_idx * total_bases_sh_rest;
     const float3* coefficients_ptr = sh_coefficients_rest + coefficients_base_idx;
     float3* grad_coefficients_ptr = grad_sh_coefficients_rest + coefficients_base_idx;
-    const float3 grad_color = grad_sh_coefficients_0[primitive_idx];
-    grad_sh_coefficients_0[primitive_idx] = 0.28209479177387814f * grad_color;
+    grad_sh_coefficients_0[primitive_idx] += 0.28209479177387814f * grad_color;
     float3 dcolor_dposition = make_float3(0.0f);
     if (active_sh_bases > 1) {
         auto [x_raw, y_raw, z_raw] = position - cam_position;
         auto [x, y, z] = normalize(make_float3(x_raw, y_raw, z_raw));
-        grad_coefficients_ptr[0] = (-0.48860251190291987f * y) * grad_color;
-        grad_coefficients_ptr[1] = (0.48860251190291987f * z) * grad_color;
-        grad_coefficients_ptr[2] = (-0.48860251190291987f * x) * grad_color;
+        grad_coefficients_ptr[0] += (-0.48860251190291987f * y) * grad_color;
+        grad_coefficients_ptr[1] += (0.48860251190291987f * z) * grad_color;
+        grad_coefficients_ptr[2] += (-0.48860251190291987f * x) * grad_color;
         float3 grad_direction_x = -0.48860251190291987f * coefficients_ptr[2];
         float3 grad_direction_y = -0.48860251190291987f * coefficients_ptr[0];
         float3 grad_direction_z = 0.48860251190291987f * coefficients_ptr[1];
         if (active_sh_bases > 4) {
             const float xx = x * x, yy = y * y, zz = z * z;
             const float xy = x * y, xz = x * z, yz = y * z;
-            grad_coefficients_ptr[3] = (1.0925484305920792f * xy) * grad_color;
-            grad_coefficients_ptr[4] = (-1.0925484305920792f * yz) * grad_color;
-            grad_coefficients_ptr[5] = (0.94617469575755997f * zz - 0.31539156525251999f) * grad_color;
-            grad_coefficients_ptr[6] = (-1.0925484305920792f * xz) * grad_color;
-            grad_coefficients_ptr[7] = (0.54627421529603959f * xx - 0.54627421529603959f * yy) * grad_color;
+            grad_coefficients_ptr[3] += (1.0925484305920792f * xy) * grad_color;
+            grad_coefficients_ptr[4] += (-1.0925484305920792f * yz) * grad_color;
+            grad_coefficients_ptr[5] += (0.94617469575755997f * zz - 0.31539156525251999f) * grad_color;
+            grad_coefficients_ptr[6] += (-1.0925484305920792f * xz) * grad_color;
+            grad_coefficients_ptr[7] += (0.54627421529603959f * xx - 0.54627421529603959f * yy) * grad_color;
             grad_direction_x = grad_direction_x + (1.0925484305920792f * y) * coefficients_ptr[3] + (-1.0925484305920792f * z) * coefficients_ptr[6] + (1.0925484305920792 * x) * coefficients_ptr[7];
             grad_direction_y = grad_direction_y + (1.0925484305920792f * x) * coefficients_ptr[3] + (-1.0925484305920792f * z) * coefficients_ptr[4] + (-1.0925484305920792 * y) * coefficients_ptr[7];
             grad_direction_z = grad_direction_z + (-1.0925484305920792f * y) * coefficients_ptr[4] + (1.8923493915151202 * z) * coefficients_ptr[5] + (-1.0925484305920792f * x) * coefficients_ptr[6];
             if (active_sh_bases > 9) {
-                grad_coefficients_ptr[8] = (0.59004358992664352f * y * (-3.0f * xx + yy)) * grad_color;
-                grad_coefficients_ptr[9] = (2.8906114426405538f * xy * z) * grad_color;
-                grad_coefficients_ptr[10] = (0.45704579946446572f * y * (1.0f - 5.0f * zz)) * grad_color;
-                grad_coefficients_ptr[11] = (0.3731763325901154f * z * (5.0f * zz - 3.0f)) * grad_color;
-                grad_coefficients_ptr[12] = (0.45704579946446572f * x * (1.0f - 5.0f * zz)) * grad_color;
-                grad_coefficients_ptr[13] = (1.4453057213202769f * z * (xx - yy)) * grad_color;
-                grad_coefficients_ptr[14] = (0.59004358992664352f * x * (-xx + 3.0f * yy)) * grad_color;
+                grad_coefficients_ptr[8] += (0.59004358992664352f * y * (-3.0f * xx + yy)) * grad_color;
+                grad_coefficients_ptr[9] += (2.8906114426405538f * xy * z) * grad_color;
+                grad_coefficients_ptr[10] += (0.45704579946446572f * y * (1.0f - 5.0f * zz)) * grad_color;
+                grad_coefficients_ptr[11] += (0.3731763325901154f * z * (5.0f * zz - 3.0f)) * grad_color;
+                grad_coefficients_ptr[12] += (0.45704579946446572f * x * (1.0f - 5.0f * zz)) * grad_color;
+                grad_coefficients_ptr[13] += (1.4453057213202769f * z * (xx - yy)) * grad_color;
+                grad_coefficients_ptr[14] += (0.59004358992664352f * x * (-xx + 3.0f * yy)) * grad_color;
                 grad_direction_x = grad_direction_x + (-3.5402615395598609f * xy) * coefficients_ptr[8] + (2.8906114426405538f * yz) * coefficients_ptr[9] + (0.45704579946446572f - 2.2852289973223288f * zz) * coefficients_ptr[12] + (2.8906114426405538f * xz) * coefficients_ptr[13] + (-1.7701307697799304f * xx + 1.7701307697799304f * yy) * coefficients_ptr[14];
                 grad_direction_y = grad_direction_y + (-1.7701307697799304f * xx + 1.7701307697799304f * yy) * coefficients_ptr[8] + (2.8906114426405538f * xz) * coefficients_ptr[9] + (0.45704579946446572f - 2.2852289973223288f * zz) * coefficients_ptr[10] + (-2.8906114426405538f * yz) * coefficients_ptr[13] + (3.5402615395598609f * xy) * coefficients_ptr[14];
                 grad_direction_z = grad_direction_z + (2.8906114426405538f * xy) * coefficients_ptr[9] + (-4.5704579946446566f * yz) * coefficients_ptr[10] + (5.597644988851731f * zz - 1.1195289977703462f) * coefficients_ptr[11] + (-4.5704579946446566f * xz) * coefficients_ptr[12] + (1.4453057213202769f * xx - 1.4453057213202769f * yy) * coefficients_ptr[13];
@@ -86,22 +86,23 @@ __device__ inline float3 convert_sh_to_color_backward(
 }
 
 __global__ void preprocess_backward_cu(
-    const float3* means,
-    const float3* raw_scales,
-    const float4* raw_rotations,
-    const float3* sh_coefficients_rest,
-    const float4* w2c,
-    const float3* cam_position,
-    const uint* primitive_n_touched_tiles,
-    const float2* grad_mean2d,
-    const float* grad_conic,
-    float3* grad_means,
-    float3* grad_raw_scales,
-    float4* grad_raw_rotations,
-    float3* grad_sh_coefficients_0,
-    float3* grad_sh_coefficients_rest,
-    float4* grad_w2c_per_gs,
-    float* densification_info,
+    const float3* __restrict__ means,
+    const float3* __restrict__ raw_scales,
+    const float4* __restrict__ raw_rotations,
+    const float3* __restrict__ sh_coefficients_rest,
+    const float4* __restrict__ w2c,
+    const float3* __restrict__ cam_position,
+    const uint* __restrict__ primitive_n_touched_tiles,
+    const float2* __restrict__ grad_mean2d,
+    const float* __restrict__ grad_conic,
+    float3* __restrict__ grad_means,
+    float3* __restrict__ grad_raw_scales,
+    float4* __restrict__ grad_raw_rotations,
+    float3* __restrict__ grad_color,
+    float3* __restrict__ grad_sh_coefficients_0,
+    float3* __restrict__ grad_sh_coefficients_rest,
+    float4* __restrict__ grad_w2c_per_gs,
+    float* __restrict__ densification_info,
     const uint n_primitives,
     const uint active_sh_bases,
     const uint total_bases_sh_rest,
@@ -123,6 +124,7 @@ __global__ void preprocess_backward_cu(
     // sh evaluation backward
     const float3 dL_dmean3d_from_color = convert_sh_to_color_backward(
         sh_coefficients_rest, grad_sh_coefficients_0, grad_sh_coefficients_rest,
+        grad_color[primitive_idx],
         mean3d, cam_position[0],
         primitive_idx, active_sh_bases, total_bases_sh_rest);
 
@@ -276,7 +278,7 @@ __global__ void preprocess_backward_cu(
     // Boundary check for primitive arrays
     assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif
-    grad_means[primitive_idx] = dL_dmean3d;
+    grad_means[primitive_idx] += dL_dmean3d;
 
     // raw scale gradient
     const float dL_dvariance_x = rotation.m11 * rotation.m11 * dL_dcov3d.m11 + rotation.m21 * rotation.m21 * dL_dcov3d.m22 + rotation.m31 * rotation.m31 * dL_dcov3d.m33 +
@@ -296,7 +298,7 @@ __global__ void preprocess_backward_cu(
 #ifndef NDEBUG
     assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif
-    grad_raw_scales[primitive_idx] = dL_draw_scale;
+    grad_raw_scales[primitive_idx] += dL_draw_scale;
 
     // raw rotation gradient
     const mat3x3 dL_drotation = {
@@ -329,7 +331,7 @@ __global__ void preprocess_backward_cu(
 #ifndef NDEBUG
     assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif
-    grad_raw_rotations[primitive_idx] = dL_draw_rotation;
+    grad_raw_rotations[primitive_idx] += dL_draw_rotation;
 
 	// printf("%d: dL_ddc: %f %f %f\n", 
     //     (int)primitive_idx, grad_sh_coefficients_0[primitive_idx].x, grad_sh_coefficients_0[primitive_idx].y, grad_sh_coefficients_0[primitive_idx].z);

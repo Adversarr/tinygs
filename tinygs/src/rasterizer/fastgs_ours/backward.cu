@@ -207,6 +207,7 @@ __global__ void reduce_sum_4x4_soa_inplace_f32x4_kernel(float* __restrict__ a,
     if (lane == 0) atomicAdd(&base[out_pos], sum);
   }
 }
+
 void fast_gs::rasterization::backward( 
     const float* grad_image,
     const float* image,
@@ -228,6 +229,7 @@ void fast_gs::rasterization::backward(
     float3* grad_sh_coefficients_rest,
     float2* grad_mean2d_helper,
     float* grad_conic_helper,
+    float3* grad_color,
     float4* grad_w2c,
     float4* grad_w2c_per_gs,
     float* densification_info,
@@ -280,7 +282,7 @@ void fast_gs::rasterization::backward(
             grad_mean2d_helper,
             grad_conic_helper,
             grad_opacities_raw,
-            grad_sh_coefficients_0, // used to store intermediate gradients
+            grad_color, // used to store intermediate gradients
             n_buckets,
             n_primitives,
             width,
@@ -306,6 +308,7 @@ void fast_gs::rasterization::backward(
             grad_means,
             grad_scales_raw,
             grad_rotations_raw,
+            grad_color,
             grad_sh_coefficients_0,
             grad_sh_coefficients_rest,
             grad_w2c_per_gs,
