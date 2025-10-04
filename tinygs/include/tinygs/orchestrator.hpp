@@ -22,6 +22,7 @@ namespace tinygs {
 struct OrchestratorConfig {
   // Training parameters
   size_t max_steps = 30000;
+  size_t accumulate_grad_steps = 1;
 
   // Logging and visualization
   size_t log_interval = 100;

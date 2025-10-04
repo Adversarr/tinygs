@@ -100,6 +100,7 @@ static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaSt
 json OrchestratorConfig::to_json() const {
   json j;
   j["max_steps"] = max_steps;
+  j["accumulate_grad_steps"] = accumulate_grad_steps;
   j["log_interval"] = log_interval;
   j["checkpoint_interval"] = checkpoint_interval;
   j["sh_degree_interval"] = sh_degree_interval;
@@ -124,6 +125,7 @@ json OrchestratorConfig::to_json() const {
 
 void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("max_steps")) max_steps = j["max_steps"].get<int>();
+  if (j.contains("accumulate_grad_steps")) accumulate_grad_steps = j["accumulate_grad_steps"].get<int>();
   if (j.contains("log_interval")) log_interval = j["log_interval"].get<int>();
   if (j.contains("checkpoint_interval")) checkpoint_interval = j["checkpoint_interval"].get<int>();
   if (j.contains("sh_degree_interval")) sh_degree_interval = j["sh_degree_interval"].get<int>();
@@ -295,13 +297,17 @@ void Orchestrator::train_step() {
   }
 
   // Pre-step callback
-  if (m_pre_step_callback) {
+  const bool is_cycle_start = (m_state.current_step % m_config.accumulate_grad_steps) == 0;
+  if (is_cycle_start && m_pre_step_callback) {
     m_pre_step_callback(m_state);
   }
 
   // TODO: async, not in the major/default stream.
   // Clear gradients and buffers
-  m_gradients->memset(0);
+  // Gradient accumulation: clear model gradients only at the start of an accumulation cycle
+  if (is_cycle_start) {
+    m_gradients->memset(0);
+  }
   m_loss_buffer->memset(0);
   m_image_grad_buffer->memset(0);
 
@@ -322,18 +328,24 @@ void Orchestrator::train_step() {
 
   // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
+  
+  // Determine if this step is the end of the accumulation cycle using current_step
+  const bool is_cycle_end = ((m_state.current_step + 1) % m_config.accumulate_grad_steps) == 0;
 
-  // Step the learning rate scheduler if available
-  if (m_lr_scheduler) {
-    m_lr_scheduler->step();
+  if (is_cycle_end) {
+    // Step the learning rate scheduler if available
+    if (m_lr_scheduler) {
+      m_lr_scheduler->step();
+    }
+
+    // Optimizer step (learning rate already set by scheduler)
+    // Average accumulated gradients across micro-steps to keep LR consistent
+    const float inv_grad_scale = 1.0f / m_config.grad_scaler;
+    const float avg_scale = inv_grad_scale / static_cast<float>(m_config.accumulate_grad_steps);
+    m_optimizer->step(avg_scale, m_major_stream);
+
+    // Optimizer step occurred; callbacks and checkpoints are gated above
   }
-
-  // Learning rate is now managed by the scheduler-optimizer system
-
-  // Optimizer step (learning rate already set by scheduler)
-  //? the gradient scaler, since we are not supporting AMP, 1.0f is the default value.
-  const float inv_grad_scale = 1.0f / m_config.grad_scaler;
-  m_optimizer->step(inv_grad_scale, m_major_stream);
 
   // Strategy step (densification)
   if (m_strategy) {
@@ -364,6 +376,7 @@ void Orchestrator::train_step() {
     m_checkpoint_callback(m_state);
   }
 
+  // Increment global training step every call; accumulation gating uses current_step
   m_state.current_step++;
 }
 
@@ -745,6 +758,11 @@ void Orchestrator::validate_setup() const {
   }
   if (m_losses.empty()) {
     throw std::runtime_error("No loss functions added. Call add_loss() before training.");
+  }
+
+  // Validate gradient accumulation configuration
+  if (m_config.accumulate_grad_steps < 1) {
+    throw std::runtime_error("accumulate_grad_steps must be >= 1");
   }
   
   // Validate progressive resolution configuration
