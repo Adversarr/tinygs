@@ -33,17 +33,17 @@
     }
   ],
   "lr_scheduler": {
-    "decay_rate": 0.999769,
+    "decay_rate": 0.9999769,
     "initial_lr": 1.0,
     "step_count": 0,
-    "type": "exponential"
+    "type": "constant"
   },
   "metrics": [
     "psnr"
   ],
   "optimizer": {
-    "beta1": 0.7,
-    "beta2": 0.95,
+    "beta1": 0.9,
+    "beta2": 0.999,
     "enable_adabound": true,
     "gamma": 1e-3,
     "epsilon": 1.0e-8,
@@ -58,6 +58,8 @@
     "scales_lr": 0.005,
     "shs_lr": 0.0025,
     "skip_zero_grad": false,
+    "trust_ratio_min": 0.01,
+    "trust_ratio_max": 10.0,
     "type": "simple_adam"
   },
   "rasterizer": {
@@ -92,7 +94,7 @@
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 1000,
-    "enable_progressive_resolution": false,
+    "enable_progressive_resolution": true,
     "record_trajectory": true,
     "resolution_milestones": [0, 3000, 6000, 10000],
     "resolution_scales": [0.25, 0.5, 0.75, 1.0],
