@@ -95,6 +95,7 @@ __global__ void preprocess_backward_cu(
     const uint* __restrict__ primitive_n_touched_tiles,
     const float2* __restrict__ grad_mean2d,
     const float* __restrict__ grad_conic,
+    const float2* __restrict__ absgrad_mean2d,
     float3* __restrict__ grad_means,
     float3* __restrict__ grad_raw_scales,
     float4* __restrict__ grad_raw_rotations,
@@ -102,7 +103,7 @@ __global__ void preprocess_backward_cu(
     float3* __restrict__ grad_sh_coefficients_0,
     float3* __restrict__ grad_sh_coefficients_rest,
     float4* __restrict__ grad_w2c_per_gs,
-    float* __restrict__ densification_info,
+    tinygs::DensificationInfo* __restrict__ densification_info,
     const uint n_primitives,
     const uint active_sh_bases,
     const uint total_bases_sh_rest,
@@ -338,12 +339,14 @@ __global__ void preprocess_backward_cu(
 
     if (densification_info != nullptr) {
 #ifndef NDEBUG
-        // Boundary check for densification_info array (size: 2 * n_primitives)
         assert(primitive_idx >= 0 && primitive_idx < n_primitives);
-        assert(n_primitives + primitive_idx >= 0 && n_primitives + primitive_idx < 2 * n_primitives);
 #endif
-        densification_info[primitive_idx] += 1.0f;
-        densification_info[n_primitives + primitive_idx] += length(dL_dmean2d * make_float2(0.5f * w, 0.5f * h));
+        densification_info[primitive_idx].accum_counter += 1.0f;
+        densification_info[primitive_idx].accum_grad_mean2d += length(dL_dmean2d * make_float2(0.5f * w, 0.5f * h));
+        if (absgrad_mean2d != nullptr) {
+          densification_info[primitive_idx].accum_absgrad_mean2d += length(
+              absgrad_mean2d[primitive_idx] * make_float2(0.5f * w, 0.5f * h));
+        }
     }
 }
 
@@ -390,10 +393,11 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     const uint* __restrict__ tile_n_contributions,
     const uint* __restrict__ bucket_tile_index,
     const float4* __restrict__ bucket_color_transmittance,
-    float2* grad_mean2d,
-    float* grad_conic,
-    float* grad_raw_opacity,
-    float3* grad_color,
+    float2* __restrict__ grad_mean2d,
+    float2* __restrict__ absgrad_mean2d,
+    float* __restrict__ grad_conic,
+    float* __restrict__ grad_raw_opacity,
+    float3* __restrict__ grad_color,
     const uint n_buckets,
     const uint n_primitives,
     const uint width,
@@ -455,6 +459,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
     // gradient accumulation
     float2 dL_dmean2d_accum = {0.0f, 0.0f};
+    float2 absdL_dmean2d_accum = {0.0f, 0.0f};
     float3 dL_dconic_accum = {0.0f, 0.0f, 0.0f};
     float dL_draw_opacity_partial_accum = 0.0f;
     float3 dL_dcolor_accum = {0.0f, 0.0f, 0.0f};
@@ -589,6 +594,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
 
             dL_dmean2d_accum -= dL_dmean2d;
+            absdL_dmean2d_accum += make_float2(fabsf(dL_dmean2d.x), fabsf(dL_dmean2d.y));
             transmittance *= one_minus_alpha;
         }
     }
@@ -601,6 +607,10 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 #endif
         atomicAdd(&grad_mean2d[primitive_idx].x, dL_dmean2d_accum.x);
         atomicAdd(&grad_mean2d[primitive_idx].y, dL_dmean2d_accum.y);
+        if (absgrad_mean2d != nullptr) {
+            atomicAdd(&absgrad_mean2d[primitive_idx].x, absdL_dmean2d_accum.x);
+            atomicAdd(&absgrad_mean2d[primitive_idx].y, absdL_dmean2d_accum.y);
+        }
         atomicAdd(&grad_conic[primitive_idx], dL_dconic_accum.x);
         atomicAdd(&grad_conic[n_primitives + primitive_idx], dL_dconic_accum.y);
         atomicAdd(&grad_conic[2 * n_primitives + primitive_idx], dL_dconic_accum.z);

@@ -88,6 +88,7 @@ namespace CudaRasterizer
 			float* dL_dsh,
 			float* dL_dscale,
 			float* dL_drot,
+			float2* absgrad_mean2D,
 			bool antialiasing,
 			bool debug);
 	};

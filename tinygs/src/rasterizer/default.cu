@@ -39,6 +39,7 @@ struct DefaultRasterizer::Impl {
   thrust::device_vector<vec3> grad_exp_scales; // grad of exp(scales)
   thrust::device_vector<float> dL_dinvdepth; // per-pix
   thrust::device_vector<vec3> dL_dmean2D;
+  thrust::device_vector<vec2> absgrad_mean2D; // per-gs absolute grad accumulator for mean2D
   thrust::device_vector<vec4> dL_dconic;
   thrust::device_vector<vec3> dL_dcolor;
   thrust::device_vector<float> dL_dinvdepth_gs;
@@ -252,6 +253,8 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
   cudaMemset(thrust::raw_pointer_cast(grad_opacities_normalized.data()), 0, grad_opacities_normalized.size() * sizeof(float));
   cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dinvdepth.data()), 0, m_impl->dL_dinvdepth.size() * sizeof(float));
   cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dmean2D.data()), 0, m_impl->dL_dmean2D.size() * sizeof(vec3));
+  m_impl->absgrad_mean2D.resize(num_gaussians, vec2(0.f, 0.f));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->absgrad_mean2D.data()), 0, m_impl->absgrad_mean2D.size() * sizeof(vec2));
   cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dconic.data()), 0, m_impl->dL_dconic.size() * sizeof(vec4));
   cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dcolor.data()), 0, m_impl->dL_dcolor.size() * sizeof(vec3));
   cudaMemset(thrust::raw_pointer_cast(m_impl->dL_dinvdepth_gs.data()), 0, m_impl->dL_dinvdepth_gs.size() * sizeof(float));
@@ -290,6 +293,7 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
     /* dL_dsh */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_sh_coeffs_rest.data())),
     /* dL_dscales */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_exp_scales.data())),
     /* dL_drotations */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_rotations_normalized.data())),
+    /* absgrad_mean2D */ reinterpret_cast<float2*>(thrust::raw_pointer_cast(m_impl->absgrad_mean2D.data())),
     /* antialiasing */ false,
 #ifdef NDEBUG
       false
@@ -339,12 +343,14 @@ void DefaultRasterizer::backward(const RasterizeContext& ctx) {
     thrust::make_counting_iterator<uint32_t>(num_gaussians),
     [
       dL_dmean2D = thrust::raw_pointer_cast(m_impl->dL_dmean2D.data()),
+      absgrad_mean2D = thrust::raw_pointer_cast(m_impl->absgrad_mean2D.data()),
       radii = m_impl->radii.data(), // actual rendered
       data = dinfo->data(), num_gaussians
     ] __device__ (uint32_t i) {
       if (radii[i] > 0) {
-        data[i + num_gaussians] += glm::length(vec2(dL_dmean2D[i].x, dL_dmean2D[i].y));
-        data[i] += 1;
+        data[i].accum_grad_mean2d += glm::length(vec2(dL_dmean2D[i].x, dL_dmean2D[i].y));
+        data[i].accum_absgrad_mean2d += glm::length(absgrad_mean2D[i]);
+        data[i].accum_counter += 1.0f;
       }
     });
 

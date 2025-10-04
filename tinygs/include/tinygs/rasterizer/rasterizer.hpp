@@ -1,5 +1,6 @@
 #pragma once
 #include "tinygs/core/gpu_gaussian.hpp"
+#include "tinygs/core/gaussian.hpp"
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
 
@@ -24,7 +25,7 @@ struct RasterizeContext {
   std::shared_ptr<GPUGaussian3d> gaussians_grad;
 
   /// @brief Densification information storage
-  mutable std::shared_ptr<GPUBuffer<float>> densification_info;
+  mutable std::shared_ptr<GPUBuffer<DensificationInfo>> densification_info;
 };
 
 class RasterizerBase {

@@ -73,6 +73,7 @@ json StrategyParams::to_json() const {
   j["max_screen_size"] = max_screen_size;
   j["duplicate_grad_threshold"] = duplicate_grad_threshold;
   j["duplicate_scale_threshold"] = duplicate_scale_threshold;
+  j["absgrad"] = absgrad;
   j["refine_every"] = refine_every;
   j["start_refine"] = start_refine;
   j["end_refine"] = end_refine;
@@ -97,6 +98,9 @@ void StrategyParams::from_json(const json& config) {
   }
   if (config.contains("duplicate_scale_threshold")) {
     duplicate_scale_threshold = config["duplicate_scale_threshold"].get<float>();
+  }
+  if (config.contains("absgrad")) {
+    absgrad = config["absgrad"].get<bool>();
   }
   if (config.contains("refine_every")) {
     refine_every = config["refine_every"].get<int>();

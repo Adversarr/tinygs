@@ -1,4 +1,3 @@
-from subprocess import run
 from pathlib import Path
 from argparse import ArgumentParser
 
@@ -52,7 +51,7 @@ config_template = r"""
     }
   ],
   "lr_scheduler": {
-    "decay_rate": 0.9996,
+    "decay_rate": 0.9998,
     "initial_lr": 1.0,
     "step_count": 0,
     "type": "exponential"
@@ -82,15 +81,16 @@ config_template = r"""
     "type": "fastgs"
   },
   "strategy": {
-    "duplicate_grad_threshold": 0.0002,
+    "duplicate_grad_threshold": 0.0008,
+    "absgrad": true,
     "duplicate_scale_threshold": 0.005,
-    "end_refine": 25000,
+    "end_refine": 6000,
     "max_num_gaussians": 1500000,
     "max_screen_size": 20,
     "pruning_opacity_threshold": 0.005,
     "pruning_scale_threshold": 0.1,
     "refine_every": 100,
-    "reset_every": 0,
+    "reset_every": 3000,
     "seed": 42,
     "start_refine": 500,
     "noise_lr_init": 80.0,
@@ -102,13 +102,13 @@ config_template = r"""
     "early_stopping_threshold": 1.0e-6,
     "enable_early_stopping": false,
     "far_plane": 100.0,
-    "grad_scaler": 10.0,
+    "grad_scaler": 1.0,
     "log_interval": 100,
     "max_sh_degree": 3,
     "max_steps": 7001,
     "near_plane": 0.01,
-    "sh_degree_interval": 1500,
-    "test_steps": [3000, 7000, 30000],
+    "sh_degree_interval": 1000,
+    "test_steps": [7000],
     "out_dir": "ARG_OUT",
     "export_rasterized": true
   }

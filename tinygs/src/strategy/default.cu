@@ -42,7 +42,7 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream)); // make sure the operations on training stream are done.
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<float>>(num_gaussians * 2);
+    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
     ctx.densification_info->memset(0);
   }
 
@@ -57,7 +57,7 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
     prune(ctx);
     // after pruning, we need to reset the densification info since the indices have changed.
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<float>>(num_gaussians * 2);
+    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
     ctx.densification_info->memset(0);
   }
 
@@ -80,7 +80,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   // thrust::device_vector<char> duplication_flags(num_gaussians);
   duplication_flags.memset_async(ctx.stream, 0);
   auto *d_grow_flags = thrust::raw_pointer_cast(duplication_flags.data());
-  if (! ctx.densification_info || ctx.densification_info->size() != num_gaussians * 2) {
+  if (! ctx.densification_info || ctx.densification_info->size() != num_gaussians) {
     log_warning("Densification info is not provided or has wrong size, skip duplication.");
     return; // no duplication happened
   }
@@ -100,10 +100,13 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   thrust::for_each(                                       //
       thrust::make_counting_iterator<int>(0),             //
       thrust::make_counting_iterator<int>(num_gaussians), //
-      [d_densification_info, d_gradient_values, num_gaussians
+      [d_densification_info, d_gradient_values,
+       use_absgrad = m_params.absgrad
       ] __device__(int i) {
-        const float grad = d_densification_info[i + num_gaussians] /
-                           fmaxf(d_densification_info[i], 1.0f);
+        const float accum = use_absgrad
+                               ? d_densification_info[i].accum_absgrad_mean2d
+                               : d_densification_info[i].accum_grad_mean2d;
+        const float grad = accum / fmaxf(d_densification_info[i].accum_counter, 1.0f);
         d_gradient_values[i] = grad;
       } //
   );
@@ -148,14 +151,17 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   thrust::for_each(                                       //
       thrust::make_counting_iterator<int>(0),             //
       thrust::make_counting_iterator<int>(num_gaussians), //
-      [d_densification_info, d_scale, num_gaussians, d_grow_flags,
+      [d_densification_info, d_scale, d_grow_flags,
        grow_scale = m_params.duplicate_scale_threshold * m_gaussians->scene_scale(),
        //? The computed gradient is scaled by the scaler, we compensate this.
-       grow_grad = m_params.duplicate_grad_threshold * ctx.grad_scaler
+       grow_grad = m_params.duplicate_grad_threshold * ctx.grad_scaler,
+       use_absgrad = m_params.absgrad
       ] __device__(int i) {
-        const float grad = d_densification_info[i + num_gaussians] /
-                           fmaxf(d_densification_info[i], 1.0f);
-        if (grad > grow_grad && d_densification_info[i] > 0) {
+        const float accum = use_absgrad
+                               ? d_densification_info[i].accum_absgrad_mean2d
+                               : d_densification_info[i].accum_grad_mean2d;
+        const float grad = accum / fmaxf(d_densification_info[i].accum_counter, 1.0f);
+        if (grad > grow_grad && d_densification_info[i].accum_counter > 0) {
           const float max_scale = max(activate_scale(d_scale[i]));
           if (max_scale > grow_scale) { // is_large => split
             d_grow_flags[i] = kSplit;

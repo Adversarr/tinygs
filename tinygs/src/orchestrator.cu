@@ -17,6 +17,7 @@
 #include "tinygs/orchestrator.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
+#include "tinygs/core/gaussian.hpp"
 #include <cub/device/device_radix_sort.cuh>
 namespace tinygs {
 
@@ -923,16 +924,13 @@ void Orchestrator::update_resolution(size_t current_step) {
 }
 
 static __global__ void densification_update( //
-    uint n, const float *__restrict__ old_info, float *__restrict__ new_info,
+    uint n, const tinygs::DensificationInfo *__restrict__ old_info,
+    tinygs::DensificationInfo *__restrict__ new_info,
     uint *old_idx) {
   uint i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= n) return;
 
-#pragma unroll
-  for (uint coef = 0; coef < 2u; ++ coef) {
-    float old_density = old_info[old_idx[i] + coef * n];
-    new_info[i + coef * n] = old_density;
-  }
+  new_info[i] = old_info[old_idx[i]];
 }
 
 void Orchestrator::reorder_gaussians() {
@@ -950,9 +948,9 @@ void Orchestrator::reorder_gaussians() {
   m_optimizer->reorder(thrust::raw_pointer_cast(idx.data()));
 
   if (m_rasterize_ctx.densification_info) {
-    auto new_info = std::make_shared<GPUBuffer<float>>(n * 2);
+    auto new_info = std::make_shared<GPUBuffer<tinygs::DensificationInfo>>(n);
     linear_kernel(densification_update, 0, nullptr, n,
-                  (const float*) m_rasterize_ctx.densification_info->data(),
+                  (const tinygs::DensificationInfo*) m_rasterize_ctx.densification_info->data(),
                   new_info->data(),
                   thrust::raw_pointer_cast(idx.data()));
     m_rasterize_ctx.densification_info = new_info;

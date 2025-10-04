@@ -34,6 +34,7 @@ struct FastGSRasterizer::Impl {
   GPUBuffer<float3> grad_conic_helper;
   GPUBuffer<float4> grad_w2c_per_gs;
   GPUBuffer<float3> grad_color;
+  GPUBuffer<float2> absgrad_mean2d_helper;
 
   char* zero_copy = nullptr;
 
@@ -201,11 +202,15 @@ void FastGSRasterizer::backward(const RasterizeContext &ctx) {
   if (m_impl->grad_color.size() < n_gaussians) {
     m_impl->grad_color = GPUBuffer<float3>(ctx.stream, n_gaussians);
   }
+  if (m_impl->absgrad_mean2d_helper.size() < n_gaussians) {
+    m_impl->absgrad_mean2d_helper = GPUBuffer<float2>(ctx.stream, n_gaussians);
+  }
 
   m_impl->grad_w2c_per_gs.memset_async(ctx.stream, 0);
   m_impl->grad_mean2d_helper.memset_async(ctx.stream, 0);
   m_impl->grad_conic_helper.memset_async(ctx.stream, 0);
   m_impl->grad_color.memset_async(ctx.stream, 0);
+  m_impl->absgrad_mean2d_helper.memset_async(ctx.stream, 0);
 
   float fx = ctx.fwd_input.K[0][0];
   float fy = ctx.fwd_input.K[1][1];
@@ -220,7 +225,7 @@ void FastGSRasterizer::backward(const RasterizeContext &ctx) {
   auto& sh_coeffs_0_grad = ctx.gaussians_grad->sh_coefficient_0();
   auto& sh_coeffs_rest_grad = ctx.gaussians_grad->sh_coefficients_rest();
 
-  float* densification_info = nullptr;
+  DensificationInfo* densification_info = nullptr;
   if (ctx.densification_info) {
     densification_info = ctx.densification_info->data();
   }
@@ -251,6 +256,7 @@ void FastGSRasterizer::backward(const RasterizeContext &ctx) {
     /* grad_w2c */ reinterpret_cast<float4*>(&m_impl->device_block.at(0).w2c_grad),
     /* grad_w2c_per_gs */ m_impl->grad_w2c_per_gs.data(),
     /* densification_info */ densification_info,
+    /* absgrad_mean2d_helper */ m_impl->absgrad_mean2d_helper.data(),
     /* n_primitives */ n_gaussians,
     /* n_visible_primitives */ m_impl->n_visible_primitives,
     /* n_instances */ m_impl->n_instances,

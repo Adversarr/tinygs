@@ -5,14 +5,6 @@
 
 namespace tinygs {
 
-/// @brief 2D Gaussian structure for Host and GPU memory
-struct Gaussian2dItem {
-  vec2 mean; ///< 2D mean position
-  vec3 rgb; ///< Color
-  vec4 conic_opacity; ///< Conic matrix and opacity
-  // other auxiliary variables...
-};
-
 /// @brief SoA structure for 3D Gaussians
 struct Gaussian3d {
   std::vector<vec3> means;
@@ -23,13 +15,16 @@ struct Gaussian3d {
   std::vector<vec3> sh_coefficients_rest;
 };
 
+struct DensificationInfo {
+  float accum_counter = 0;
+  float accum_grad_mean2d = 0;    /// accumulated gradient of mean2d
+  float accum_absgrad_mean2d = 0; /// accumulated absolute gradient of mean2d
+};
+
 mat4x4 normalize_scene(
   const Gaussian3d& gs3d,
   const std::vector<std::pair<mat4x4, mat3x3>>& w2c_k_s,
-  float ext_scale = 1.0f
-);
-
-
+  float ext_scale = 1.0f);
 
 TINYGS_HOST_DEVICE inline float activate_scale(float x) {
   return ::expf(x);

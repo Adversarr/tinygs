@@ -477,7 +477,8 @@ PerGaussianRenderCUDA_backward(
 	float4* __restrict__ dL_dconic2D,
 	float* __restrict__ dL_dopacity,
 	float* __restrict__ dL_dcolors,
-	float* __restrict__ dL_dinvdepths
+	float* __restrict__ dL_dinvdepths,
+	float2* __restrict__ absgrad_mean2D
 ) {
 	// global_bucket_idx = warp_idx
 	auto block = cg::this_thread_block();
@@ -526,6 +527,8 @@ PerGaussianRenderCUDA_backward(
 	// Gradient accumulation variables
 	float Register_dL_dmean2D_x = 0.0f;
 	float Register_dL_dmean2D_y = 0.0f;
+	float Register_absdL_dmean2D_x = 0.0f;
+	float Register_absdL_dmean2D_y = 0.0f;
 	float Register_dL_dconic2D_x = 0.0f;
 	float Register_dL_dconic2D_y = 0.0f;
 	float Register_dL_dconic2D_w = 0.0f;
@@ -642,6 +645,10 @@ PerGaussianRenderCUDA_backward(
 			const float tmp_y = dL_dG * dG_ddely * ddely_dy;
 			Register_dL_dmean2D_y += tmp_y;
 
+			// accumulate absolute contributions for densification
+			Register_absdL_dmean2D_x += fabsf(tmp_x);
+			Register_absdL_dmean2D_y += fabsf(tmp_y);
+
 			Register_dL_dconic2D_x += -0.5f * gdx * d.x * dL_dG;
 			Register_dL_dconic2D_y += -0.5f * gdx * d.y * dL_dG;
 			Register_dL_dconic2D_w += -0.5f * gdy * d.y * dL_dG;
@@ -653,6 +660,10 @@ PerGaussianRenderCUDA_backward(
 	if (valid_splat) {
 		atomicAdd(&dL_dmean2D[gaussian_idx].x, Register_dL_dmean2D_x);
 		atomicAdd(&dL_dmean2D[gaussian_idx].y, Register_dL_dmean2D_y);
+		if (absgrad_mean2D) {
+			atomicAdd(&absgrad_mean2D[gaussian_idx].x, Register_absdL_dmean2D_x);
+			atomicAdd(&absgrad_mean2D[gaussian_idx].y, Register_absdL_dmean2D_y);
+		}
 		atomicAdd(&dL_dconic2D[gaussian_idx].x, Register_dL_dconic2D_x);
 		atomicAdd(&dL_dconic2D[gaussian_idx].y, Register_dL_dconic2D_y);
 		atomicAdd(&dL_dconic2D[gaussian_idx].w, Register_dL_dconic2D_w);
@@ -768,7 +779,8 @@ void BACKWARD::render(
 	float4* dL_dconic2D,
 	float* dL_dopacity,
 	float* dL_dcolors,
-	float* dL_dinvdepths)
+	float* dL_dinvdepths,
+	float2* absgrad_mean2D)
 {
 	const int THREADS = 32;
 	PerGaussianRenderCUDA_backward<NUM_CHANNELS_3DGS> <<<((B*32) + THREADS - 1) / THREADS,THREADS>>>(
@@ -794,6 +806,7 @@ void BACKWARD::render(
 		dL_dconic2D,
 		dL_dopacity,
 		dL_dcolors, 
-		dL_dinvdepths
+		dL_dinvdepths,
+		absgrad_mean2D
 		);
 }

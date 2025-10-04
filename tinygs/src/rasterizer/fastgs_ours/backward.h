@@ -5,6 +5,7 @@
 #pragma once
 
 #include "helper_math.h"
+#include "tinygs/core/gaussian.hpp"
 #include <functional>
 
 namespace fast_gs::rasterization {
@@ -33,7 +34,8 @@ namespace fast_gs::rasterization {
         float3* grad_color,
         float4* grad_w2c,
         float4* grad_w2c_per_gs,
-        float* densification_info,
+        tinygs::DensificationInfo* densification_info,
+        float2* absgrad_mean2d_helper,
         const int n_primitives,
         const int n_visible_primitives,
         const int n_instances,
