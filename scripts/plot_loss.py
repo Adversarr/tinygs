@@ -37,6 +37,7 @@ smoothed_l1 = gaussian_filter1d(losses["l1"], sigma=args.smoothing)
 axes[0].plot(steps, smoothed_l1, label=f"L1 (Smoothed, σ={args.smoothing})")
 axes[0].set_xlabel("Step")
 axes[0].set_ylabel("Loss")
+axes[0].grid(True)
 if args.logscale:
     axes[0].set_yscale("log")
 axes[0].legend()
@@ -48,6 +49,7 @@ smoothed_fused_ssim = gaussian_filter1d(losses["fused_ssim"], sigma=args.smoothi
 axes[1].plot(steps, smoothed_fused_ssim, label=f"Fused SSIM (Smoothed, σ={args.smoothing})")
 axes[1].set_xlabel("Step")
 axes[1].set_ylabel("Loss")
+axes[1].grid(True)
 if args.logscale:
     axes[1].set_yscale("log")
 axes[1].legend()
@@ -59,6 +61,7 @@ smoothed_total_loss = gaussian_filter1d(losses["total_loss"], sigma=args.smoothi
 axes[2].plot(steps, smoothed_total_loss, label=f"Total Loss (Smoothed, σ={args.smoothing})")
 axes[2].set_xlabel("Step")
 axes[2].set_ylabel("Loss")
+axes[2].grid(True)
 if args.logscale:
     axes[2].set_yscale("log")
 axes[2].legend()

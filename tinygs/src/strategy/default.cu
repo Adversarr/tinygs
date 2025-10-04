@@ -61,8 +61,8 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
     ctx.densification_info->memset(0);
   }
 
-  if (m_params.reset_every > 0 && step % m_params.reset_every == 0 && step >= m_params.start_refine
-      && step <= m_params.end_refine) {
+  if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
+      step >= m_params.start_refine && step < m_params.end_refine) {
     reset_opacity(m_gaussians, 2 * m_params.pruning_opacity_threshold, ctx.stream);
     on_reset_opacity();
   }
