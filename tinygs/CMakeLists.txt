@@ -38,6 +38,7 @@ set(TINYGS_SOURCES
     # Optimizers
     "src/optim/adamw.cu"
     "src/optim/simple_adam.cu"
+    "src/optim/lion.cu"
     "src/optim/lr_scheduler.cpp"
     "src/optim/optim.cu"
     "src/optim/sgd.cu"
