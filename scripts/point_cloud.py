@@ -4,6 +4,7 @@ from warnings import warn
 import numpy as np
 import open3d as o3d
 from camera import load_point_cloud
+from tqdm import tqdm
 
 try:
     import pcloudsim
@@ -41,6 +42,20 @@ class PointCloudManipulator:
         new_pcd.colors = o3d.utility.Vector3dVector(new_rgb)
 
         self.pcd += new_pcd
+
+    def remove_hidden_points(self, cameras: np.ndarray) -> None:
+        cam_list = []
+        if cameras.ndim == 2:
+            cam_list = [cameras[i] for i in range(cameras.shape[0])]
+        else:
+            cam_list = [cameras]
+
+        all_vis = set()
+        for cam in tqdm(cam_list, desc="Removing hidden points"):
+            diameter = 100 * np.linalg.norm(cam - self.init_mean)
+            _, vis = self.pcd.hidden_point_removal(cam, diameter)
+            all_vis |= set(vis)
+        self.pcd = self.pcd.select_by_index(list(all_vis))
 
     def update(self, config: PointCloudUpdateConfig) -> None:
         if pcloudsim is not None:

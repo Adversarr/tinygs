@@ -115,6 +115,10 @@ class Aligner:
                 best_aligner = aligner
         return best_cam_id, best_result, best_aligner
 
+    def run_hidden_point_removal(self):
+        cam_poses = np.stack([e.translation for e in self.camera_extrinsics], axis=0)
+        self.point_cloud_running.remove_hidden_points(cam_poses)
+
     def run(self):
         for (cam, img_path) in tqdm(zip(self.camera_extrinsics, self.images), total=len(self.images)):
             cam_id = cam.timestamp
@@ -196,7 +200,7 @@ if __name__ == "__main__":
     parser.add_argument("--root", type=str, help="Root directory of all scenes", default='/data/yzr/Final')
     parser.add_argument("--id", type=str, help="ID of the scene", default='1747834320424')
     parser.add_argument("--out", type=str, help="Output file path", default='aligned_points/')
-    parser.add_argument("--working_dir", type=str, help="Working directory", default='outputs/')
+    parser.add_argument("--working_dir", type=str, help="Working directory", default='/data/yzr/Final/1747834320424/inputs')
     args = parser.parse_args()
     ID = args.id
     ROOT = args.root
@@ -241,4 +245,5 @@ if __name__ == "__main__":
         camera_intrinsics,
     )
     aligner.run()
+    aligner.run_hidden_point_removal()
     aligner.export(OUT_FILE)

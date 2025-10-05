@@ -123,38 +123,50 @@ void save_ply(const std::string& filename, const Gaussian3d& gs) {
   size_t num_points = xyz.size();
   plyData.addElement("vertex", num_points);
 
-  // Extract and add xyz coordinates
-  std::vector<float> x, y, z;
-  x.reserve(num_points);
-  y.reserve(num_points);
-  z.reserve(num_points);
+  {  // Extract and add xyz coordinates
+    std::vector<float> x, y, z;
+    x.reserve(num_points);
+    y.reserve(num_points);
+    z.reserve(num_points);
 
-  for (const auto& pos : xyz) {
-    x.push_back(pos.x);
-    y.push_back(pos.y);
-    z.push_back(pos.z);
+    for (const auto& pos : xyz) {
+      x.push_back(pos.x);
+      y.push_back(pos.y);
+      z.push_back(pos.z);
+    }
+
+    plyData.getElement("vertex").addProperty<float>("x", x);
+    plyData.getElement("vertex").addProperty<float>("y", y);
+    plyData.getElement("vertex").addProperty<float>("z", z);
   }
+  { // Extract and add SH coefficients (DC components)
+    std::vector<float> f_dc_0, f_dc_1, f_dc_2;
+    f_dc_0.reserve(num_points);
+    f_dc_1.reserve(num_points);
+    f_dc_2.reserve(num_points);
 
-  plyData.getElement("vertex").addProperty<float>("x", x);
-  plyData.getElement("vertex").addProperty<float>("y", y);
-  plyData.getElement("vertex").addProperty<float>("z", z);
+    for (const auto& dc : sh0) {
+      f_dc_0.push_back(dc.x);
+      f_dc_1.push_back(dc.y);
+      f_dc_2.push_back(dc.z);
+    }
+    plyData.getElement("vertex").addProperty<float>("f_dc_r", f_dc_0);
+    plyData.getElement("vertex").addProperty<float>("f_dc_g", f_dc_1);
+    plyData.getElement("vertex").addProperty<float>("f_dc_b", f_dc_2);
 
-  // Extract and add SH coefficients (DC components)
-  std::vector<float> f_dc_0, f_dc_1, f_dc_2;
-  f_dc_0.reserve(num_points);
-  f_dc_1.reserve(num_points);
-  f_dc_2.reserve(num_points);
-
-  for (const auto& dc : sh0) {
-    f_dc_0.push_back(dc.x);
-    f_dc_1.push_back(dc.y);
-    f_dc_2.push_back(dc.z);
+    std::vector<unsigned char> f_dc_r(num_points);
+    std::vector<unsigned char> f_dc_g(num_points);
+    std::vector<unsigned char> f_dc_b(num_points);
+    for (size_t i = 0; i < num_points; i++) {
+      constexpr float k_inv_sh = 0.28209479177387814f;
+      f_dc_r[i] = (unsigned char)(clamp(f_dc_0[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
+      f_dc_g[i] = (unsigned char)(clamp(f_dc_1[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
+      f_dc_b[i] = (unsigned char)(clamp(f_dc_2[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
+    }
+    plyData.getElement("vertex").addProperty<unsigned char>("red", f_dc_r);
+    plyData.getElement("vertex").addProperty<unsigned char>("green", f_dc_g);
+    plyData.getElement("vertex").addProperty<unsigned char>("blue", f_dc_b);
   }
-
-  plyData.getElement("vertex").addProperty<float>("f_dc_r", f_dc_0);
-  plyData.getElement("vertex").addProperty<float>("f_dc_g", f_dc_1);
-  plyData.getElement("vertex").addProperty<float>("f_dc_b", f_dc_2);
-
   // Extract and add rest of SH coefficients
   if (!sh_rest.empty()) {
     // sh_rest is a flat array where each gaussian has 15 vec3 coefficients stored contiguously
