@@ -60,6 +60,7 @@ set(TINYGS_SOURCES
     # Strategy
     "src/strategy/default.cu"
     "src/strategy/mcmc.cu"
+    "src/strategy/improved.cu"
     "src/strategy/strategy.cpp"
     
     # Main library

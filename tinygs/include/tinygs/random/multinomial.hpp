@@ -40,4 +40,24 @@ GPUBuffer<int> multinomial_cuda_cpu(
     cudaStream_t stream = 0
 );
 
+/// @brief CPU implementation of multinomial sampling (without replacement) on GPU
+/// Selects indices proportionally to weights, without replacement, using
+/// Efraimidis–Spirakis PPS sampling via keys u^{1/w} and taking top-M.
+GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
+    const float* d_weights,
+    int K,
+    int num_samples,
+    int seed,
+    cudaStream_t stream = 0
+);
+
+/// @brief CPU implementation of multinomial sampling (without replacement)
+/// Selects indices proportionally to weights, without replacement.
+std::vector<int> multinomial_cpu_without_replacement(
+    const float* weights,
+    int K,
+    int num_samples,
+    int seed
+);
+
 }

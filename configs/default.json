@@ -70,7 +70,7 @@
     "absgrad": true,
     "duplicate_scale_threshold": 0.005,
     "end_refine": 15000,
-    "max_num_gaussians": 3000000,
+    "max_num_gaussians": 1000000,
     "max_screen_size": 20,
     "pruning_opacity_threshold": 0.005,
     "pruning_scale_threshold": 0.1,
@@ -79,7 +79,9 @@
     "seed": 42,
     "start_refine": 500,
     "noise_lr_init": 80.0,
-    "type": "default"
+    "split_distance": 0.45,
+    "opacity_reduction": 0.6,
+    "type": "improved"
   },
   "trainer": {
     "accumulate_grad_steps": 1,

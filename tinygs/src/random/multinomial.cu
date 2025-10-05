@@ -63,10 +63,10 @@ GPUBuffer<int> multinomial_cuda_with_replacement(
 
   void* d_temp = nullptr;
   size_t temp_bytes = 0;
-  cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K);
+  CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K, stream));
   auto b_temp = GPUBuffer<uint8_t>(stream, temp_bytes);
   d_temp = b_temp.data();
-  CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K));
+  CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K, stream));
 
   float h_total = 0.0f;
   CUDA_CHECK_THROW(cudaMemcpyAsync(&h_total, d_cdf + (K - 1), sizeof(float), cudaMemcpyDeviceToHost, stream));
@@ -153,6 +153,74 @@ GPUBuffer<int> multinomial_cuda_cpu(
   CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
 
   auto h_out = multinomial_cpu_with_replacement(h_weights.data(), K, num_samples, seed);
+  auto b_out = GPUBuffer<int>(stream, num_samples);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  return b_out;
+}
+
+// CPU sampling without replacement using Efraimidis–Spirakis PPS scheme
+std::vector<int> multinomial_cpu_without_replacement(
+  const float* weights,
+  int K,
+  int num_samples,
+  int seed)
+{
+  if (K <= 0 || num_samples <= 0) {
+    throw std::runtime_error(
+        fmt::format("Invalid K={} or num_samples={}", K, num_samples));
+  }
+
+  pcg32 rng(seed);
+  struct KeyIdx { float key; int idx; };
+  std::vector<KeyIdx> keys;
+  keys.reserve(K);
+
+  float total_pos = 0.0f;
+  for (int i = 0; i < K; ++i) {
+    float w = weights[i];
+    if (w > 0.0f && std::isfinite(w)) {
+      total_pos += w;
+      float u = rng.next_float();
+      // Ensure u in (0,1) open interval to avoid edge cases
+      if (u <= 0.0f) u = std::nextafter(0.0f, 1.0f);
+      if (u >= 1.0f) u = std::nextafter(1.0f, 0.0f);
+      float key = std::pow(u, 1.0f / w);
+      keys.push_back({key, i});
+    }
+  }
+
+  if (total_pos <= 0.0f || keys.empty()) {
+    throw std::runtime_error("Invalid weights: no positive entries for sampling without replacement");
+  }
+
+  if (num_samples > static_cast<int>(keys.size())) {
+    num_samples = static_cast<int>(keys.size());
+  }
+
+  // Select top-M entries by key
+  std::nth_element(keys.begin(), keys.begin() + num_samples, keys.end(),
+                   [](const KeyIdx& a, const KeyIdx& b) { return a.key > b.key; });
+  std::sort(keys.begin(), keys.begin() + num_samples,
+            [](const KeyIdx& a, const KeyIdx& b) { return a.key > b.key; });
+
+  std::vector<int> out(num_samples);
+  for (int i = 0; i < num_samples; ++i) out[i] = keys[i].idx;
+  return out;
+}
+
+GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
+  const float* d_weights,
+  int K,
+  int num_samples,
+  int seed,
+  cudaStream_t stream)
+{
+  std::vector<float> h_weights(K);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(h_weights.data(), d_weights, sizeof(float) * K, cudaMemcpyDeviceToHost, stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+
+  auto h_out = multinomial_cpu_without_replacement(h_weights.data(), K, num_samples, seed);
   auto b_out = GPUBuffer<int>(stream, num_samples);
   CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, stream));
   CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
