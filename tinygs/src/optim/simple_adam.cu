@@ -14,7 +14,7 @@
 namespace cg = cooperative_groups;
 
 // constexpr float kShRestScale = 1;
-constexpr float kShRestScale = 0.05f;
+constexpr float kShRestScale = 0.3f;
 
 namespace tinygs {
 

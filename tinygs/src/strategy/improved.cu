@@ -53,7 +53,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
     if (m_gaussians->size() < m_params.max_num_gaussians) {
       const float rate = static_cast<float>(this_step() - m_params.start_refine) /
                    (m_params.end_refine - m_params.start_refine);
-      const int budget = min(int(sqrt(rate + 1) * m_params.max_num_gaussians),
+      const int budget = min(int(sqrt(rate + 1e-10) * m_params.max_num_gaussians),
                              m_params.max_num_gaussians);
       duplicate(ctx, budget);
     }
