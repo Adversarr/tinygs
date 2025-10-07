@@ -22,11 +22,11 @@ public:
   /// @brief Get current strategy parameters as JSON
   json get_params() const override;
 
-  pcg32 m_rng;
-
 private:
+  pcg32 m_rng;
   // Improved-specific parameters
-  float m_split_distance = 0.3f;      // similar to Python split_distance
-  float m_opacity_reduction = 0.75f;  // similar to Python opacity_reduction
+  float m_split_distance = 0.3f;
+  float m_opacity_reduction = 0.75f;
+  float m_noise_lr_init = 80.0f;
 };
 }  // namespace tinygs

@@ -843,6 +843,7 @@ json SimpleAdamParameters::to_json() const {
   j["momentum_log_interval"] = g_momentum_log_interval;
   j["gradient_log_interval"] = g_gradient_log_interval;
   j["decouple_decay"] = decouple_decay;
+  j["decay_reduction"] = decay_reduction;
   return j;
 }
 
@@ -852,10 +853,8 @@ void SimpleAdamParameters::from_json(const json& config) {
   if (config.contains("epsilon")) epsilon = config.at("epsilon").get<float>();
   if (config.contains("momentum_log_interval")) g_momentum_log_interval = config.at("momentum_log_interval").get<int>();
   if (config.contains("gradient_log_interval")) g_gradient_log_interval = config.at("gradient_log_interval").get<int>();
-  if (config.contains("enable_adabound")) {
-    // Removed enable_adabound
-  }
   if (config.contains("decouple_decay")) decouple_decay = config.at("decouple_decay").get<bool>();
+  if (config.contains("decay_reduction")) decay_reduction = config.at("decay_reduction").get<std::string>();
 }
 
 /// @brief Reorder Gaussians based on provided indices

@@ -18,6 +18,7 @@ struct StrategyParams {
   /// @brief Split if large gaussian is found (Default Strategy)
   float duplicate_scale_threshold = 0.01f;
 
+  bool reset_reset_optimizer = false;
   bool absgrad = false; /// @brief Whether to use absolute gradient for duplication
   int refine_every = 100;
   int start_refine = 500;

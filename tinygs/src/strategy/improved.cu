@@ -9,6 +9,7 @@
 #include <thrust/extrema.h>
 
 #include "tinygs/cuda/common_device.cuh"
+#include "tinygs/random/device.cuh"
 #include "tinygs/strategy/improved.hpp"
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/random/multinomial.hpp"
@@ -37,6 +38,17 @@ ImprovedStrategy::ImprovedStrategy(
     : StrategyBase(gaussians, gaussians_grad, optimizer) {}
 
 ImprovedStrategy::~ImprovedStrategy() = default;
+
+__global__ static void add_noise_opacity(uint N, float noise_scale,
+                                         float *__restrict__ opacities,
+                                         const float *__restrict__ noise) {
+  uint i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+  const float opacity = activate_opacity(opacities[i]);
+  // Low opacity => high noise, High opacity => low noise
+  const float actual_noise = (1.01f - opacity) * noise_scale * noise[i];
+  opacities[i] += actual_noise;
+}
 
 void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
@@ -68,8 +80,19 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
       step >= m_params.start_refine && step < m_params.end_refine) {
     // this scale is larger than default (10 vs. 2)
-    reset_opacity(m_gaussians, 10.f * m_params.pruning_opacity_threshold, ctx.stream);
+    reset_opacity(m_gaussians, 2.f * m_params.pruning_opacity_threshold, ctx.stream);
     on_reset_opacity();
+  }
+
+  if (m_noise_lr_init > 0) {
+    auto N = m_gaussians->size();
+    float noise_scale = m_noise_lr_init * m_optimizer->get_lr() *
+                        m_optimizer->get_optimization_params().opacities_lr;
+    GPUBuffer<float> noise(ctx.stream, N);
+    generate_random_logistic(m_rng, N, noise.data());
+    linear_kernel(add_noise_opacity, 0, nullptr, N, noise_scale,
+                  thrust::raw_pointer_cast(m_gaussians->opacities().data()),
+                  noise.data());
   }
 }
 
@@ -316,6 +339,9 @@ void ImprovedStrategy::set_params(const json& config) {
   if (config.contains("opacity_reduction")) {
     m_opacity_reduction = config["opacity_reduction"].get<float>();
   }
+  if (config.contains("noise_lr_init")) {
+    m_noise_lr_init = config["noise_lr_init"].get<float>();
+  }
 }
 
 json ImprovedStrategy::get_params() const {
@@ -323,6 +349,7 @@ json ImprovedStrategy::get_params() const {
   params["type"] = "improved";
   params["split_distance"] = m_split_distance;
   params["opacity_reduction"] = m_opacity_reduction;
+  params["noise_lr_init"] = m_noise_lr_init;
   return params;
 }
 

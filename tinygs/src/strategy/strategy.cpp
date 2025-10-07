@@ -56,6 +56,10 @@ void StrategyBase::on_reset(int* indices, int num_reset) {
 void StrategyBase::on_reset_opacity() {
   if (m_optimizer) {
     m_optimizer->reset_opacity();
+    if (m_params.reset_reset_optimizer) {
+      log_info("Reset optimizer after reset opacity!");
+      m_optimizer->reset();
+    }
   }
 }
 
@@ -69,6 +73,7 @@ json StrategyBase::get_params() const {
 
 json StrategyParams::to_json() const {
   json j;
+  j["reset_reset_optimizer"] = reset_reset_optimizer;
   j["pruning_opacity_threshold"] = pruning_opacity_threshold;
   j["pruning_scale_threshold"] = pruning_scale_threshold;
   j["max_screen_size"] = max_screen_size;
@@ -99,6 +104,9 @@ void StrategyParams::from_json(const json& config) {
   }
   if (config.contains("duplicate_scale_threshold")) {
     duplicate_scale_threshold = config["duplicate_scale_threshold"].get<float>();
+  }
+  if (config.contains("reset_reset_optimizer")) {
+    reset_reset_optimizer = config["reset_reset_optimizer"].get<bool>();
   }
   if (config.contains("absgrad")) {
     absgrad = config["absgrad"].get<bool>();
