@@ -119,6 +119,7 @@ json OrchestratorConfig::to_json() const {
   j["enable_progressive_resolution"] = enable_progressive_resolution;
   j["resolution_milestones"] = resolution_milestones;
   j["resolution_scales"] = resolution_scales;
+  j["start_pose_opt"] = start_pose_opt;
   j["scene_scale_recompute_interval"] = scene_scale_recompute_interval;
   j["reorder_gaussians_interval"] = reorder_gaussians_interval;
   return j;
@@ -177,6 +178,8 @@ void OrchestratorConfig::from_json(const json& j) {
       throw std::invalid_argument("Expect resolution_scales to be array of floats.");
     }
   }
+  if (j.contains("start_pose_opt")) start_pose_opt = j["start_pose_opt"].get<size_t>();
+
   if (j.contains("scene_scale_recompute_interval")) scene_scale_recompute_interval = j["scene_scale_recompute_interval"].get<size_t>();
   if (j.contains("reorder_gaussians_interval")) reorder_gaussians_interval = j["reorder_gaussians_interval"].get<size_t>();
 }
@@ -235,6 +238,10 @@ void Orchestrator::set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) {
 
 void Orchestrator::set_optimizer(std::shared_ptr<OptimizerBase> optimizer) {
   m_optimizer = optimizer;
+}
+
+void Orchestrator::set_pose_opt(std::shared_ptr<PoseOptBase> pose_opt) {
+  m_pose_opt = pose_opt;
 }
 
 void Orchestrator::set_strategy(std::shared_ptr<StrategyBase> strategy) {
@@ -318,6 +325,13 @@ void Orchestrator::train_step() {
   // Update rasterization context with current data
   m_rasterize_ctx.fwd_input = data.input;
 
+  if (m_pose_opt) {
+    mat4x4 w2c = data.input.w2c;
+    const uuid_t timestamp = m_rasterize_ctx.fwd_input.timestamp;
+    w2c = m_pose_opt->query(timestamp, w2c);
+    m_rasterize_ctx.fwd_input.w2c = w2c;
+  }
+
   // Forward pass
   m_rasterizer->forward(m_rasterize_ctx);
 
@@ -329,6 +343,14 @@ void Orchestrator::train_step() {
 
   // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
+  auto grad_w2c = m_rasterize_ctx.grad_input.w2c;
+  if (m_pose_opt && m_state.current_step >= m_config.start_pose_opt) {
+    float lr = 1.0f;
+    if (m_lr_scheduler) {
+      lr = m_lr_scheduler->get_lr();
+    }
+    m_pose_opt->update(m_rasterize_ctx.fwd_input.timestamp, grad_w2c, lr);
+  }
   
   // Determine if this step is the end of the accumulation cycle using current_step
   const bool is_cycle_end = ((m_state.current_step + 1) % m_config.accumulate_grad_steps) == 0;
@@ -409,6 +431,12 @@ void Orchestrator::test_step() {
     timestamps.push_back(data.input.timestamp);
     // Rasterize
     m_rasterize_ctx.fwd_input = data.input;
+    if (m_pose_opt) {
+      mat4x4 w2c = data.input.w2c;
+      const uuid_t timestamp = m_rasterize_ctx.fwd_input.timestamp;
+      w2c = m_pose_opt->query(timestamp, w2c);
+      m_rasterize_ctx.fwd_input.w2c = w2c;
+    }
     m_rasterizer->forward(m_rasterize_ctx);
 
     // Wait for the rasterization to finish

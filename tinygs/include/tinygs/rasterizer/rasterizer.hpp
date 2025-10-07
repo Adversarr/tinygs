@@ -36,7 +36,7 @@ public:
 
   virtual void forward(const RasterizeContext& params) = 0;
 
-  virtual void backward(const RasterizeContext& params) = 0;
+  virtual void backward(RasterizeContext& params) = 0;
 
   /// @brief Update gaussians when changed
   virtual void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians);

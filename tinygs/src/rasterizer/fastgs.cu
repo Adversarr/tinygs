@@ -184,7 +184,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     m_impl->instance_primitive_indices_selector = instance_primitive_indices_selector;
 }
 
-void FastGSRasterizer::backward(const RasterizeContext &ctx) {
+void FastGSRasterizer::backward(RasterizeContext &ctx) {
   NVTX3_FUNC_RANGE();
   if (!m_gaussians || !ctx.gaussians_grad) {
     throw std::runtime_error("Gaussians or gradient gaussians not set");
@@ -273,6 +273,9 @@ void FastGSRasterizer::backward(const RasterizeContext &ctx) {
     /* cy */ cy,
     /* stream */ ctx.stream
   );
+
+  // set grad w2c
+  ctx.grad_input.w2c = glm::transpose(m_impl->device_block.at(0).w2c_grad);
 }
 
 FastGSRasterizer::~FastGSRasterizer() {}

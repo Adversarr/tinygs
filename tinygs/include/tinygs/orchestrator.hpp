@@ -11,8 +11,9 @@
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/loss/loss.hpp"
-#include "tinygs/optim/optim.hpp"
 #include "tinygs/optim/lr_scheduler.hpp"
+#include "tinygs/optim/optim.hpp"
+#include "tinygs/pose_opt/pose_opt.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/strategy/strategy.hpp"
 
@@ -57,6 +58,7 @@ struct OrchestratorConfig {
   // Strategy parameters
   size_t scene_scale_recompute_interval = 1000;     ///< Interval for recomputing scene scale in strategy steps
   size_t reorder_gaussians_interval = 1000;         ///< Interval for reordering gaussians in strategy steps
+  size_t start_pose_opt = 500;                     ///< Step to start pose optimization
 
   /// @brief Convert config to JSON
   json to_json() const;
@@ -101,6 +103,9 @@ public:
 
   /// @brief Set the optimizer for parameter updates
   void set_optimizer(std::shared_ptr<OptimizerBase> optimizer);
+
+  /// @brief Set the pose optimizer for camera pose updates
+  void set_pose_opt(std::shared_ptr<PoseOptBase> pose_opt);
 
   /// @brief Set the densification strategy
   void set_strategy(std::shared_ptr<StrategyBase> strategy);
@@ -198,6 +203,7 @@ private:
   std::shared_ptr<DataLoaderBase> m_dataloader;
   std::shared_ptr<OptimizerBase> m_optimizer;
   std::shared_ptr<StrategyBase> m_strategy;
+  std::shared_ptr<PoseOptBase> m_pose_opt;
   std::shared_ptr<LrSchedulerBase> m_lr_scheduler; ///< Learning rate scheduler
 
   // Loss functions and metrics

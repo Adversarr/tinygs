@@ -27,18 +27,18 @@ mat4x4 normalize_scene(
   float ext_scale = 1.0f);
 
 TINYGS_HOST_DEVICE inline float activate_scale(float x) {
-  // return ::expf(x);
-  return log(1 + exp(x));
+  return ::expf(x);
+  // return log(1 + exp(x));
 }
 
 TINYGS_HOST_DEVICE inline float deactivate_scale(float x) {
-  // return ::logf(x);
-  return log(exp(x) - 1);
+  return ::logf(x);
+  // return log(exp(x) - 1);
 }
 
 TINYGS_HOST_DEVICE inline float activate_scale_deriv(float x) {
-  // return ::expf(x);
-  return logistic(x);
+  return ::expf(x);
+  // return logistic(x);
 }
 
 TINYGS_HOST_DEVICE inline vec3 activate_scale(const vec3& x) {

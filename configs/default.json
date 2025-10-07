@@ -33,10 +33,10 @@
     }
   ],
   "lr_scheduler": {
-    "decay_rate": 0.9999769,
+    "decay_rate": 0.999869,
     "initial_lr": 1.0,
     "step_count": 0,
-    "type": "constant"
+    "type": "exponential"
   },
   "metrics": [
     "psnr"
@@ -47,7 +47,7 @@
     "enable_adabound": true,
     "gamma": 1e-3,
     "epsilon": 1.0e-8,
-    "max_grad_1": 0.0,
+    "max_grad_1": 0.3,
     "means_lr": 0.00016,
     "opacities_l1": 0.01,
     "decouple_decay": true,
@@ -61,6 +61,15 @@
     "trust_ratio_min": 0.01,
     "trust_ratio_max": 10.0,
     "type": "simple_adam"
+  },
+  "pose_opt": {
+    "type": "adamw",
+    "lr": 0.0003,
+    "momentum": 0.95,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "epsilon": 1.0e-8,
+    "weight_decay": 0.1
   },
   "rasterizer": {
     "type": "fastgs"
@@ -81,7 +90,7 @@
     "noise_lr_init": 80.0,
     "split_distance": 0.3,
     "opacity_reduction": 0.6,
-    "type": "improved"
+    "type": "default"
   },
   "trainer": {
     "accumulate_grad_steps": 1,
@@ -99,6 +108,7 @@
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 2000,
     "enable_progressive_resolution": true,
+    "start_pose_opt": 0,
     "record_trajectory": true,
     "resolution_milestones": [0, 5000, 10000],
     "resolution_scales": [0.5, 0.75, 1.0],

@@ -128,6 +128,15 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
     throw std::runtime_error("Optimizer config is required.");
   }
 
+  std::shared_ptr<PoseOptBase> pose_opt;
+  if (auto pose_opt_config = config.at("pose_opt"); pose_opt_config.is_object()) {
+    pose_opt = create_pose_opt(pose_opt_config.at("type").get<std::string>());
+    pose_opt->set_params(pose_opt_config);
+    orchestrator->set_pose_opt(pose_opt);
+  } else {
+    throw std::runtime_error("Pose opt config is required.");
+  }
+
   // lr_scheduler
   std::shared_ptr<LrSchedulerBase> lr_scheduler;
   if (auto lr_scheduler_config = config.at("lr_scheduler"); lr_scheduler_config.is_object()) {

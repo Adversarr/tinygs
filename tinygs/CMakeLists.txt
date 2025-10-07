@@ -43,7 +43,12 @@ set(TINYGS_SOURCES
     "src/optim/lr_scheduler.cpp"
     "src/optim/optim.cu"
     "src/optim/sgd.cu"
-    
+
+    # Pose Optimizers
+    "src/pose_opt/pose_opt.cpp"
+    "src/pose_opt/sgdm.cpp"
+    "src/pose_opt/adamw.cpp"
+
     # Random utilities
     "src/random/multinomial.cu"
     

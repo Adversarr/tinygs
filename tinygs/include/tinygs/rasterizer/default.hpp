@@ -12,7 +12,7 @@ public:
 
   void forward(const RasterizeContext& ctx) override;
 
-  void backward(const RasterizeContext& ctx) override;
+  void backward(RasterizeContext& ctx) override;
 
   void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians) override;
 

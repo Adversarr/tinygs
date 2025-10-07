@@ -207,7 +207,7 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
 
 DefaultRasterizer::~DefaultRasterizer() {}
 
-void DefaultRasterizer::backward(const RasterizeContext& ctx) {
+void DefaultRasterizer::backward(RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
 
   uint32_t num_gaussians = m_gaussians->size();

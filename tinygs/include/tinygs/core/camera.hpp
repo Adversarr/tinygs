@@ -41,6 +41,18 @@ struct CameraIntrinsics {
   std::string to_string() const;
 };
 
+inline mat4x4 make_w2c(const mat3x3& rot, const vec3& t) {
+  mat4x4 w2c = rot;
+  w2c[3][0] = t[0];
+  w2c[3][1] = t[1];
+  w2c[3][2] = t[2];
+  return w2c;
+}
+
+inline mat4x4 make_w2c(const quat& q, const vec3& t) {
+  return make_w2c(quat_to_mat3(q), t);
+}
+
 /// @brief Global to_string function for CameraIntrinsics
 std::string to_string(const CameraIntrinsics &intrinsics);
 
