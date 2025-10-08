@@ -11,11 +11,15 @@
 #include <numeric>
 #include <nvtx3/nvtx3.hpp>
 #include <random>
+#include <array>
+#include <limits>
 
 #include "cuda/common_host.hpp"
 #include "nanoflann.hpp"
 #include "random/pcg32.hpp"
 #include "utils/scope_timer.hpp"
+// For local covariance & eigen decomposition
+#include <glm/gtx/pca.hpp>
 
 namespace tinygs {
 
@@ -86,6 +90,101 @@ std::vector<float> KnnInitialization::compute_mean_neighbor_distances(const std:
   }
 
   return result;
+}
+
+// Compute per-point local covariance matrices using KNN neighbors
+std::vector<mat3x3> KnnInitialization::compute_local_covariances(const std::vector<vec3>& points) const {
+  const size_t num_points = points.size();
+  std::vector<mat3x3> covariances(num_points, mat3x3(0.0f));
+
+  if (num_points == 0) {
+    return covariances;
+  }
+
+  PointCloudAdaptor cloud(points);
+  KDTree index(3, cloud, nanoflann::KDTreeSingleIndexAdaptorParams(10));
+  index.buildIndex();
+
+  for (size_t i = 0; i < num_points; ++i) {
+    const float query_pt[3] = {points[i].x, points[i].y, points[i].z};
+    const size_t num_results = std::min(static_cast<size_t>(m_params.num_neighbors + 1), num_points);
+    std::vector<size_t> ret_indices(num_results);
+    std::vector<float> out_dists_sqr(num_results, 0);
+
+    nanoflann::KNNResultSet<float> result_set(num_results);
+    result_set.init(ret_indices.data(), out_dists_sqr.data());
+    index.findNeighbors(result_set, &query_pt[0], nanoflann::SearchParameters(10));
+
+    std::vector<vec3> neighbors;
+    neighbors.reserve(m_params.num_neighbors);
+    const float radius_sqr = (m_params.radius > 0.0f) ? (m_params.radius * m_params.radius) : std::numeric_limits<float>::infinity();
+    for (size_t j = 0; j < num_results; ++j) {
+      const size_t ni = ret_indices[j];
+      if (ni == i) continue; // skip self
+      if (out_dists_sqr[j] <= 1e-16f) continue; // skip near-zero distance
+      if (out_dists_sqr[j] > radius_sqr) continue; // filter out-of-radius
+      neighbors.push_back(points[ni]);
+      if (neighbors.size() >= static_cast<size_t>(m_params.num_neighbors)) break;
+    }
+
+    if (neighbors.size() >= 3) {
+      // Weighted mean and covariance (weights ~ 1 / (d^2 + eps)) for robustness
+      const float eps = 1e-12f;
+      double wsum = 0.0;
+      vec3 mu(0.0f);
+      std::vector<float> weights;
+      weights.reserve(neighbors.size());
+      for (const auto& p : neighbors) {
+        const vec3 d = p - points[i];
+        const double d2 = static_cast<double>(glm::dot(d, d));
+        const float w = static_cast<float>(1.0 / (d2 + eps));
+        weights.push_back(w);
+        wsum += w;
+        mu += w * p;
+      }
+      if (wsum <= eps) {
+        // Degenerate: fallback to isotropic covariance
+        const float d2 = m_params.default_distance * m_params.default_distance;
+        covariances[i] = mat3x3(d2, 0.0f, 0.0f,
+                                0.0f, d2, 0.0f,
+                                0.0f, 0.0f, d2);
+        continue;
+      }
+      mu *= static_cast<float>(1.0 / wsum);
+
+      // Accumulate symmetric covariance in double precision
+      double cxx = 0.0, cxy = 0.0, cxz = 0.0, cyy = 0.0, cyz = 0.0, czz = 0.0;
+      for (size_t k = 0; k < neighbors.size(); ++k) {
+        const vec3 d = neighbors[k] - mu;
+        const double w = static_cast<double>(weights[k]);
+        cxx += w * d.x * d.x;
+        cxy += w * d.x * d.y;
+        cxz += w * d.x * d.z;
+        cyy += w * d.y * d.y;
+        cyz += w * d.y * d.z;
+        czz += w * d.z * d.z;
+      }
+      const double inv_wsum = 1.0 / wsum;
+      cxx *= inv_wsum; cxy *= inv_wsum; cxz *= inv_wsum;
+      cyy *= inv_wsum; cyz *= inv_wsum; czz *= inv_wsum;
+
+      // Diagonal regularization to ensure positive-definiteness
+      const float reg = std::max(m_params.min_distance * m_params.min_distance, 1e-12f);
+      cxx += reg; cyy += reg; czz += reg;
+
+      covariances[i] = mat3x3(static_cast<float>(cxx), static_cast<float>(cxy), static_cast<float>(cxz),
+                              static_cast<float>(cxy), static_cast<float>(cyy), static_cast<float>(cyz),
+                              static_cast<float>(cxz), static_cast<float>(cyz), static_cast<float>(czz));
+    } else {
+      // Fallback isotropic covariance using default distance
+      const float d2 = m_params.default_distance * m_params.default_distance;
+      covariances[i] = mat3x3(d2, 0.0f, 0.0f,
+                              0.0f, d2, 0.0f,
+                              0.0f, 0.0f, d2);
+    }
+  }
+
+  return covariances;
 }
 
 std::vector<size_t> KnnInitialization::radius_outlier_removal(const std::vector<vec3>& points) const {
@@ -185,6 +284,9 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   m_gaussians.sh_coefficient_0.resize(num_points);
   m_gaussians.sh_coefficients_rest.resize(num_points * (kMaxSphericalHarmonicsCoefficients - 1));
 
+  // Compute per-point local covariance matrices from KNN
+  auto local_covariances = compute_local_covariances(filtered_positions);
+
   auto init_opa = deactivate_opacity(m_params.init_opacity);
   // Initialize gaussians using SoA structure with filtered points
   for (size_t i = 0; i < num_points; ++i) {
@@ -192,13 +294,50 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
     m_gaussians.means[i] = vec3(filtered_positions[i].x, filtered_positions[i].y, filtered_positions[i].z);
     m_gaussians.opacities[i] = init_opa;
 
-    // Set rotation (identity quaternion: w=1, x=0, y=0, z=0)
-    m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
+    // Eigen decomposition (symmetric real) on precomputed covariance
+    glm::vec3 evals;
+    glm::mat3 evecs;
+    const int evcnt = glm::findEigenvaluesSymReal(local_covariances[i], evals, evecs);
+    if (evcnt == 3) {
+      // Sort eigenvalues descending and reorder eigenvectors for consistency
+      std::array<int,3> idx = {0,1,2};
+      std::sort(idx.begin(), idx.end(), [&](int a, int b){ return evals[a] > evals[b]; });
+      glm::mat3 evecs_sorted;
+      evecs_sorted[0] = evecs[idx[0]];
+      evecs_sorted[1] = evecs[idx[1]];
+      evecs_sorted[2] = evecs[idx[2]];
+      glm::vec3 evals_sorted(evals[idx[0]], evals[idx[1]], evals[idx[2]]);
 
-    // Set scale based on neighbor distances
-    float scale_value = std::max(neighbor_distances[i] * m_params.init_scaling, m_params.min_distance);
-    float log_scale = deactivate_scale(scale_value);
-    m_gaussians.scales[i] = vec3(log_scale, log_scale, log_scale);
+      // Ensure right-handed basis
+      if (glm::determinant(evecs_sorted) < 0.0f) {
+        evecs_sorted[2] = -evecs_sorted[2];
+      }
+
+      // Set rotation from eigenvectors, normalize and fix hemisphere
+      glm::quat q = glm::quat_cast(evecs_sorted);
+      q = glm::normalize(q);
+      if (q.w < 0.0f) q = -q;
+      m_gaussians.rotations[i] = vec4(q.w, q.x, q.y, q.z);
+
+      // Set per-axis scales from sqrt of eigenvalues (stddev)
+      const float eps = 1e-12f;
+      float sx = std::sqrt(std::max(evals_sorted.x, eps));
+      float sy = std::sqrt(std::max(evals_sorted.y, eps));
+      float sz = std::sqrt(std::max(evals_sorted.z, eps));
+      // Apply init scaling and clamp to reasonable bounds
+      sx = std::clamp(sx * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
+      sy = std::clamp(sy * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
+      sz = std::clamp(sz * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
+
+      m_gaussians.scales[i] = vec3(deactivate_scale(sx), deactivate_scale(sy), deactivate_scale(sz));
+    } else {
+      // Fallback: identity rotation + isotropic scale from mean KNN distance
+      m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
+      float scale_value = std::max(neighbor_distances[i] * m_params.init_scaling, m_params.min_distance);
+      scale_value = std::min(scale_value, m_params.max_distance);
+      float log_scale = deactivate_scale(scale_value);
+      m_gaussians.scales[i] = vec3(log_scale, log_scale, log_scale);
+    }
 
     // Set spherical harmonics coefficients
     vec3 sh_color = rgb_to_sh(filtered_colors[i]);
@@ -220,6 +359,9 @@ void KnnInitialization::set_params(const json& params) {
   }
   if (params.contains("min_distance")) {
     m_params.min_distance = params["min_distance"].get<float>();
+  }
+  if (params.contains("max_distance")) {
+    m_params.max_distance = params["max_distance"].get<float>();
   }
   if (params.contains("default_distance")) {
     m_params.default_distance = params["default_distance"].get<float>();
@@ -249,6 +391,7 @@ json KnnInitialization::get_params() const {
   params["type"] = "knn";
   params["num_neighbors"] = m_params.num_neighbors;
   params["min_distance"] = m_params.min_distance;
+  params["max_distance"] = m_params.max_distance;
   params["default_distance"] = m_params.default_distance;
   params["init_scaling"] = m_params.init_scaling;
   params["init_opacity"] = m_params.init_opacity;
