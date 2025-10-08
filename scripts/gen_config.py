@@ -51,7 +51,7 @@ config_template = r"""
     }
   ],
   "lr_scheduler": {
-    "decay_rate": 0.9996,
+    "decay_rate": 0.9997,
     "initial_lr": 1.0,
     "step_count": 0,
     "type": "exponential"
@@ -91,10 +91,10 @@ config_template = r"""
     "type": "fastgs"
   },
   "strategy": {
-    "duplicate_grad_threshold": 0.0008,
+    "duplicate_grad_threshold": 0.0003,
     "absgrad": true,
     "duplicate_scale_threshold": 0.005,
-    "end_refine": 6000,
+    "end_refine": 5000,
     "max_num_gaussians": 1500000,
     "max_screen_size": 20,
     "pruning_opacity_threshold": 0.005,
@@ -126,7 +126,7 @@ config_template = r"""
     "reorder_gaussians_interval": 2000,
     "enable_progressive_resolution": false,
     "start_pose_opt": 0,
-    "record_trajectory": true,
+    "record_trajectory": false,
     "resolution_milestones": [0, 5000, 10000],
     "resolution_scales": [0.5, 0.75, 1.0],
     "test_steps": [7000],

@@ -559,7 +559,7 @@ float Orchestrator::accumulate_loss() {
   if (!m_loss_buffer) {
     return 0.0f;
   }
-
+  CUDA_CHECK_THROW(cudaStreamSynchronize(m_loss_ctx.stream));
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
   //? the unused pixels in the padded area are set to zero during loss computation
   //! fix the shape is not compatible with the tile-based design.
