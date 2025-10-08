@@ -102,6 +102,7 @@ json OrchestratorConfig::to_json() const {
   json j;
   j["max_steps"] = max_steps;
   j["accumulate_grad_steps"] = accumulate_grad_steps;
+  j["max_seconds"] = max_seconds;
   j["log_interval"] = log_interval;
   j["checkpoint_interval"] = checkpoint_interval;
   j["sh_degree_interval"] = sh_degree_interval;
@@ -128,6 +129,7 @@ json OrchestratorConfig::to_json() const {
 void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("max_steps")) max_steps = j["max_steps"].get<int>();
   if (j.contains("accumulate_grad_steps")) accumulate_grad_steps = j["accumulate_grad_steps"].get<int>();
+  if (j.contains("max_seconds")) max_seconds = j["max_seconds"].get<int>();
   if (j.contains("log_interval")) log_interval = j["log_interval"].get<int>();
   if (j.contains("checkpoint_interval")) checkpoint_interval = j["checkpoint_interval"].get<int>();
   if (j.contains("sh_degree_interval")) sh_degree_interval = j["sh_degree_interval"].get<int>();
@@ -278,6 +280,16 @@ TrainingState Orchestrator::train() {
   m_state.should_stop = false;
 
   while (!m_state.should_stop && m_state.current_step <= m_config.max_steps) {
+    // Time-based stopping
+    if (m_config.max_seconds > 0) {
+      auto now = std::chrono::steady_clock::now();
+      auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_state.start_time).count();
+      if (elapsed >= static_cast<long>(m_config.max_seconds)) {
+        log_info("Max seconds ({}) reached at step {}", m_config.max_seconds, m_state.current_step);
+        test_step();
+        break;
+      }
+    }
     // Test step
     if (std::find(m_config.test_steps.begin(), m_config.test_steps.end(),
                   m_state.current_step) != m_config.test_steps.end()) {
@@ -556,6 +568,10 @@ float Orchestrator::accumulate_loss() {
 
 void Orchestrator::stop_training() {
   m_state.should_stop = true;
+}
+
+bool Orchestrator::is_stop_requested() const {
+  return m_state.should_stop;
 }
 
 void Orchestrator::reset() {

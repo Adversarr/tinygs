@@ -24,6 +24,8 @@ struct OrchestratorConfig {
   // Training parameters
   size_t max_steps = 30000;
   size_t accumulate_grad_steps = 1;
+  // Time-based stopping (0 disables)
+  size_t max_seconds = 0;
 
   // Logging and visualization
   size_t log_interval = 100;

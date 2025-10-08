@@ -28,13 +28,13 @@ config_template = r"""
     "type": "png_folder"
   },
   "initializer": {
-    "default_distance": 0.001,
+    "default_distance": 0.01,
     "enable_radius_outlier_removal": false,
     "init_opacity": 0.1,
     "init_scaling": 1.0,
     "min_distance": 1.0e-07,
     "nb_points": 16,
-    "num_neighbors": 3,
+    "num_neighbors": 8,
     "radius": 0.05,
     "sh_degree": 3,
     "type": "knn"
@@ -51,7 +51,7 @@ config_template = r"""
     }
   ],
   "lr_scheduler": {
-    "decay_rate": 0.99987,
+    "decay_rate": 0.9996,
     "initial_lr": 1.0,
     "step_count": 0,
     "type": "exponential"
@@ -62,20 +62,30 @@ config_template = r"""
   "optimizer": {
     "beta1": 0.9,
     "beta2": 0.999,
-    "enable_adabound": true,
-    "gamma": 1e-3,
     "epsilon": 1.0e-8,
-    "max_grad_1": 0.0,
-    "means_lr": 0.00016,
+    "max_grad_1": 0.3,
+    "means_lr": 0.0003,
     "opacities_l1": 0.01,
     "decouple_decay": true,
+    "decay_reduction": "sum",
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
     "scales_l1": 0.01,
     "scales_lr": 0.005,
     "shs_lr": 0.0025,
     "skip_zero_grad": false,
+    "trust_ratio_min": 0.01,
+    "trust_ratio_max": 10.0,
     "type": "simple_adam"
+  },
+  "pose_opt": {
+    "type": "adamw",
+    "lr": 0.0003,
+    "momentum": 0.95,
+    "beta1": 0.9,
+    "beta2": 0.999,
+    "epsilon": 1.0e-8,
+    "weight_decay": 0.1
   },
   "rasterizer": {
     "type": "fastgs"
@@ -91,12 +101,16 @@ config_template = r"""
     "pruning_scale_threshold": 0.1,
     "refine_every": 100,
     "reset_every": 3000,
+    "reset_reset_optimizer": false,
     "seed": 42,
     "start_refine": 500,
-    "noise_lr_init": 80.0,
-    "type": "default"
+    "noise_lr_init": 0.0,
+    "split_distance": 0.3,
+    "opacity_reduction": 0.6,
+    "type": "improved"
   },
   "trainer": {
+    "accumulate_grad_steps": 1,
     "checkpoint_interval": 1000,
     "early_stopping_patience": 1000,
     "early_stopping_threshold": 1.0e-6,
@@ -107,11 +121,18 @@ config_template = r"""
     "max_sh_degree": 3,
     "max_steps": 7001,
     "near_plane": 0.01,
-    "sh_degree_interval": 1000,
+    "sh_degree_interval": 500,
+    "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 2000,
+    "enable_progressive_resolution": false,
+    "start_pose_opt": 0,
+    "record_trajectory": true,
+    "resolution_milestones": [0, 5000, 10000],
+    "resolution_scales": [0.5, 0.75, 1.0],
     "test_steps": [7000],
     "out_dir": "ARG_OUT",
-    "export_rasterized": true
+    "export_rasterized": true,
+    "max_seconds": 50
   }
 }
 """

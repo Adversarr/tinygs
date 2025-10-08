@@ -56,6 +56,10 @@ Launch script (`launch.sh`)
 PYTHON=python3 VIDEO_TO_PNG=./video_to_png CONFIG_TRAIN=./config_train ./launch.sh /data my_scene out
 ```
 
+Config notes
+
+- `trainer.max_seconds`: stops training after the given seconds (0 disables).
+
 Arguments:
 - `root`: dataset root containing the scene folder
 - `scene_id`: scene folder name under `root`
