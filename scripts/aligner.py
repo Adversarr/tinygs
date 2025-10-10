@@ -238,13 +238,19 @@ if __name__ == "__main__":
     if not images:
         print("Error: no images found")
         exit(1)
-    aligner = Aligner(
-        points,
-        colors,
-        images,
-        camera_extrinsics,
-        camera_intrinsics,
-    )
-    aligner.run()
-    aligner.run_hidden_point_removal()
-    aligner.export(OUT_FILE)
+    try:
+        aligner = Aligner(
+            points,
+            colors,
+            images,
+            camera_extrinsics,
+            camera_intrinsics,
+        )
+        aligner.run()
+        aligner.run_hidden_point_removal()
+        aligner.export(OUT_FILE)
+    except Exception as e:
+        print(f"Error: {e}")
+        # use init point cloud
+        aligner.point_cloud_running = aligner.init_point_cloud
+        aligner.export(OUT_FILE)
