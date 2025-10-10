@@ -180,7 +180,7 @@ def load_point_cloud(file_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray
     points = np.array(points, dtype=np.float64)
     colors = np.array(colors, dtype=np.uint8)
 
-    return point_ids, points, colors
+    return point_ids, points, colors.astype(np.float64) / 255.0
 
 
 def calc_c2w(extrinsic: CameraExtrinsic) -> np.ndarray:

@@ -70,6 +70,13 @@ class DepthAlignment:
         u_in, v_in, z_in, mask_zpos = project_points_to_camera(
             points, camera_intrinsics, T_wc
         )
+        dist_to_boundaries = np.minimum(
+            np.minimum(u_in, v_in),
+            np.minimum(camera_intrinsics.width - u_in, camera_intrinsics.height - v_in),
+        )
+
+        # give center points higher weight
+        weights = np.clip(dist_to_boundaries / np.max(dist_to_boundaries), 0.1, 1.0)
 
         # Sample relative depth values at projected pixel coordinates
         depth_at_proj = relative_depth_map[v_in.astype(np.int32), u_in.astype(np.int32)]
@@ -82,7 +89,7 @@ class DepthAlignment:
         Y = inv_z_in
 
         # Fit RANSAC model
-        self.ransac_model.fit(X, Y)
+        self.ransac_model.fit(X, Y, sample_weight=weights)
 
         # Extract model parameters
         scale = self.ransac_model.estimator_.coef_[0]

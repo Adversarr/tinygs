@@ -30,3 +30,4 @@ outputs
 *.nsys-rep
 config_train
 video_to_png
+loss.png

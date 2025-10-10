@@ -118,6 +118,7 @@ class Aligner:
     def run_hidden_point_removal(self):
         cam_poses = np.stack([e.translation for e in self.camera_extrinsics], axis=0)
         self.point_cloud_running.remove_hidden_points(cam_poses)
+        self.point_cloud_running.add_points(self.init_point_cloud.xyz, self.init_point_cloud.rgb)
 
     def run(self):
         for (cam, img_path) in tqdm(zip(self.camera_extrinsics, self.images), total=len(self.images)):
