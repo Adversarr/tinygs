@@ -40,6 +40,7 @@ set(TINYGS_SOURCES
     "src/optim/simple_adam.cu"
     "src/optim/lion.cu"
     "src/optim/lamb.cu"
+    "src/optim/adan.cu"
     "src/optim/lr_scheduler.cpp"
     "src/optim/optim.cu"
     "src/optim/sgd.cu"
@@ -60,6 +61,9 @@ set(TINYGS_SOURCES
     "src/rasterizer/fastgs.cu"
     "src/rasterizer/fastgs_ours/backward.cu"
     "src/rasterizer/fastgs_ours/forward.cu"
+    # "src/rasterizer/gsplat.cu"
+    # "src/rasterizer/gsplat/backward.cu"
+    # "src/rasterizer/gsplat/forward.cu"
     "src/rasterizer/rasterizer.cpp"
     
     # Strategy

@@ -34,7 +34,7 @@
   ],
   "lr_scheduler": {
     "decay_rate": 0.999869,
-    "initial_lr": 1.0,
+    "initial_lr": 3.0,
     "step_count": 0,
     "type": "exponential"
   },
@@ -42,14 +42,12 @@
     "psnr"
   ],
   "optimizer": {
-    "beta1": 0.9,
-    "beta2": 0.999,
     "epsilon": 1.0e-8,
-    "max_grad_1": 0.3,
-    "means_lr": 0.0003,
+    "max_grad_1": 0,
+    "means_lr": 0.00016,
     "opacities_l1": 0.01,
-    "decouple_decay": true,
-    "decay_reduction": "sum",
+    "decouple_decay": false,
+    "decay_reduction": "mean",
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
     "scales_l1": 0.01,
@@ -67,7 +65,7 @@
     "beta1": 0.9,
     "beta2": 0.999,
     "epsilon": 1.0e-8,
-    "weight_decay": 0.1
+    "weight_decay": 0.01
   },
   "rasterizer": {
     "type": "fastgs"
@@ -87,7 +85,7 @@
     "seed": 42,
     "start_refine": 500,
     "noise_lr_init": 0.0,
-    "split_distance": 0.3,
+    "split_distance": 0.45,
     "opacity_reduction": 0.6,
     "type": "improved"
   },
@@ -114,6 +112,6 @@
     "test_steps": [2000, 5000, 7000, 10000, 15000, 30000],
     "out_dir": "outputs",
     "export_rasterized": true,
-    "max_seconds": 50
+    "max_seconds": 0
   }
 }

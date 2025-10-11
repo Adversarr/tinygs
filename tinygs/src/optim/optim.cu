@@ -4,6 +4,7 @@
 #include "tinygs/optim/lion.hpp"
 #include "tinygs/optim/lamb.hpp"
 #include "tinygs/optim/optim.hpp"
+#include "tinygs/optim/adan.hpp"
 #include <nlohmann/json.hpp>
 
 namespace tinygs {
@@ -96,6 +97,8 @@ std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_typ
     return std::make_unique<Lion>(gaussians, gaussians_grad);
   } else if (lower_optimizer_type == "lamb") {
     return std::make_unique<Lamb>(gaussians, gaussians_grad);
+  } else if (lower_optimizer_type == "adan") {
+    return std::make_unique<Adan>(gaussians, gaussians_grad);
   } else {
     throw std::runtime_error("Unknown optimizer type: " + optimizer_type);
   }

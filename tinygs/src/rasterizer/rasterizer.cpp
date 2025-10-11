@@ -1,6 +1,7 @@
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/rasterizer/fastgs.hpp"
 #include "tinygs/rasterizer/default.hpp"
+#include "tinygs/rasterizer/gsplat.hpp"
 
 namespace tinygs {
 

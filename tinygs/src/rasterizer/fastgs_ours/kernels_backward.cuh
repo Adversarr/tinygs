@@ -573,10 +573,13 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             }
 
             const float blending_weight = transmittance * alpha;
+            const float inv_contribution = sqrtf(1.0f / (transmittance + config::min_alpha_threshold));
+            // const float inv_contribution = 1;
             const float one_minus_alpha = 1.0f - alpha;
             // color gradient
             const float3 dL_dcolor = blending_weight * (grad_color_pixel * color_grad_factor);
-            dL_dcolor_accum += dL_dcolor;
+            // dL_dcolor_accum += dL_dcolor;
+            dL_dcolor_accum += dL_dcolor * inv_contribution;
             color_pixel_after -= blending_weight * color;
             const float color_pixel_after_dot_grad_color_pixel = dot(color_pixel_after, grad_color_pixel);
             const float2 prepare_dl_dmean2d =
@@ -586,14 +589,17 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // alpha gradient
             const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel / one_minus_alpha;
             const float dL_draw_opacity_partial = alpha * dL_dalpha_from_color;
-            dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
+            // dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
+            dL_draw_opacity_partial_accum += dL_draw_opacity_partial * inv_contribution;
 
             // conic and mean2d gradient
             const float3 dL_dconic = -0.5f * dL_draw_opacity_partial * delta_coefs;
-            dL_dconic_accum += dL_dconic;
+            // dL_dconic_accum += dL_dconic;
+            dL_dconic_accum += dL_dconic * inv_contribution;
             const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
 
-            dL_dmean2d_accum -= dL_dmean2d;
+            // dL_dmean2d_accum -= dL_dmean2d;
+            dL_dmean2d_accum -= dL_dmean2d * inv_contribution;
             absdL_dmean2d_accum += make_float2(fabsf(dL_dmean2d.x), fabsf(dL_dmean2d.y));
             transmittance *= one_minus_alpha;
         }
