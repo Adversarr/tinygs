@@ -31,3 +31,5 @@ outputs
 config_train
 video_to_png
 loss.png
+*.pt
+*.pth
