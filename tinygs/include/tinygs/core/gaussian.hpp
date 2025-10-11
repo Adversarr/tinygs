@@ -19,6 +19,7 @@ struct DensificationInfo {
   float accum_counter = 0;
   float accum_grad_mean2d = 0;    /// accumulated gradient of mean2d
   float accum_absgrad_mean2d = 0; /// accumulated absolute gradient of mean2d
+  float max_radii_screen = 0;     /// maximum radii in screen space
 };
 
 mat4x4 normalize_scene(

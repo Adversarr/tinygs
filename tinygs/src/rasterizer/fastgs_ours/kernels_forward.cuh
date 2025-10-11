@@ -163,6 +163,7 @@ __global__ void preprocess_cu(
     const float3* __restrict__ sh_coefficients_rest,
     const float4* __restrict__ w2c,
     const float3* __restrict__ cam_position,
+    tinygs::DensificationInfo* __restrict__ densification_info,
     uint* __restrict__ primitive_depth_keys,
     uint* __restrict__ primitive_indices,
     uint* __restrict__ primitive_n_touched_tiles,
@@ -338,6 +339,13 @@ __global__ void preprocess_cu(
         cov2d.z / determinant,
         -cov2d.y / determinant,
         cov2d.x / determinant);
+    if (densification_info){
+        float mid = 0.5f * (cov2d.x + cov2d.z);
+        float lambda1 = mid + sqrt(max(0.1f, mid * mid - determinant));
+        float lambda2 = mid - sqrt(max(0.1f, mid * mid - determinant));
+        float my_radius = ceil(3.f * sqrt(max(lambda1, lambda2)));
+        densification_info[primitive_idx].max_radii_screen = fmaxf(densification_info[primitive_idx].max_radii_screen, my_radius);
+    }
 
     // 2d mean in screen space
     const float2 mean2d = make_float2(

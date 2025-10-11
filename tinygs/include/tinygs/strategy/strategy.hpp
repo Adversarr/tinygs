@@ -11,7 +11,7 @@ struct StrategyParams {
   /// @brief Prune large gaussians in world space
   float pruning_scale_threshold = 0.1f;
   /// @brief Prune large gaussians in view space (2D)
-  int max_screen_size = 20;
+  float max_screen_size = 10.0f; // very large to disable it.
 
   /// @brief Grow if gradient is large (Default Strategy)
   float duplicate_grad_threshold = 0.0002f;

@@ -158,6 +158,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_rest.data())),
             /* w2c */ reinterpret_cast<const float4*>(&m_impl->device_block.at(0).w2c),
             /* cam_position */ &m_impl->device_block.at(0).cam_position,
+            /* densification_info */ ctx.densification_info ? ctx.densification_info->data() : nullptr,
             /* image */ static_cast<float*>(ctx.fwd_output.image.data),
             /* alpha */ thrust::raw_pointer_cast(m_impl->m_alpha_buffer.data()),
             /* n_primitives */ m_gaussians->size(),

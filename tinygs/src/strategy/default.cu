@@ -299,8 +299,11 @@ void DefaultStrategy::prune(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
   auto exec = thrust::cuda::par.on(ctx.stream);
 
+  auto abs_ss_threshold = max(ctx.fwd_input.width, ctx.fwd_input.height) * m_params.max_screen_size;
+
   // Remove dead gaussians
   const auto num_gaussians = m_gaussians->size();
+  const int original_num_gasussians = ctx.densification_info->size();
   thrust::device_vector<char> is_alive(num_gaussians);
   const auto* d_opacity = thrust::raw_pointer_cast(m_gaussians->opacities().data());
   thrust::for_each(exec,                                                     //
@@ -312,12 +315,16 @@ void DefaultStrategy::prune(const RasterizeContext& ctx) {
        rotation = thrust::raw_pointer_cast(m_gaussians->rotations().data()), //
        pruning_scale_threshold = m_params.pruning_scale_threshold,           //
        prune_large = this_step() > m_params.reset_every,                     //
+       max_radii_screen_threshold = abs_ss_threshold,                        //
+       original_num_gasussians,
+       deninfo = ctx.densification_info->data(),                 //
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) { //
         bool not_large_ws = max(activate_scale(scale[i])) < pruning_scale_threshold * scene_scale;
+        bool not_large_ss = i >= original_num_gasussians || deninfo[i].max_radii_screen < max_radii_screen_threshold;
         bool not_transparent = activate_opacity(d_opacity[i]) > min_opacity;
         bool not_degenerate = sum(abs(rotation[i])) > FLT_EPSILON;
 
-        if (not_transparent && (not_large_ws || !prune_large) && not_degenerate) {
+        if (not_transparent && ((not_large_ws && not_large_ss) || !prune_large) && not_degenerate) {
           d_is_alive[i] = 1;
         } else {
           d_is_alive[i] = 0;

@@ -7,7 +7,7 @@
 #include "helper_math.h"
 #include <functional>
 #include <tuple>
-
+#include "tinygs/core/gaussian.hpp"
 namespace fast_gs::rasterization {
 
     std::tuple<int, int, int, int, int> forward(
@@ -23,6 +23,7 @@ namespace fast_gs::rasterization {
         const float3* sh_coefficients_rest,
         const float4* w2c,
         const float3* cam_position,
+        tinygs::DensificationInfo* densification_info,
         float* image,
         float* alpha,
         const int n_primitives,

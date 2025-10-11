@@ -97,7 +97,7 @@ void StrategyParams::from_json(const json& config) {
     pruning_scale_threshold = config["pruning_scale_threshold"].get<float>();
   }
   if (config.contains("max_screen_size")) {
-    max_screen_size = config["max_screen_size"].get<int>();
+    max_screen_size = config["max_screen_size"].get<float>();
   }
   if (config.contains("duplicate_grad_threshold")) {
     duplicate_grad_threshold = config["duplicate_grad_threshold"].get<float>();
