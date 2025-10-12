@@ -164,7 +164,8 @@ void save_ply(const std::string& filename, const Gaussian3d& gs, bool full_featu
     plyData.getElement("vertex").addProperty<unsigned char>("green", f_dc_g);
     plyData.getElement("vertex").addProperty<unsigned char>("blue", f_dc_b);
     if (! full_features) {
-      log_info("Saved {} gaussians to PLY file: {}", num_points, filename);
+      log_info("Saved {} gaussians to PLY file: {} (partial features)", num_points, filename);
+      plyData.write(filename, happly::DataFormat::Binary);
       return;
     }
     plyData.getElement("vertex").addProperty<float>("f_dc_r", f_dc_0);
