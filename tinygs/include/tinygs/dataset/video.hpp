@@ -48,7 +48,6 @@ private:
   bool m_undistortion{false};
 
   /// Loaded data
-  SingleCameraLoader m_camera_loader;
   ImageShape m_image_shape;
   uint8_t* m_data;
 

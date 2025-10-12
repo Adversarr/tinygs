@@ -573,8 +573,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             }
 
             const float blending_weight = transmittance * alpha;
-            const float inv_contribution = sqrtf(1.0f / (blending_weight + config::min_alpha_threshold));
-            // const float inv_contribution = 1;
+            // const float inv_contribution = sqrtf(1.0f / (blending_weight + config::min_alpha_threshold));
+            const float inv_contribution = 1;
             const float one_minus_alpha = 1.0f - alpha;
             // color gradient
             const float3 dL_dcolor = blending_weight * (grad_color_pixel * color_grad_factor);

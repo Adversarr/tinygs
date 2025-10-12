@@ -101,6 +101,7 @@ int main(int argc, char** argv) {
   params.inference = true;
   params.fwd_input = io.input;
   params.fwd_output = io.output;
+  params.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(gpu_gaussian->size());
 
   auto rast = create_rasterizer(rasterizer);
   rast->set_gaussians(gpu_gaussian);
@@ -203,5 +204,13 @@ int main(int argc, char** argv) {
     std::cout << "  dOpacities: " << o << std::endl;
     std::cout << "  dSH0: [" << c0.x << ", " << c0.y << ", " << c0.z << "]" << std::endl;
   }
+  auto dinfo = params.densification_info->to_cpu();
+
+  for (int i = 0; i < dinfo.size(); ++i) {
+    std::cout << "  dDensificationInfo: " << dinfo[i].accum_absgrad_mean2d << std::endl;
+    std::cout << "  dDensificationInfo: " << dinfo[i].accum_grad_mean2d << std::endl;
+    std::cout << "  dDensificationInfo: " << dinfo[i].accum_counter << std::endl;
+  }
+
   return 0;
 }

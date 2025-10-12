@@ -108,7 +108,7 @@ PointCloud load_point_cloud(const std::string& filename) {
   }
 }
 
-void save_ply(const std::string& filename, const Gaussian3d& gs) {
+void save_ply(const std::string& filename, const Gaussian3d& gs, bool full_features) {
   auto& sh0 = gs.sh_coefficient_0;
   auto& sh_rest = gs.sh_coefficients_rest;
   auto& xyz = gs.means;
@@ -150,10 +150,7 @@ void save_ply(const std::string& filename, const Gaussian3d& gs) {
       f_dc_1.push_back(dc.y);
       f_dc_2.push_back(dc.z);
     }
-    plyData.getElement("vertex").addProperty<float>("f_dc_r", f_dc_0);
-    plyData.getElement("vertex").addProperty<float>("f_dc_g", f_dc_1);
-    plyData.getElement("vertex").addProperty<float>("f_dc_b", f_dc_2);
-
+    
     std::vector<unsigned char> f_dc_r(num_points);
     std::vector<unsigned char> f_dc_g(num_points);
     std::vector<unsigned char> f_dc_b(num_points);
@@ -166,6 +163,13 @@ void save_ply(const std::string& filename, const Gaussian3d& gs) {
     plyData.getElement("vertex").addProperty<unsigned char>("red", f_dc_r);
     plyData.getElement("vertex").addProperty<unsigned char>("green", f_dc_g);
     plyData.getElement("vertex").addProperty<unsigned char>("blue", f_dc_b);
+    if (! full_features) {
+      log_info("Saved {} gaussians to PLY file: {}", num_points, filename);
+      return;
+    }
+    plyData.getElement("vertex").addProperty<float>("f_dc_r", f_dc_0);
+    plyData.getElement("vertex").addProperty<float>("f_dc_g", f_dc_1);
+    plyData.getElement("vertex").addProperty<float>("f_dc_b", f_dc_2);
   }
   // Extract and add rest of SH coefficients
   if (!sh_rest.empty()) {

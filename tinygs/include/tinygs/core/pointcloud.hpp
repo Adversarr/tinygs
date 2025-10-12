@@ -23,6 +23,6 @@ PointCloud load_ply(const std::string& filename);
 PointCloud load_point_cloud(const std::string& filename);
 
 /// @brief Save Gaussian3d data to PLY file.
-void save_ply(const std::string& filename, const Gaussian3d& gs);
+void save_ply(const std::string& filename, const Gaussian3d& gs, bool full_features = false);
 
 }  // namespace tinygs

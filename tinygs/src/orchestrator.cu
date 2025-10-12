@@ -116,6 +116,7 @@ json OrchestratorConfig::to_json() const {
   j["grad_scaler"] = grad_scaler;
   j["out_dir"] = out_dir;
   j["export_rasterized"] = export_rasterized;
+  j["export_full_features"] = export_full_features;
   j["record_trajectory"] = record_trajectory;
   j["enable_progressive_resolution"] = enable_progressive_resolution;
   j["resolution_milestones"] = resolution_milestones;
@@ -154,6 +155,7 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("grad_scaler")) grad_scaler = j["grad_scaler"].get<float>();
   if (j.contains("out_dir")) out_dir = j["out_dir"].get<std::string>();
   if (j.contains("export_rasterized")) export_rasterized = j["export_rasterized"].get<bool>();
+  if (j.contains("export_full_features")) export_full_features = j["export_full_features"].get<bool>();
   if (j.contains("record_trajectory")) record_trajectory = j["record_trajectory"].get<bool>();
   if (j.contains("enable_progressive_resolution")) enable_progressive_resolution = j["enable_progressive_resolution"].get<bool>();
   if (j.contains("resolution_milestones")) {
@@ -552,7 +554,7 @@ void Orchestrator::test_step() {
 
   Gaussian3d gs_host;
   m_gaussians->copy_to_host(gs_host);
-  save_ply(out_dir + "/points.ply", gs_host);
+  save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features);
 }
 
 float Orchestrator::accumulate_loss() {
@@ -636,6 +638,7 @@ void Orchestrator::initialize() {
   } else {
     log_info("Start from full resolution {}x{}", training_shape.width, training_shape.height);
   }
+  log_info("Camera intrinsics: {}", to_string(m_dataloader->get_dataset()->get_camera_loader().get_camera_intrinsics()));
   set_render_resolution(training_shape);
 
   uint32_t width = training_shape.width;

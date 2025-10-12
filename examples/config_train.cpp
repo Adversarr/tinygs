@@ -81,6 +81,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
     throw std::runtime_error("Dataset config is required.");
   }
 
+  log_info("Camera Intrisics: {}", to_string(dataset->get_camera_loader().get_camera_intrinsics()));
   // dataloader
   std::shared_ptr<DataLoaderBase> dataloader;
   if (auto dataloader_config = config.at("dataloader"); dataloader_config.is_object()) {
