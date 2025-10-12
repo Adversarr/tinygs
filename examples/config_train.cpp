@@ -20,13 +20,16 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize = false);
 
 int main(int argc, char** argv) {
   auto opts = cxxopts::Options("config_train", "Train model with config file.");
-
   opts.add_options()
     ("h,help", "Print help")
     ("v,visualize", "Visualize training process", cxxopts::value<bool>()->default_value("false"))
+    ("d,debug", "Enable debug mode", cxxopts::value<bool>()->default_value("false"))
     ("c,config", "Config file path", cxxopts::value<std::string>());
 
   auto result = opts.parse(argc, argv);
+  if(result["debug"].as<bool>()) {
+    spdlog::set_level(spdlog::level::debug);
+  }
 
   if (result.count("help")) {
     std::cout << opts.help() << std::endl;
@@ -211,7 +214,8 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
     if (visualize) {
       cv::Mat img = orchestrator->to_opencv();
       if (!img.empty()) {
-        cv::imshow("render", img);
+        cv::imwrite("render.png", img);
+        // cv::imshow("render", img);
 
         if (char key = cv::waitKey(3); key == 27) {
           orchestrator->stop_training();

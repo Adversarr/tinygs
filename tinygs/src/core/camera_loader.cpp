@@ -45,7 +45,8 @@ void SingleCameraLoader::resize_sensor(uint32_t width, uint32_t height) {
   }
   auto &intr = m_camera_intrinsics;
   if (intr.width == 0 || intr.height == 0) {
-    throw std::runtime_error("resize_sensor: intrinsics not initialized");
+    throw std::runtime_error(fmt::format("resize_sensor: intrinsics not initialized (width={}, height={})",
+                                         intr.width, intr.height));
   }
   if (intr.width == static_cast<int>(width) && intr.height == static_cast<int>(height)) {
     return; // no change

@@ -49,8 +49,9 @@ private:
   std::string m_intrinsics_file_path{"YOUR_INTRINSICS_FILE_PATH"};
   std::string m_extension{"png"}; // TODO: support other extensions will break the class name.
   bool m_interpolate{false}; // Whether to interpolate between timestamps to use more frames.
+  bool m_undistortion{false}; // Whether to undistort images and update intrinsics.
 
-  // TODO: this class do not support undistortion.
+  // This class supports optional undistortion when enabled via params.
 
   /// Loaded data
   ImageShape m_image_shape;

@@ -8,7 +8,8 @@
     "intrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/cameras.txt",
     "video_info_path": "/data/yzr/Final/1747834320424/inputs/videoInfo.txt",
     "video_file_path": "/data/yzr/Final/1747834320424/1747834320424_flip.mp4",
-    "interpolate": true,
+    "interpolate": false,
+    "undistortion": true,
     "extension": "png",
     "type": "video"
   },
@@ -16,7 +17,7 @@
     "default_distance": 0.01,
     "enable_radius_outlier_removal": false,
     "init_opacity": 0.1,
-    "init_scaling": 1.0,
+    "init_scaling": 0.6,
     "min_distance": 1.0e-07,
     "nb_points": 16,
     "num_neighbors": 8,
@@ -90,7 +91,7 @@
     "noise_lr_init": 0.0,
     "split_distance": 0.3,
     "opacity_reduction": 0.6,
-    "type": "improved"
+    "type": "default"
   },
   "trainer": {
     "accumulate_grad_steps": 1,
@@ -107,7 +108,7 @@
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 2000,
-    "enable_progressive_resolution": false,
+    "enable_progressive_resolution": true,
     "start_pose_opt": 500,
     "record_trajectory": true,
     "resolution_milestones": [0, 15000],
