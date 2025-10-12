@@ -3,6 +3,7 @@ import sys
 import glob
 from pathlib import Path
 
+import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -61,20 +62,46 @@ def main():
     parser.add_argument("--id", type=str, default='1747834320424', help="ID of the scene")
     parser.add_argument("--working_dir", type=str, default='/data/yzr/Final/1747834320424/inputs', help="Working directory containing images/")
     parser.add_argument("--out", type=str, default='aligned_points/', help="Output directory for generated PLY")
-    parser.add_argument("--ckpt_path", type=str, default='model_tracker_fixed_e20.pt', help="VGGT model checkpoint path")
+    parser.add_argument("--ckpt_path", type=str, default='model_tracker_fixed_e30.pt', help="VGGT model checkpoint path")
     parser.add_argument("--merging", type=int, default=0, help="VGGT merging parameter")
     parser.add_argument("--depth_conf_thresh", type=float, default=2, help="Depth confidence threshold")
     parser.add_argument("--max_points", type=int, default=100000, help="Max number of 3D points to keep")
+    parser.add_argument("--full-video", action="store_true", help="Process full video instead of extracted frames")
+    parser.add_argument("--t_interval", type=int, default=1, help="Time interval between frames to process")
     args = parser.parse_args()
 
     ID = args.id
     INPUT_FOLDER = f"{args.working_dir}/images/"
+    VIDEO_FILE = f'{args.root}/{ID}/{ID}_flip.mp4'
     OUT_DIR = Path(args.out)
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     OUT_FILE = OUT_DIR / f"{ID}.ply"
 
     # Gather images
+    if args.full_video:
+        print(f"Extracting frames from {VIDEO_FILE}")
+        cap = cv2.VideoCapture(VIDEO_FILE)
+        Path(f"{args.working_dir}/full_frames").mkdir(exist_ok=True, parents=True)
+        frame_count = 0
+        max_resolution_wh = 518
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+            # Resize frame if larger than max_resolution_wh
+            if max(frame.shape[:2]) > max_resolution_wh:
+                scale = max_resolution_wh / max(frame.shape[:2])
+                frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
+            cv2.imwrite(f"{args.working_dir}/full_frames/{frame_count:06d}.png", frame)
+            frame_count += 1
+        cap.release()
+        INPUT_FOLDER = f"{args.working_dir}/full_frames/"
+    else:
+        INPUT_FOLDER = f"{args.working_dir}/images/"
     image_paths = sorted(glob.glob(os.path.join(INPUT_FOLDER, "*")))
+    # Filter image paths based on t_interval
+    image_paths = image_paths[::args.t_interval]
+    
     if len(image_paths) == 0:
         print(f"Error: no images found in {INPUT_FOLDER}")
         return
@@ -131,6 +158,7 @@ def main():
     print(f"Filtered {points_3d.shape[0]} points by confidence")
     points_rgb = points_rgb[conf_mask]
     points_xyf = points_xyf[conf_mask]  # not used for PLY but kept for completeness
+    points_3d[:, 1] *= -1
 
     # Save PLY point cloud
     try:

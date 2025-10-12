@@ -57,10 +57,11 @@ public:
    */
   void resize_sensor(uint32_t width, uint32_t height);
 
+  void interpolate_to_support(uuid_t frame_idx, uuid_t timestamp);
+
 private:
   std::vector<CameraExtrinsics> m_camera_extrinsics;
   CameraIntrinsics m_camera_intrinsics;
-  std::unordered_map<uuid_t, size_t> m_timestamp_cam_idx;
 };
 
 }  // namespace tinygs

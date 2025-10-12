@@ -3,7 +3,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
-
+#include "tinygs/core/camera_ext.hpp"
 #include "tinygs/utils/file.hpp"
 
 namespace tinygs {
@@ -18,11 +18,9 @@ void SingleCameraLoader::load_camera_extrinsics(const std::string& extrinsics_fi
   auto lines = readlines(extrinsics_file_path);
   m_camera_extrinsics.clear();
   m_camera_extrinsics.reserve(lines.size());
-  m_timestamp_cam_idx.clear();
 
   for (const auto& line : lines) {
     const auto& ext = m_camera_extrinsics.emplace_back(CameraExtrinsics::parse(line));
-    m_timestamp_cam_idx[ext.timestamp] = m_camera_extrinsics.size() - 1;
   }
   std::sort(m_camera_extrinsics.begin(), m_camera_extrinsics.end(), [](const auto& a, const auto& b) {
     return a.frame_idx < b.frame_idx;
@@ -71,6 +69,45 @@ void SingleCameraLoader::resize_sensor(uint32_t width, uint32_t height) {
   intr.height = static_cast<int>(height);
 
   log_info("Resized camera sensor to {}x{} (scale {:.6f})", width, height, sx);
+}
+
+void SingleCameraLoader::interpolate_to_support(uuid_t frame_idx, uuid_t timestamp) {
+  if (std::find_if(m_camera_extrinsics.begin(), m_camera_extrinsics.end(), [timestamp](const auto& ext) {
+        return ext.timestamp == timestamp;
+      }) != m_camera_extrinsics.end()) {
+    // timestamp is already in the support
+    return;
+  }
+  CameraExtrinsics final;
+  final.frame_idx = frame_idx;
+  final.timestamp = timestamp;
+  
+  // find the first camera with timestamp >= timestamp
+  auto first_larger = std::lower_bound(m_camera_extrinsics.begin(), m_camera_extrinsics.end(), timestamp,
+                                       [](const auto& a, uuid_t b) {
+                                         return a.timestamp < b;
+                                       });
+  if (first_larger == m_camera_extrinsics.begin()) {
+    // timestamp is smaller than the first camera
+    final.m_q = first_larger->m_q;
+    final.m_t = first_larger->m_t;
+    m_camera_extrinsics.insert(first_larger, final);
+  } else if (first_larger == m_camera_extrinsics.end()) {
+    // timestamp is larger than the last camera
+    final.m_q = m_camera_extrinsics.back().m_q;
+    final.m_t = m_camera_extrinsics.back().m_t;
+    m_camera_extrinsics.emplace_back(final);
+  } else {
+    // interpolate between first_larger - 1 and first_larger
+    auto lo = first_larger - 1;
+    auto hi = first_larger;
+    float t = static_cast<float>(timestamp - lo->timestamp) / (hi->timestamp - lo->timestamp);
+
+    auto interp = interpolate(*lo, *hi, t);
+    final.m_q = interp.m_q;
+    final.m_t = interp.m_t;
+    m_camera_extrinsics.insert(first_larger, final);
+  }
 }
 
 }  // namespace tinygs

@@ -2,6 +2,7 @@
 set(TINYGS_SOURCES
     # Core sources
     "src/core/camera.cpp"
+    "src/core/camera_ext.cpp"
     "src/core/camera_loader.cpp"
     "src/core/gaussian.cpp"
     "src/core/gpu_gaussian.cu"

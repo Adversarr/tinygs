@@ -87,9 +87,9 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         # Update all attention layers in the aggregator
         update_attention_in_module(self.aggregator)
 
-        # print(
-        #     f"🔧 Updated model attention layer patch dimensions: {patch_width}x{patch_height}"
-        # )
+        print(
+            f"🔧 Updated model attention layer patch dimensions: {patch_width}x{patch_height}"
+        )
 
     def forward(
         self,

@@ -202,6 +202,9 @@ void PngFolderDataset::set_params(const json& j) {
   if (j.contains("extension")) {
     m_extension = j["extension"].get<std::string>();
   }
+  if (j.contains("interpolate")) {
+    m_interpolate = j["interpolate"].get<bool>();
+  }
 }
 
 json PngFolderDataset::get_params() const {
@@ -211,6 +214,7 @@ json PngFolderDataset::get_params() const {
   params["extrinsics_file_path"] = m_extrinsics_file_path;
   params["intrinsics_file_path"] = m_intrinsics_file_path;
   params["extension"] = m_extension;
+  params["interpolate"] = m_interpolate;
   return params;
 }
 

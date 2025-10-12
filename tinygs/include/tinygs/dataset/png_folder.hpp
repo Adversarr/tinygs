@@ -48,6 +48,7 @@ private:
   std::string m_extrinsics_file_path{"YOUR_EXTRINSICS_FILE_PATH"};
   std::string m_intrinsics_file_path{"YOUR_INTRINSICS_FILE_PATH"};
   std::string m_extension{"png"}; // TODO: support other extensions will break the class name.
+  bool m_interpolate{false}; // Whether to interpolate between timestamps to use more frames.
 
   // TODO: this class do not support undistortion.
 

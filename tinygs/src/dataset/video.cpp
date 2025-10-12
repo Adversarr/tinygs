@@ -110,10 +110,19 @@ void VideoDataset::load() {
   // Initialize camera loader with stored paths
   m_camera_loader = SingleCameraLoader(m_extrinsics_file_path, m_intrinsics_file_path);
   m_timestamp_frame = load_video_info(m_video_info_path);
-  m_size = m_camera_loader.get_camera_extrinsics().size();
-  if (m_size == 0) {
-    throw std::runtime_error("No frames found in video: " + m_video_file_path);
+  
+  if (m_interpolate){
+    m_size = m_timestamp_frame.size();
+    for (auto & [timestamp, frame_idx] : m_timestamp_frame) {
+      m_camera_loader.interpolate_to_support(frame_idx, timestamp);
+    }
+  } else {
+    m_size = m_camera_loader.get_camera_extrinsics().size();
+    if (m_size == 0) {
+      throw std::runtime_error("No frames found in video: " + m_video_file_path);
+    }
   }
+  log_info("Loaded {} frames from video: {}", m_size, m_video_file_path);
 
   // Open video file
   cv::VideoCapture cap(m_video_file_path);
@@ -253,10 +262,21 @@ VideoDataset::~VideoDataset() {
 }
 
 void VideoDataset::set_params(const json& j) {
-  m_video_file_path = j["video_file_path"].get<std::string>();
-  m_video_info_path = j["video_info_path"].get<std::string>();
-  m_extrinsics_file_path = j["extrinsics_file_path"].get<std::string>();
-  m_intrinsics_file_path = j["intrinsics_file_path"].get<std::string>();
+  if (j.contains("interpolate")) {
+    m_interpolate = j["interpolate"].get<bool>();
+  }
+  if (j.contains("video_file_path")) {
+    m_video_file_path = j["video_file_path"].get<std::string>();
+  }
+  if (j.contains("video_info_path")) {
+    m_video_info_path = j["video_info_path"].get<std::string>();
+  }
+  if (j.contains("extrinsics_file_path")) {
+    m_extrinsics_file_path = j["extrinsics_file_path"].get<std::string>();
+  }
+  if (j.contains("intrinsics_file_path")) {
+    m_intrinsics_file_path = j["intrinsics_file_path"].get<std::string>();
+  }
 }
 
 json VideoDataset::get_params() const {
@@ -266,6 +286,7 @@ json VideoDataset::get_params() const {
   params["video_info_path"] = m_video_info_path;
   params["extrinsics_file_path"] = m_extrinsics_file_path;
   params["intrinsics_file_path"] = m_intrinsics_file_path;
+  params["interpolate"] = m_interpolate;
   return params;
 }
 

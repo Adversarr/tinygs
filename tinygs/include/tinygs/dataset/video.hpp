@@ -44,6 +44,7 @@ private:
   std::string m_video_info_path{"YOUR_VIDEO_INFO_PATH"};
   std::string m_extrinsics_file_path{"YOUR_EXTRINSICS_FILE_PATH"};
   std::string m_intrinsics_file_path{"YOUR_INTRINSICS_FILE_PATH"};
+  bool m_interpolate{false};
 
   /// Loaded data
   SingleCameraLoader m_camera_loader;

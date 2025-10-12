@@ -3,11 +3,14 @@
     "type": "async"
   },
   "dataset": {
-    "extrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/images.txt",
     "folder_path": "/data/yzr/Final/1747834320424/inputs/images/",
+    "extrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/images.txt",
     "intrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/cameras.txt",
+    "video_info_path": "/data/yzr/Final/1747834320424/inputs/videoInfo.txt",
+    "video_file_path": "/data/yzr/Final/1747834320424/1747834320424_flip.mp4",
+    "interpolate": true,
     "extension": "png",
-    "type": "png_folder"
+    "type": "video"
   },
   "initializer": {
     "default_distance": 0.01,
@@ -45,12 +48,12 @@
     "epsilon": 1.0e-8,
     "max_grad_1": 0.3,
     "means_lr": 0.00016,
-    "opacities_l1": 0.01,
+    "opacities_l1": 0.0,
     "decouple_decay": false,
     "decay_reduction": "mean",
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
-    "scales_l1": 0.01,
+    "scales_l1": 0.0,
     "scales_lr": 0.005,
     "shs_lr": 0.0025,
     "skip_zero_grad": false,
@@ -107,11 +110,11 @@
     "enable_progressive_resolution": false,
     "start_pose_opt": 500,
     "record_trajectory": true,
-    "resolution_milestones": [0, 5000],
+    "resolution_milestones": [0, 15000],
     "resolution_scales": [0.5, 1.0],
     "test_steps": [2000, 5000, 7000, 10000, 15000, 30000],
     "out_dir": "outputs",
     "export_rasterized": true,
-    "max_seconds": 0
+    "max_seconds": 240
   }
 }
