@@ -1,0 +1,361 @@
+$ NVCC=/usr/local/cuda/bin/nvcc ./build.sh
+nvcc found at: /usr/local/cuda/bin/nvcc, 32 cores available for build.
+-- Using default CUDA architectures: 86
+-- The CXX compiler identification is GNU 11.4.0
+-- The CUDA compiler identification is NVIDIA 12.4.131 with host compiler GNU 11.4.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting CUDA compiler ABI info
+-- Detecting CUDA compiler ABI info - done
+-- Check for working CUDA compiler: /usr/local/cuda/bin/nvcc - skipped
+-- Detecting CUDA compile features
+-- Detecting CUDA compile features - done
+-- CPM: Adding package cxxopts@3.3.1 (v3.3.1)
+-- CPM: Adding package spdlog@1.15.3 (v1.15.3)
+-- Build spdlog: 1.15.3
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Build type: Release
+-- Looking for fwrite_unlocked
+-- Looking for fwrite_unlocked - found
+-- CPM: Adding package nlohmann_json@3.12.0 (v3.12.0)
+-- Using the multi-header code from /home/adversarr/Repo/tinygs/build/Release/_deps/nlohmann_json-src/include/
+-- CPM: Adding package NVTX@3.3.0 (v3.3.0-c-cpp)
+-- The C compiler identification is GNU 11.4.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- CPM: Adding package glm@1.0.1 (1.0.1)
+CMake Deprecation Warning at build/Release/_deps/glm-src/CMakeLists.txt:1 (cmake_minimum_required):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+CMake Deprecation Warning at build/Release/_deps/glm-src/CMakeLists.txt:2 (cmake_policy):
+  Compatibility with CMake < 3.10 will be removed from a future version of
+  CMake.
+
+  Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+  to tell CMake that the project requires at least <min> but has been updated
+  to work with policies introduced by <max> or earlier.
+
+
+-- GLM: Version 1.0.1
+-- GLM: Build with C++ features auto detection
+-- CPM: Adding package benchmark@1.9.4 (v1.9.4)
+-- Failed to find LLVM FileCheck
+-- Found Git: /usr/bin/git (found version "2.34.1")
+-- Google Benchmark version: v1.9.4, normalized to 1.9.4
+-- Looking for shm_open in rt
+-- Looking for shm_open in rt - found
+-- Performing Test HAVE_CXX_FLAG_WALL
+-- Performing Test HAVE_CXX_FLAG_WALL - Success
+-- Performing Test HAVE_CXX_FLAG_WEXTRA
+-- Performing Test HAVE_CXX_FLAG_WEXTRA - Success
+-- Performing Test HAVE_CXX_FLAG_WSHADOW
+-- Performing Test HAVE_CXX_FLAG_WSHADOW - Success
+-- Performing Test HAVE_CXX_FLAG_WFLOAT_EQUAL
+-- Performing Test HAVE_CXX_FLAG_WFLOAT_EQUAL - Success
+-- Performing Test HAVE_CXX_FLAG_WOLD_STYLE_CAST
+-- Performing Test HAVE_CXX_FLAG_WOLD_STYLE_CAST - Success
+-- Performing Test HAVE_CXX_FLAG_WCONVERSION
+-- Performing Test HAVE_CXX_FLAG_WCONVERSION - Success
+-- Performing Test HAVE_CXX_FLAG_WERROR
+-- Performing Test HAVE_CXX_FLAG_WERROR - Success
+-- Performing Test HAVE_CXX_FLAG_WSUGGEST_OVERRIDE
+-- Performing Test HAVE_CXX_FLAG_WSUGGEST_OVERRIDE - Success
+-- Performing Test HAVE_CXX_FLAG_PEDANTIC
+-- Performing Test HAVE_CXX_FLAG_PEDANTIC - Success
+-- Performing Test HAVE_CXX_FLAG_PEDANTIC_ERRORS
+-- Performing Test HAVE_CXX_FLAG_PEDANTIC_ERRORS - Success
+-- Performing Test HAVE_CXX_FLAG_WSHORTEN_64_TO_32
+-- Performing Test HAVE_CXX_FLAG_WSHORTEN_64_TO_32 - Failed
+-- Performing Test HAVE_CXX_FLAG_FSTRICT_ALIASING
+-- Performing Test HAVE_CXX_FLAG_FSTRICT_ALIASING - Success
+-- Performing Test HAVE_CXX_FLAG_WNO_DEPRECATED_DECLARATIONS
+-- Performing Test HAVE_CXX_FLAG_WNO_DEPRECATED_DECLARATIONS - Success
+-- Performing Test HAVE_CXX_FLAG_WNO_DEPRECATED
+-- Performing Test HAVE_CXX_FLAG_WNO_DEPRECATED - Success
+-- Performing Test HAVE_CXX_FLAG_WSTRICT_ALIASING
+-- Performing Test HAVE_CXX_FLAG_WSTRICT_ALIASING - Success
+-- Performing Test HAVE_CXX_FLAG_WD654
+-- Performing Test HAVE_CXX_FLAG_WD654 - Failed
+-- Performing Test HAVE_CXX_FLAG_WTHREAD_SAFETY
+-- Performing Test HAVE_CXX_FLAG_WTHREAD_SAFETY - Failed
+-- Performing Test HAVE_CXX_FLAG_COVERAGE
+-- Performing Test HAVE_CXX_FLAG_COVERAGE - Success
+-- Compiling and running to test HAVE_STD_REGEX
+-- Performing Test HAVE_STD_REGEX -- success
+-- Compiling and running to test HAVE_GNU_POSIX_REGEX
+-- Performing Test HAVE_GNU_POSIX_REGEX -- failed to compile
+-- Compiling and running to test HAVE_POSIX_REGEX
+-- Performing Test HAVE_POSIX_REGEX -- success
+-- Compiling and running to test HAVE_STEADY_CLOCK
+-- Performing Test HAVE_STEADY_CLOCK -- success
+-- Compiling and running to test HAVE_PTHREAD_AFFINITY
+-- Performing Test HAVE_PTHREAD_AFFINITY -- success
+-- Found OpenCV: /usr (found version "4.5.4")
+-- Found CUDAToolkit: /usr/local/cuda/targets/x86_64-linux/include (found version "12.4.131")
+-- Found OpenMP_CXX: -fopenmp (found version "4.5")
+-- Found OpenMP_CUDA: -fopenmp (found version "4.5")
+-- Found OpenMP: TRUE (found version "4.5")
+--
+-- tinygs Configuration Summary:
+--   Version: 1.0.0
+--   Build type: Release
+--   C++ standard: 20
+--   CUDA standard: 20
+--   CUDA version: 12.4
+--   CUDA architectures: 86
+--   Minimum GPU architecture: 86
+--   Build examples: ON
+--   Build tests: OFF
+--   Build benchmarks: ON
+--
+-- Configuring done (89.6s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/adversarr/Repo/tinygs/build/Release
+[  0%] Building CXX object _deps/glm-build/glm/CMakeFiles/glm.dir/detail/glm.cpp.o
+[  1%] Building CXX object _deps/spdlog-build/CMakeFiles/spdlog.dir/src/spdlog.cpp.o
+[  3%] Building CXX object _deps/spdlog-build/CMakeFiles/spdlog.dir/src/color_sinks.cpp.o
+[  6%] Building CXX object _deps/spdlog-build/CMakeFiles/spdlog.dir/src/file_sinks.cpp.o
+[  6%] Building CXX object _deps/spdlog-build/CMakeFiles/spdlog.dir/src/async.cpp.o
+[  6%] Building CXX object _deps/spdlog-build/CMakeFiles/spdlog.dir/src/bundled_fmtlib_format.cpp.o
+[  8%] Building CXX object _deps/spdlog-build/CMakeFiles/spdlog.dir/src/stdout_sinks.cpp.o
+[  9%] Building CXX object _deps/spdlog-build/CMakeFiles/spdlog.dir/src/cfg.cpp.o
+[ 11%] Linking CXX static library libglm.a
+[ 11%] Built target glm
+[ 12%] Linking CXX static library libspdlog.a
+[ 12%] Built target spdlog
+[ 14%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/core/camera.cpp.o
+[ 16%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/core/camera_loader.cpp.o
+[ 17%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/core/gaussian.cpp.o
+[ 19%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/cuda/common_host.cu.o
+[ 22%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/core/camera_ext.cpp.o
+[ 22%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/core/gpu_gaussian.cu.o
+[ 24%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/cuda/stat.cu.o
+[ 24%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/core/pointcloud.cpp.o
+[ 25%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/cuda/reduce.cu.o
+[ 27%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/dataloader/dataloader.cu.o
+[ 29%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/dataloader/async.cpp.o
+[ 30%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/dataset/dataset.cpp.o
+[ 33%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/dataloader/simple.cpp.o
+[ 35%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/dataset/video.cpp.o
+[ 35%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/dataset/png_folder.cpp.o
+[ 35%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/initialization/initialization.cpp.o
+[ 38%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/initialization/random.cpp.o
+[ 38%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/initialization/knn.cpp.o
+[ 40%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/loss/fused_ssim.cu.o
+[ 41%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/loss/l2.cu.o
+[ 43%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/loss/l1.cu.o
+[ 45%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/loss/huber.cu.o
+[ 46%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/loss/loss.cu.o
+[ 48%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/loss/psnr.cu.o
+[ 51%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/optim/simple_adam.cu.o
+[ 51%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/optim/lion.cu.o
+[ 51%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/optim/adamw.cu.o
+[ 53%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/optim/adan.cu.o
+[ 54%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/optim/lamb.cu.o
+[ 56%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/optim/lr_scheduler.cpp.o
+[ 58%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/optim/optim.cu.o
+[ 59%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/optim/sgd.cu.o
+[ 61%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/pose_opt/pose_opt.cpp.o
+[ 61%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/pose_opt/sgdm.cpp.o
+[ 62%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/pose_opt/adamw.cpp.o
+[ 64%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/random/multinomial.cu.o
+[ 66%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/rasterizer/3dgs_accel/backward.cu.o
+[ 67%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/rasterizer/3dgs_accel/forward.cu.o
+[ 69%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/rasterizer/3dgs_accel/rasterizer_impl.cu.o
+[ 70%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/rasterizer/default.cu.o
+[ 72%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/rasterizer/fastgs.cu.o
+[ 74%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/rasterizer/fastgs_ours/backward.cu.o
+[ 75%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/rasterizer/fastgs_ours/forward.cu.o
+[ 75%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/rasterizer/rasterizer.cpp.o
+[ 77%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/strategy/default.cu.o
+[ 79%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/strategy/mcmc.cu.o
+/home/adversarr/Repo/tinygs/tinygs/src/loss/fused_ssim.cu(110): warning #177-D: variable "steps" was declared but never referenced
+              const int steps = (tileSize + threads - 1) / threads;
+                        ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+/home/adversarr/Repo/tinygs/tinygs/src/loss/fused_ssim.cu(153): warning #177-D: variable "lx" was declared but never referenced
+              int lx = threadIdx.x + 5;
+                  ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/loss/fused_ssim.cu(213): warning #177-D: variable "ly" was declared but never referenced
+              int ly = threadIdx.y + 5;
+                  ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/loss/fused_ssim.cu(91): warning #177-D: variable "pix_id" was declared but never referenced
+      const int pix_id = pix_y * W + pix_x;
+                ^
+
+[ 80%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/strategy/improved.cu.o
+/home/adversarr/Repo/tinygs/tinygs/src/loss/fused_ssim.cu(92): warning #177-D: variable "num_pix" was declared but never referenced
+      const int num_pix = H * W;
+                ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/loss/fused_ssim.cu(303): warning #177-D: variable "pix_id" was declared but never referenced
+      const int pix_id = pix_y * W + pix_x;
+                ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/loss/fused_ssim.cu(304): warning #177-D: variable "num_pix" was declared but never referenced
+      const int num_pix = H * W;
+                ^
+
+[ 82%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/strategy/strategy.cpp.o
+[ 83%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/tinygs.cpp.o
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(22): warning #20014-D: calling a __host__ function from a __host__ __device__ function is not allowed
+    std::size_t const STRING_BUFFER(4096);
+                                    ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(43): warning #20014-D: calling a __host__ function from a __host__ __device__ function is not allowed
+    return buffer;
+    ^
+
+[ 85%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/orchestrator.cu.o
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(221): warning #20014-D: calling a __host__ function from a __host__ __device__ function is not allowed
+     return detail::format(FormatStr.c_str(),
+     ^
+          detected during:
+            instantiation of "std::string glm::detail::compute_to_string<glm::vec<2, T, Q>>::call(const glm::vec<2, T, Q> &) [with T=float, Q=glm::defaultp]" at line 494
+            instantiation of "std::string glm::to_string(const genType &) [with genType=tinygs::vec2]" at line 56 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+            instantiation of "std::string tinygs::to_string(const tinygs::BufferStat<T> &) [with T=tinygs::vec2]" at line 64 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(221): warning #20014-D: calling a __host__ function from a __host__ __device__ function is not allowed
+     return detail::format(FormatStr.c_str(),
+     ^
+          detected during:
+            instantiation of "std::string glm::detail::compute_to_string<glm::vec<2, T, Q>>::call(const glm::vec<2, T, Q> &) [with T=float, Q=glm::defaultp]" at line 494
+            instantiation of "std::string glm::to_string(const genType &) [with genType=tinygs::vec2]" at line 56 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+            instantiation of "std::string tinygs::to_string(const tinygs::BufferStat<T> &) [with T=tinygs::vec2]" at line 64 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(238): warning #20014-D: calling a __host__ function from a __host__ __device__ function is not allowed
+     return detail::format(FormatStr.c_str(),
+     ^
+          detected during:
+            instantiation of "std::string glm::detail::compute_to_string<glm::vec<3, T, Q>>::call(const glm::vec<3, T, Q> &) [with T=float, Q=glm::defaultp]" at line 494
+            instantiation of "std::string glm::to_string(const genType &) [with genType=tinygs::vec3]" at line 56 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+            instantiation of "std::string tinygs::to_string(const tinygs::BufferStat<T> &) [with T=tinygs::vec3]" at line 65 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(238): warning #20014-D: calling a __host__ function from a __host__ __device__ function is not allowed
+     return detail::format(FormatStr.c_str(),
+     ^
+          detected during:
+            instantiation of "std::string glm::detail::compute_to_string<glm::vec<3, T, Q>>::call(const glm::vec<3, T, Q> &) [with T=float, Q=glm::defaultp]" at line 494
+            instantiation of "std::string glm::to_string(const genType &) [with genType=tinygs::vec3]" at line 56 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+            instantiation of "std::string tinygs::to_string(const tinygs::BufferStat<T> &) [with T=tinygs::vec3]" at line 65 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(256): warning #20014-D: calling a __host__ function from a __host__ __device__ function is not allowed
+     return detail::format(FormatStr.c_str(),
+     ^
+          detected during:
+            instantiation of "std::string glm::detail::compute_to_string<glm::vec<4, T, Q>>::call(const glm::vec<4, T, Q> &) [with T=float, Q=glm::defaultp]" at line 494
+            instantiation of "std::string glm::to_string(const genType &) [with genType=tinygs::vec4]" at line 56 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+            instantiation of "std::string tinygs::to_string(const tinygs::BufferStat<T> &) [with T=tinygs::vec4]" at line 66 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(256): warning #20014-D: calling a __host__ function from a __host__ __device__ function is not allowed
+     return detail::format(FormatStr.c_str(),
+     ^
+          detected during:
+            instantiation of "std::string glm::detail::compute_to_string<glm::vec<4, T, Q>>::call(const glm::vec<4, T, Q> &) [with T=float, Q=glm::defaultp]" at line 494
+            instantiation of "std::string glm::to_string(const genType &) [with genType=tinygs::vec4]" at line 56 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+            instantiation of "std::string tinygs::to_string(const tinygs::BufferStat<T> &) [with T=tinygs::vec4]" at line 66 of /home/adversarr/Repo/tinygs/tinygs/src/cuda/stat.cu
+
+[ 87%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/utils/file.cpp.o
+[ 88%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/utils/image_format.cpp.o
+/home/adversarr/Repo/tinygs/tinygs/src/optim/simple_adam.cu(290): warning #177-D: variable "grid" was declared but never referenced
+    const int grid = (n + block_size - 1) / block_size;
+              ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+/home/adversarr/Repo/tinygs/tinygs/src/optim/simple_adam.cu(418): warning #177-D: variable "grid" was declared but never referenced
+    const int grid = (n + block_size - 1) / block_size;
+              ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/optim/adamw.cu(91): warning #20054-D: dynamic initialization is not supported for a function-scope static __shared__ variable within a __device__/__global__ function
+    > shared_state;
+      ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+[ 88%] Building CUDA object tinygs/CMakeFiles/tinygs.dir/src/utils/inspect_change.cu.o
+[ 90%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/utils/scope_timer.cpp.o
+/home/adversarr/Repo/tinygs/tinygs/src/dataloader/dataloader.cu(48): warning #177-D: function "tinygs::resize_nn_u8_to_float_tiled" was declared but never referenced
+            static void resize_nn_u8_to_float_tiled(
+                        ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(221): warning #20011-D: calling a __host__ function("std::__cxx11::basic_string<char,     ::std::char_traits<char> , ::std::allocator<char> > ::c_str() const") from a __host__ __device__ function("glm::detail::compute_to_string< ::glm::vec<(int)2, float, ( ::glm::qualifier)0> > ::call") is not allowed
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(221): warning #20011-D: calling a __host__ function("std::__cxx11::basic_string<char,     ::std::char_traits<char> , ::std::allocator<char> > ::~basic_string()") from a __host__ __device__ function("glm::detail::compute_to_string< ::glm::vec<(int)2, float, ( ::glm::qualifier)0> > ::call") is not allowed
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(238): warning #20011-D: calling a __host__ function("std::__cxx11::basic_string<char,     ::std::char_traits<char> , ::std::allocator<char> > ::c_str() const") from a __host__ __device__ function("glm::detail::compute_to_string< ::glm::vec<(int)3, float, ( ::glm::qualifier)0> > ::call") is not allowed
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(238): warning #20011-D: calling a __host__ function("std::__cxx11::basic_string<char,     ::std::char_traits<char> , ::std::allocator<char> > ::~basic_string()") from a __host__ __device__ function("glm::detail::compute_to_string< ::glm::vec<(int)3, float, ( ::glm::qualifier)0> > ::call") is not allowed
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(256): warning #20011-D: calling a __host__ function("std::__cxx11::basic_string<char,     ::std::char_traits<char> , ::std::allocator<char> > ::c_str() const") from a __host__ __device__ function("glm::detail::compute_to_string< ::glm::vec<(int)4, float, ( ::glm::qualifier)0> > ::call") is not allowed
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(256): warning #20011-D: calling a __host__ function("std::__cxx11::basic_string<char,     ::std::char_traits<char> , ::std::allocator<char> > ::~basic_string()") from a __host__ __device__ function("glm::detail::compute_to_string< ::glm::vec<(int)4, float, ( ::glm::qualifier)0> > ::call") is not allowed
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(36): warning #20011-D: calling a __host__ function("vsnprintf") from a __host__ __device__ function("glm::detail::format") is not allowed
+
+/home/adversarr/Repo/tinygs/build/Release/_deps/glm-src/glm/gtx/string_cast.inl(43): warning #20011-D: calling a __host__ function("std::__cxx11::basic_string<char,     ::std::char_traits<char> , ::std::allocator<char> > ::basic_string<::std::allocator<char> > (const char *, const ::std::allocator<char> &)") from a __host__ __device__ function("glm::detail::format") is not allowed
+
+[ 91%] Building CXX object tinygs/CMakeFiles/tinygs.dir/src/utils/stbi_wrapper.cpp.o
+/home/adversarr/Repo/tinygs/tinygs/src/optim/adamw.cu(340): warning #177-D: variable "tinygs::C_BLUE" was declared but never referenced
+  static constexpr nvtx3::rgb C_BLUE{0, 153, 255};
+                              ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/optim/adamw.cu(341): warning #177-D: variable "tinygs::C_ORANGE" was declared but never referenced
+  static constexpr nvtx3::rgb C_ORANGE{255, 153, 0};
+                              ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/optim/adamw.cu(584): warning #177-D: function "tinygs::duplicate_optimizer_state_kernel" was declared but never referenced
+            static void duplicate_optimizer_state_kernel(
+                        ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/optim/simple_adam.cu(174): warning #177-D: variable "tinygs::C_BLUE" was declared but never referenced
+  static const nvtx3::rgb C_BLUE{0, 153, 255};
+                          ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/optim/simple_adam.cu(175): warning #177-D: variable "tinygs::C_ORANGE" was declared but never referenced
+  static const nvtx3::rgb C_ORANGE{255, 153, 0};
+                          ^
+
+/home/adversarr/Repo/tinygs/tinygs/src/rasterizer/fastgs_ours/kernels_forward.cuh(684): warning #177-D: variable "pixel_idx" was declared but never referenced
+          const int pixel_idx = width * pixel_coords.y + pixel_coords.x;
+                    ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+[ 93%] Linking CUDA device code CMakeFiles/tinygs.dir/cmake_device_link.o
+[ 95%] Linking CXX static library libtinygs.a
+[ 95%] Built target tinygs
+[ 96%] Building CXX object examples/CMakeFiles/video_to_png.dir/video_to_png.cpp.o
+[ 98%] Linking CUDA device code CMakeFiles/video_to_png.dir/cmake_device_link.o
+[100%] Linking CXX executable video_to_png
+[100%] Built target video_to_png
+[  1%] Built target glm
+[ 12%] Built target spdlog
+[ 95%] Built target tinygs
+[ 96%] Building CXX object examples/CMakeFiles/config_train.dir/config_train.cpp.o
+[ 98%] Linking CUDA device code CMakeFiles/config_train.dir/cmake_device_link.o
+[100%] Linking CXX executable config_train
+[100%] Built target config_train
+Essential binaries built: video_to_png config_train.

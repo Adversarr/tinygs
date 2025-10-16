@@ -74,6 +74,8 @@ Build cuda_12.4.r12.4/compiler.34097967_0
 
 Please make sure you have installed the required dependencies before running the project.
 
+We have a [build.log](build.log) file for reference of building the project on our GPU server.
+
 ## Setup and Run the competetion (SIGA 2025)
 
 ```bash

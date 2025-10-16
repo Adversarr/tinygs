@@ -288,6 +288,7 @@ TrainingState Orchestrator::train() {
       auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_state.start_time).count();
       if (elapsed >= static_cast<long>(m_config.max_seconds)) {
         log_info("Max seconds ({}) reached at step {}", m_config.max_seconds, m_state.current_step);
+        m_state.should_stop = true;
         test_step();
         break;
       }
@@ -554,7 +555,8 @@ void Orchestrator::test_step() {
 
   Gaussian3d gs_host;
   m_gaussians->copy_to_host(gs_host);
-  save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features);
+  // force to export full features when stop training
+  save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features || m_state.should_stop);
 }
 
 float Orchestrator::accumulate_loss() {

@@ -33,3 +33,4 @@ video_to_png
 loss.png
 *.pt
 *.pth
+!build.log
