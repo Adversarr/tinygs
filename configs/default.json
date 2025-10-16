@@ -33,7 +33,7 @@
     },
     {
       "type": "fused_ssim",
-      "weight": 0.2
+      "weight": 0
     }
   ],
   "lr_scheduler": {

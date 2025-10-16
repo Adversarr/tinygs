@@ -863,8 +863,8 @@ cv::Mat Orchestrator::to_opencv() const {
   std::vector<float> cpu_image(shape.padded_size());
   CUDA_CHECK_THROW(
       cudaMemcpy(cpu_image.data(), 
-        // m_rasterize_ctx.fwd_output.image.data,
-        m_loss_ctx.target.data,
+        m_rasterize_ctx.fwd_output.image.data,
+        // m_loss_ctx.target.data,
         shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
   // Convert float RGB to 8-bit BGR for OpenCV
   cv::Mat img(height, width, CV_8UC3);
