@@ -59,8 +59,8 @@ def run_vggt(model: VGGT, vgg_input: torch.Tensor, dtype: torch.dtype, image_pat
 def main():
     parser = ArgumentParser(description="Generate point cloud from images using VGGT (no SLAM aligner)")
     parser.add_argument("--root", type=str, default='/data/yzr/Final', help="Root directory of all scenes")
-    parser.add_argument("--id", type=str, default='1747834320424', help="ID of the scene")
-    parser.add_argument("--working_dir", type=str, default='/data/yzr/Final/1747834320424/inputs', help="Working directory containing images/")
+    parser.add_argument("--id", type=str, default='1750383597053', help="ID of the scene")
+    parser.add_argument("--working_dir", type=str, default='output/1750383597053', help="Working directory containing images/")
     parser.add_argument("--out", type=str, default='aligned_points/', help="Output directory for generated PLY")
     parser.add_argument("--ckpt_path", type=str, default='model_tracker_fixed_e30.pt', help="VGGT model checkpoint path")
     parser.add_argument("--merging", type=int, default=0, help="VGGT merging parameter")

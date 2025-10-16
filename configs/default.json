@@ -8,7 +8,7 @@
     "intrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/cameras.txt",
     "video_info_path": "/data/yzr/Final/1747834320424/inputs/videoInfo.txt",
     "video_file_path": "/data/yzr/Final/1747834320424/1747834320424_flip.mp4",
-    "interpolate": false,
+    "interpolate": true,
     "undistortion": true,
     "extension": "png",
     "type": "video"
@@ -38,7 +38,7 @@
   ],
   "lr_scheduler": {
     "decay_rate": 0.999869,
-    "initial_lr": 3.0,
+    "initial_lr": 1.0,
     "step_count": 0,
     "type": "exponential"
   },
@@ -111,11 +111,11 @@
     "enable_progressive_resolution": true,
     "start_pose_opt": 500,
     "record_trajectory": true,
-    "resolution_milestones": [0, 15000],
-    "resolution_scales": [0.5, 1.0],
+    "resolution_milestones": [0, 30000],
+    "resolution_scales": [0.3652968, 1.0],
     "test_steps": [2000, 5000, 7000, 10000, 15000, 30000],
     "out_dir": "outputs",
-    "export_rasterized": true,
+    "export_rasterized": false,
     "max_seconds": 240
   }
 }
