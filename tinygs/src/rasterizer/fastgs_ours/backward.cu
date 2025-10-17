@@ -267,7 +267,7 @@ void fast_gs::rasterization::backward(
         GS_RANGE_SCOPE(m_blend_backward, C_RED, catK(), n_buckets);
         const int grids = div_round_up(n_buckets, config::blend_bwd_n_warps);
         const int blocks = 32 * config::blend_bwd_n_warps;
-        kernels::backward::blend_backward_cu<<<grids, blocks, 0, stream>>>(
+        kernels::backward::blend_backward_cu2<<<grids, blocks, 0, stream>>>(
             per_tile_buffers.instance_ranges,
             per_tile_buffers.bucket_offsets,
             per_instance_buffers.primitive_indices.Current(),

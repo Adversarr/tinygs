@@ -53,7 +53,7 @@ struct FastGSRasterizer::Impl {
   std::map<std::string, thrust::device_vector<char>> temp_buffers;
 
   Impl() : num_gaussians(0) {
-    device_block = GPUMemory<PoseBlock>(1, /*managed=*/ true);
+    device_block = GPUMemory<PoseBlock>(1, /*managed=*/ false);
     cudaHostAlloc(&host_block, sizeof(PoseBlock), cudaHostAllocMapped);
     CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&helper_stream, cudaStreamNonBlocking));
     CUDA_CHECK_THROW(cudaHostAlloc(&zero_copy, 1024, cudaHostAllocMapped)); // more than sufficient.
@@ -156,8 +156,8 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
             /* opacities */ thrust::raw_pointer_cast(opacities.data()),
             /* sh_coeffs */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_0.data())),
             /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(sh_coeffs_rest.data())),
-            /* w2c */ reinterpret_cast<const float4*>(&m_impl->device_block.at(0).w2c),
-            /* cam_position */ &m_impl->device_block.at(0).cam_position,
+            /* w2c */ reinterpret_cast<const float4*>(&m_impl->device_block.data()->w2c),
+            /* cam_position */ &m_impl->device_block.data()->cam_position,
             /* densification_info */ ctx.densification_info ? ctx.densification_info->data() : nullptr,
             /* image */ static_cast<float*>(ctx.fwd_output.image.data),
             /* alpha */ thrust::raw_pointer_cast(m_impl->m_alpha_buffer.data()),
@@ -239,8 +239,8 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
     /* scales */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
     /* rotations */ reinterpret_cast<const float4*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
     /* sh_coeffs_rest */ reinterpret_cast<const float3*>(thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data())),
-    /* w2c */ reinterpret_cast<const float4*>(&m_impl->device_block.at(0).w2c),
-    /* cam_position */ &m_impl->device_block.at(0).cam_position,
+    /* w2c */ reinterpret_cast<const float4*>(&m_impl->device_block.data()->w2c),
+    /* cam_position */ &m_impl->device_block.data()->cam_position,
     /* per_primitive_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_primitive_buffers"].data()),
     /* per_tile_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_tile_buffers"].data()),
     /* per_instance_buffers_blob */ thrust::raw_pointer_cast(m_impl->temp_buffers["per_instance_buffers"].data()),
@@ -254,7 +254,7 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
     /* grad_mean2d_helper */  m_impl->grad_mean2d_helper.data(),
     /* grad_conic_helper */ reinterpret_cast<float*>(m_impl->grad_conic_helper.data()),
     /* grad_color_helper */ m_impl->grad_color.data(),
-    /* grad_w2c */ reinterpret_cast<float4*>(&m_impl->device_block.at(0).w2c_grad),
+    /* grad_w2c */ reinterpret_cast<float4*>(&m_impl->device_block.data()->w2c_grad),
     /* grad_w2c_per_gs */ m_impl->grad_w2c_per_gs.data(),
     /* densification_info */ densification_info,
     /* absgrad_mean2d_helper */ m_impl->absgrad_mean2d_helper.data(),
@@ -276,7 +276,16 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
   );
 
   // set grad w2c
-  ctx.grad_input.w2c = glm::transpose(m_impl->device_block.at(0).w2c_grad);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(
+    m_impl->host_block,
+    m_impl->device_block.data(),
+    m_impl->device_block.get_bytes(),
+    cudaMemcpyDeviceToHost,
+    ctx.stream
+  ));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+
+  ctx.grad_input.w2c = glm::transpose(m_impl->host_block->w2c_grad);
 }
 
 FastGSRasterizer::~FastGSRasterizer() {}
