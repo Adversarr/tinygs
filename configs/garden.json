@@ -3,15 +3,15 @@
     "type": "async"
   },
   "dataset": {
-    "folder_path": "/data/yzr/Final/1747834320424/inputs/images/",
-    "extrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/images.txt",
-    "intrinsics_file_path": "/data/yzr/Final/1747834320424/inputs/slam/cameras.txt",
+    "folder_path": "outputs/garden/images/",
+    "extrinsics_file_path": "outputs/garden/extri.txt",
+    "intrinsics_file_path": "outputs/garden/intri.txt",
     "video_info_path": "/data/yzr/Final/1747834320424/inputs/videoInfo.txt",
     "video_file_path": "/data/yzr/Final/1747834320424/1747834320424_flip.mp4",
-    "interpolate": false,
-    "undistortion": true,
+    "interpolate": true,
+    "undistortion": false,
     "extension": "png",
-    "type": "video"
+    "type": "png_folder"
   },
   "initializer": {
     "default_distance": 0.01,
@@ -25,7 +25,7 @@
     "sh_degree": 3,
     "type": "knn"
   },
-  "input_pc_file": "/data/yzr/Final/1747834320424/aligned_points/1747834320424.ply",
+  "input_pc_file": "outputs/garden/points.ply",
   "losses": [
     {
       "type": "l1",
@@ -50,26 +50,26 @@
     "max_grad_1": 0.3,
     "means_lr": 0.00016,
     "opacities_l1": 0.0,
-    "decouple_decay": false,
+    "decouple_decay": true,
     "decay_reduction": "mean",
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
     "scales_l1": 0.0,
     "scales_lr": 0.005,
     "shs_lr": 0.0025,
-    "skip_zero_grad": false,
+    "skip_zero_grad": true,
     "trust_ratio_min": 0.01,
     "trust_ratio_max": 10.0,
     "type": "simple_adam"
   },
   "pose_opt": {
     "type": "adamw",
-    "lr": 0.0003,
+    "lr": 0.0001,
     "momentum": 0.95,
     "beta1": 0.9,
     "beta2": 0.999,
     "epsilon": 1.0e-8,
-    "weight_decay": 0.01
+    "weight_decay": 0.1
   },
   "rasterizer": {
     "type": "fastgs"
@@ -89,7 +89,7 @@
     "seed": 42,
     "start_refine": 500,
     "noise_lr_init": 0.0,
-    "split_distance": 0.3,
+    "split_distance": 0.45,
     "opacity_reduction": 0.6,
     "type": "default"
   },
@@ -108,14 +108,14 @@
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 2000,
-    "enable_progressive_resolution": false,
-    "start_pose_opt": 30000,
+    "enable_progressive_resolution": true,
+    "start_pose_opt": 50000,
     "record_trajectory": true,
-    "resolution_milestones": [0, 30000],
-    "resolution_scales": [0.3652968, 1.0],
-    "test_steps": [2000, 5000, 7000, 10000, 15000, 30000],
+    "resolution_milestones": [0, 3000, 5000],
+    "resolution_scales": [0.5, 0.75, 1.0],
+    "test_steps": [3000, 5000, 7000, 10000, 15000, 30000],
     "out_dir": "outputs",
-    "export_rasterized": false,
+    "export_rasterized": true,
     "max_seconds": 240
   }
 }
