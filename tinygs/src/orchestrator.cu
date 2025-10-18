@@ -124,7 +124,8 @@ json OrchestratorConfig::to_json() const {
   j["start_pose_opt"] = start_pose_opt;
   j["scene_scale_recompute_interval"] = scene_scale_recompute_interval;
   j["reorder_gaussians_interval"] = reorder_gaussians_interval;
-  j["rasterize_data_type"] = to_string(rasterize_data_type);
+  j["train_data_type"] = to_string(train_data_type);
+  j["eval_data_type"] = to_string(eval_data_type);
   return j;
 }
 
@@ -187,7 +188,14 @@ void OrchestratorConfig::from_json(const json& j) {
 
   if (j.contains("scene_scale_recompute_interval")) scene_scale_recompute_interval = j["scene_scale_recompute_interval"].get<size_t>();
   if (j.contains("reorder_gaussians_interval")) reorder_gaussians_interval = j["reorder_gaussians_interval"].get<size_t>();
-  if (j.contains("rasterize_data_type")) rasterize_data_type = from_string<DataType>(j["rasterize_data_type"].get<std::string>());
+  if (j.contains("rasterize_data_type")) {
+    // backwards compatibility
+    auto dt = from_string<DataType>(j["rasterize_data_type"].get<std::string>());
+    train_data_type = dt;
+    eval_data_type = dt;
+  }
+  if (j.contains("train_data_type")) train_data_type = from_string<DataType>(j["train_data_type"].get<std::string>());
+  if (j.contains("eval_data_type")) eval_data_type = from_string<DataType>(j["eval_data_type"].get<std::string>());
 }
 
 void mean(const vec3* data, size_t size, vec3& out) {
@@ -422,30 +430,43 @@ void Orchestrator::train_step() {
 
 void Orchestrator::test_step() {
   NVTX3_FUNC_RANGE();
+  eval();
+}
 
-  // Store current resolution for restoration later
-  ImageShape current_shape{m_rasterize_ctx.fwd_input.width, m_rasterize_ctx.fwd_input.height, 3};
-  
-  // Force full resolution for testing if progressive resolution is enabled
-  if (m_config.enable_progressive_resolution) {
-    ImageShape full_shape = m_dataloader->get_dataset()->image_shape();
-    if (full_shape.width != current_shape.width || full_shape.height != current_shape.height) {
-      log_info("Switching to full resolution {}x{} for testing", full_shape.width, full_shape.height);
-      set_render_resolution({full_shape.width, full_shape.height, 1});
-    }
+void Orchestrator::eval() {
+  NVTX3_FUNC_RANGE();
+
+  // Store training state
+  const ImageShape current_shape{m_rasterize_ctx.fwd_input.width, m_rasterize_ctx.fwd_input.height, 3};
+  const DataType current_dtype = m_active_data_type;
+
+  // Switch to eval dtype and full resolution if progressive
+  m_active_data_type = m_config.eval_data_type;
+  ImageShape full_shape = m_dataloader->get_dataset()->image_shape();
+  if (m_config.enable_progressive_resolution &&
+      (full_shape.width != current_shape.width || full_shape.height != current_shape.height)) {
+    log_info("Switching to full resolution {}x{} for evaluation", full_shape.width, full_shape.height);
+    set_render_resolution({full_shape.width, full_shape.height, 1});
+  } else {
+    // Still update buffers to match dtype
+    set_render_resolution({current_shape.width, current_shape.height, 1});
   }
 
+  // Switch dataloader output dtype for eval
+  m_dataloader->set_params(json{{"data_type", to_string(m_active_data_type)}});
   m_dataloader->reset(); // reset the permutation.
-  std::string out_dir = m_config.out_dir + "/" + std::to_string(m_state.current_step);
 
+  std::string out_dir = m_config.out_dir + "/" + std::to_string(m_state.current_step);
   ensure(out_dir);
+
   const auto total_samples = m_dataloader->get_dataset()->size();
   std::map<std::string, std::vector<float>> metrics;
   std::vector<uuid_t> timestamps;
 
-  for (size_t idx = 0; idx < total_samples; ++ idx){
+  for (size_t idx = 0; idx < total_samples; ++idx) {
     auto data = m_dataloader->next();
     timestamps.push_back(data.input.timestamp);
+
     // Rasterize
     m_rasterize_ctx.fwd_input = data.input;
     if (m_pose_opt) {
@@ -471,68 +492,50 @@ void Orchestrator::test_step() {
     }
 
     for (const auto &item : m_metrics) {
-      auto value = item.metric->evaluate(m_rasterize_ctx.fwd_output.image,
-                                         data.output.image);
+      auto value = item.metric->evaluate(m_rasterize_ctx.fwd_output.image, data.output.image);
       metrics[item.name].push_back(value);
     }
   }
 
   // Export the metrics to the out_dir in csv format
   const std::string csv_path = out_dir + "/metrics.csv";
-  
-  // Input validation: ensure data consistency
+
   if (timestamps.empty()) {
     log_warning("No timestamps available for CSV export");
-    return;
-  }
-  
-  // Validate that all metric vectors have the same size as timestamps
-  for (const auto& metric_pair : metrics) {
-    if (metric_pair.second.size() != timestamps.size()) {
-      log_error(
-          "Metric '{}' has {} values but {} timestamps - skipping CSV export",
-          metric_pair.first, metric_pair.second.size(), timestamps.size());
-      return;
+  } else {
+    for (const auto& metric_pair : metrics) {
+      if (metric_pair.second.size() != timestamps.size()) {
+        log_error("Metric '{}' has {} values but {} timestamps - skipping CSV export",
+                  metric_pair.first, metric_pair.second.size(), timestamps.size());
+        metrics.clear();
+        break;
+      }
     }
   }
 
   try {
-    // Use RAII pattern with proper file stream management
     std::ofstream csv_file(csv_path);
-    if (!csv_file.is_open()) {
-      throw std::runtime_error("Failed to open file for writing: " + csv_path);
-    }
-
-    // Set precision for floating point numbers
-    csv_file << std::fixed << std::setprecision(6);
-
-    // Write header row (avoid trailing comma)
-    csv_file << "timestamp";
-    for (const auto &metric_pair : metrics) {
-      csv_file << "," << metric_pair.first;
-    }
-    csv_file << "\n";
-
-    // Write data rows
-    for (size_t i = 0; i < timestamps.size(); ++i) {
-      csv_file << timestamps[i];
+    if (csv_file.is_open()) {
+      csv_file << std::fixed << std::setprecision(6);
+      csv_file << "timestamp";
       for (const auto &metric_pair : metrics) {
-        csv_file << "," << metric_pair.second[i];
+        csv_file << "," << metric_pair.first;
       }
       csv_file << "\n";
-
-      // Check for write errors
-      if (csv_file.fail()) {
-        log_error("Error writing to CSV file: {}", csv_path);
+      for (size_t i = 0; i < timestamps.size(); ++i) {
+        csv_file << timestamps[i];
+        for (const auto &metric_pair : metrics) {
+          csv_file << "," << metric_pair.second[i];
+        }
+        csv_file << "\n";
       }
+      log_info("Successfully exported {} metrics for {} samples to: {}",
+               metrics.size(), timestamps.size(), csv_path);
+    } else {
+      log_error("Failed to open file for writing: {}", csv_path);
     }
-
-    log_info("Successfully exported {} metrics for {} samples to: {}",
-             metrics.size(), timestamps.size(), csv_path);
-
   } catch (const std::exception &e) {
     log_error("Failed to export metrics to CSV: {}", e.what());
-    throw; // Re-throw to allow caller to handle if needed
   }
 
   // Print the metrics statistics to stdout
@@ -544,20 +547,21 @@ void Orchestrator::test_step() {
                          / metric_pair.second.size());
     std::cout << fmt::format("Metric {}: mean = {:.6f}, std = {:.6f}\n", metric_pair.first, mean, std);
   }
-  
-  // Restore training resolution if progressive resolution is enabled
-  if (m_config.enable_progressive_resolution) {
-    ImageShape training_shape = scale_image_shape(m_dataloader->get_dataset()->image_shape(), 
-                                                  calculate_resolution_scale(m_state.current_step));
-    if (training_shape.width != current_shape.width || training_shape.height != current_shape.height) {
-      log_info("Restoring training resolution {}x{} after testing", training_shape.width, training_shape.height);
-      set_render_resolution({training_shape.width, training_shape.height, 1});
-    }
-  }
 
+  // Restore training resolution and dtype
+  m_active_data_type = current_dtype;
+  ImageShape training_shape = m_config.enable_progressive_resolution
+      ? scale_image_shape(m_dataloader->get_dataset()->image_shape(), calculate_resolution_scale(m_state.current_step))
+      : current_shape;
+  set_render_resolution({training_shape.width, training_shape.height, 1});
+
+  // Restore dataloader dtype
+  m_dataloader->set_params(json{{"data_type", to_string(m_active_data_type)}});
+  m_dataloader->reset();
+
+  // Export PLY at eval end
   Gaussian3d gs_host;
   m_gaussians->copy_to_host(gs_host);
-  // force to export full features when stop training
   save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features || m_state.should_stop);
 }
 
@@ -621,16 +625,16 @@ void Orchestrator::initialize() {
   // Always allocate buffers for full resolution to avoid reallocations during training
   uint32_t full_pad_width = base_shape.padded_width();
   uint32_t full_pad_height = base_shape.padded_height();
-  size_t full_buffer_size = full_pad_width * full_pad_height * 3;  // RGB
+  size_t full_buffer_size = full_pad_width * full_pad_height * 3;  // RGB elements count
   
   // Initialize GPU memory buffers with full resolution size
   m_loss_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
   m_render_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
   m_image_grad_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
 
-  log_info("Allocated GPU buffers for full resolution {}x{} (size: {} MB)", 
-           base_shape.width, base_shape.height, 
-           (full_buffer_size * sizeof(float) * 3) / (1024 * 1024));
+  const double mb = static_cast<double>(full_buffer_size) * sizeof(float) / (1024.0 * 1024.0);
+  log_info("Allocated GPU buffers for full resolution {}x{} (size: {:.2f} MB)", 
+           base_shape.width, base_shape.height, mb);
 
   // Determine initial training resolution
   ImageShape training_shape = base_shape;
@@ -643,7 +647,10 @@ void Orchestrator::initialize() {
     log_info("Start from full resolution {}x{}", training_shape.width, training_shape.height);
   }
   log_info("Camera intrinsics: {}", to_string(m_dataloader->get_dataset()->get_camera_loader().get_camera_intrinsics()));
-  log_info("Rasterize Precision: {}", to_string(m_config.rasterize_data_type));
+
+  // Set active dtype for training
+  m_active_data_type = m_config.train_data_type;
+  log_info("Rasterize Precision: {}", to_string(m_active_data_type));
 
   set_render_resolution(training_shape);
 
@@ -651,8 +658,8 @@ void Orchestrator::initialize() {
   uint32_t height = training_shape.height;
 
   ImageShape rgb_shape{width, height, 3};
-  Image render_rgb = Image(rgb_shape, m_config.rasterize_data_type, m_render_buffer->data());
-  Image grad_rgb = Image(rgb_shape, m_config.rasterize_data_type, m_image_grad_buffer->data());
+  Image render_rgb = Image(rgb_shape, m_active_data_type, m_render_buffer->data());
+  Image grad_rgb = Image(rgb_shape, m_active_data_type, m_image_grad_buffer->data());
 
   // Setup rasterization context
   m_rasterize_ctx.inference = false; // Training mode
@@ -670,7 +677,7 @@ void Orchestrator::initialize() {
   m_rasterize_ctx.gaussians_grad = m_gradients;
 
   // Setup loss context
-  m_loss_ctx.loss = Image(rgb_shape, m_config.rasterize_data_type, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, m_active_data_type, m_loss_buffer->data());
   // TODO: alpha is ignored for now
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
@@ -934,8 +941,8 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
 
   // Create new image objects with the reallocated buffers
   ImageShape rgb_shape{new_shape.width, new_shape.height, 3};
-  Image render_rgb = Image(rgb_shape, m_config.rasterize_data_type, m_render_buffer->data());
-  Image grad_rgb = Image(rgb_shape, m_config.rasterize_data_type, m_image_grad_buffer->data());
+  Image render_rgb = Image(rgb_shape, m_active_data_type, m_render_buffer->data());
+  Image grad_rgb = Image(rgb_shape, m_active_data_type, m_image_grad_buffer->data());
 
   // Update rasterization context with new dimensions and images
   m_rasterize_ctx.fwd_input.width = new_shape.width;
@@ -946,7 +953,7 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
   m_rasterize_ctx.grad_output.image = grad_rgb;
 
   // Update loss context
-  m_loss_ctx.loss = Image(rgb_shape, m_config.rasterize_data_type, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, m_active_data_type, m_loss_buffer->data());
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
 

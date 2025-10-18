@@ -83,7 +83,7 @@ set(TINYGS_SOURCES
     
     # Utilities
     "src/utils/file.cpp"
-    "src/utils/image_format.cpp"
+    "src/utils/image_format.cu"
     "src/utils/inspect_change.cu"
     "src/utils/scope_timer.cpp"
     "src/utils/stbi_wrapper.cpp"

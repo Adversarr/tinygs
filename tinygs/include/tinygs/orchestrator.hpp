@@ -64,7 +64,8 @@ struct OrchestratorConfig {
   size_t start_pose_opt = 500;                     ///< Step to start pose optimization
 
   // Rasterizer
-  DataType rasterize_data_type = DataType::Float32;
+  DataType train_data_type = DataType::Float32;
+  DataType eval_data_type = DataType::Float32;
 
   /// @brief Convert config to JSON
   json to_json() const;
@@ -155,6 +156,9 @@ public:
   /// @brief Execute a test step
   void test_step();
 
+  /// @brief Run full evaluation over dataset
+  void eval();
+
   /// @brief Accumulate the loss in current loss buffer.
   float accumulate_loss();
 
@@ -243,6 +247,9 @@ private:
 
   // cuda stream for training, do not block.
   cudaStream_t m_major_stream = 0;
+
+  // Active render/loss data type used for buffers
+  DataType m_active_data_type = DataType::Float32;
 
   ////////////////////////////// Helper methods //////////////////////////////
 
