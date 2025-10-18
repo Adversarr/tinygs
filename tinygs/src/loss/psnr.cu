@@ -20,7 +20,7 @@
  * and log10(1.0) = 0, so PSNR = -10 * log10(MSE)
  */
 
-// CUDA kernel to compute squared differences
+// CUDA kernel to compute squared differences (float32)
 __global__ void psnr_squared_diff_kernel(int N, const float *__restrict__ pred,
                                          const float *__restrict__ target,
                                          float *__restrict__ squared_diff) {
@@ -35,6 +35,38 @@ __global__ void psnr_squared_diff_kernel(int N, const float *__restrict__ pred,
   squared_diff[i] = diff * diff;
 }
 
+// fp16 scalar specialization
+__global__ void psnr_squared_diff_kernel_f16(int N, const half *__restrict__ pred,
+                                             const half *__restrict__ target,
+                                             float *__restrict__ squared_diff) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) {
+    return;
+  }
+  const float p = tinygs::saturate(__half2float(pred[i]));
+  const float t = __half2float(target[i]);
+  const float diff = p - t;
+  squared_diff[i] = diff * diff;
+}
+
+// fp16 half2 SIMD specialization (writes two float outputs per thread)
+__global__ void psnr_squared_diff_kernel_f16_h2(int N_pairs, const __half2 *__restrict__ pred,
+                                                const __half2 *__restrict__ target,
+                                                float *__restrict__ squared_diff) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N_pairs) {
+    return;
+  }
+  const float2 p_raw = __half22float2(pred[i]);
+  const float2 t = __half22float2(target[i]);
+  const float p0 = tinygs::saturate(p_raw.x);
+  const float p1 = tinygs::saturate(p_raw.y);
+  const float diff0 = p0 - t.x;
+  const float diff1 = p1 - t.y;
+  squared_diff[2 * i + 0] = diff0 * diff0;
+  squared_diff[2 * i + 1] = diff1 * diff1;
+}
+
 namespace tinygs {
 
 float PsnrMetric::evaluate(Image pred, Image target) {
@@ -46,6 +78,11 @@ float PsnrMetric::evaluate(Image pred, Image target) {
       "Prediction and target shapes must match, got: {} vs {}", 
       to_string(pred.shape), to_string(target.shape)));
   }
+  if (pred.data_type != target.data_type) {
+    throw std::runtime_error(fmt::format(
+        "PSNR: prediction and target data type must be the same, got {} vs. {}",
+        to_string(pred.data_type), to_string(target.data_type)));
+  }
 
   // Allocate temporary memory for squared differences
   if (m_sqr_diff.size() < n) {
@@ -55,10 +92,26 @@ float PsnrMetric::evaluate(Image pred, Image target) {
 
   float* squared_diff = m_sqr_diff.data();
   // Compute squared differences
-  linear_kernel(psnr_squared_diff_kernel, 0, nullptr, n,
-    static_cast<const float*>(pred.data),
-    static_cast<const float*>(target.data),
-    squared_diff);
+  if (pred.data_type == DataType::Float32) {
+    linear_kernel(psnr_squared_diff_kernel, 0, nullptr, n,
+      static_cast<const float*>(pred.data),
+      static_cast<const float*>(target.data),
+      squared_diff);
+  } else if (pred.data_type == DataType::Float16) {
+    if ((n & 1) == 0) {
+      linear_kernel(psnr_squared_diff_kernel_f16_h2, 0, nullptr, n / 2,
+        reinterpret_cast<const __half2*>(pred.data),
+        reinterpret_cast<const __half2*>(target.data),
+        squared_diff);
+    } else {
+      linear_kernel(psnr_squared_diff_kernel_f16, 0, nullptr, n,
+        static_cast<const half*>(pred.data),
+        static_cast<const half*>(target.data),
+        squared_diff);
+    }
+  } else {
+    throw std::runtime_error("PSNR: only float32/float16 are supported");
+  }
 
   // Compute MSE (mean squared error)
   float mse = gpu_sum(squared_diff, n) / npix;

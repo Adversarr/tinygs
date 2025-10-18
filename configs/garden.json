@@ -1,6 +1,7 @@
 {
   "dataloader": {
-    "type": "async"
+    "type": "async",
+    "data_type": "float16"
   },
   "dataset": {
     "folder_path": "outputs/garden/images/",
@@ -47,14 +48,14 @@
   ],
   "optimizer": {
     "epsilon": 1.0e-8,
-    "max_grad_1": 0.3,
+    "max_grad_1": 1.0,
     "means_lr": 0.00016,
-    "opacities_l1": 0.0,
-    "decouple_decay": true,
+    "opacities_l1": 0.01,
+    "decouple_decay": false,
     "decay_reduction": "mean",
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
-    "scales_l1": 0.0,
+    "scales_l1": 0.01,
     "scales_lr": 0.005,
     "shs_lr": 0.0025,
     "skip_zero_grad": true,
@@ -88,13 +89,14 @@
     "reset_reset_optimizer": false,
     "seed": 42,
     "start_refine": 500,
-    "noise_lr_init": 0.0,
+    "noise_lr_init": 8.0,
     "split_distance": 0.45,
     "opacity_reduction": 0.6,
-    "type": "default"
+    "type": "mcmc"
   },
   "trainer": {
     "accumulate_grad_steps": 1,
+    "rasterize_data_type": "float16",
     "checkpoint_interval": 1000,
     "early_stopping_patience": 1000,
     "early_stopping_threshold": 1.0e-6,
@@ -108,7 +110,7 @@
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 2000,
-    "enable_progressive_resolution": true,
+    "enable_progressive_resolution": false,
     "start_pose_opt": 50000,
     "record_trajectory": true,
     "resolution_milestones": [0, 3000, 5000],

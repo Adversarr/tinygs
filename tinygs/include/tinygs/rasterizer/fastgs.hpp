@@ -24,7 +24,6 @@ public:
   struct Impl;
 private:
   std::unique_ptr<Impl> m_impl;
-  bool absgrad = false;  /// @brief Whether to use absolute gradient for densification.
 };
 
 }

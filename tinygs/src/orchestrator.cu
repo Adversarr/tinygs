@@ -124,6 +124,7 @@ json OrchestratorConfig::to_json() const {
   j["start_pose_opt"] = start_pose_opt;
   j["scene_scale_recompute_interval"] = scene_scale_recompute_interval;
   j["reorder_gaussians_interval"] = reorder_gaussians_interval;
+  j["rasterize_data_type"] = to_string(rasterize_data_type);
   return j;
 }
 
@@ -186,6 +187,7 @@ void OrchestratorConfig::from_json(const json& j) {
 
   if (j.contains("scene_scale_recompute_interval")) scene_scale_recompute_interval = j["scene_scale_recompute_interval"].get<size_t>();
   if (j.contains("reorder_gaussians_interval")) reorder_gaussians_interval = j["reorder_gaussians_interval"].get<size_t>();
+  if (j.contains("rasterize_data_type")) rasterize_data_type = from_string<DataType>(j["rasterize_data_type"].get<std::string>());
 }
 
 void mean(const vec3* data, size_t size, vec3& out) {
@@ -641,14 +643,16 @@ void Orchestrator::initialize() {
     log_info("Start from full resolution {}x{}", training_shape.width, training_shape.height);
   }
   log_info("Camera intrinsics: {}", to_string(m_dataloader->get_dataset()->get_camera_loader().get_camera_intrinsics()));
+  log_info("Rasterize Precision: {}", to_string(m_config.rasterize_data_type));
+
   set_render_resolution(training_shape);
 
   uint32_t width = training_shape.width;
   uint32_t height = training_shape.height;
 
   ImageShape rgb_shape{width, height, 3};
-  Image render_rgb = Image(rgb_shape, DataType::Float32, m_render_buffer->data());
-  Image grad_rgb = Image(rgb_shape, DataType::Float32, m_image_grad_buffer->data());
+  Image render_rgb = Image(rgb_shape, m_config.rasterize_data_type, m_render_buffer->data());
+  Image grad_rgb = Image(rgb_shape, m_config.rasterize_data_type, m_image_grad_buffer->data());
 
   // Setup rasterization context
   m_rasterize_ctx.inference = false; // Training mode
@@ -666,7 +670,7 @@ void Orchestrator::initialize() {
   m_rasterize_ctx.gaussians_grad = m_gradients;
 
   // Setup loss context
-  m_loss_ctx.loss = Image(rgb_shape, DataType::Float32, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, m_config.rasterize_data_type, m_loss_buffer->data());
   // TODO: alpha is ignored for now
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
@@ -930,8 +934,8 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
 
   // Create new image objects with the reallocated buffers
   ImageShape rgb_shape{new_shape.width, new_shape.height, 3};
-  Image render_rgb = Image(rgb_shape, DataType::Float32, m_render_buffer->data());
-  Image grad_rgb = Image(rgb_shape, DataType::Float32, m_image_grad_buffer->data());
+  Image render_rgb = Image(rgb_shape, m_config.rasterize_data_type, m_render_buffer->data());
+  Image grad_rgb = Image(rgb_shape, m_config.rasterize_data_type, m_image_grad_buffer->data());
 
   // Update rasterization context with new dimensions and images
   m_rasterize_ctx.fwd_input.width = new_shape.width;
@@ -942,7 +946,7 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
   m_rasterize_ctx.grad_output.image = grad_rgb;
 
   // Update loss context
-  m_loss_ctx.loss = Image(rgb_shape, DataType::Float32, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, m_config.rasterize_data_type, m_loss_buffer->data());
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
 

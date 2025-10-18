@@ -28,6 +28,13 @@ struct RasterizeContext {
   mutable std::shared_ptr<GPUBuffer<DensificationInfo>> densification_info;
 };
 
+struct RasterizerParams {
+  DataType data_type = DataType::Float32;
+
+  void from_json(const json& j);
+  json to_json() const;
+};
+
 class RasterizerBase {
 public:
   RasterizerBase();
@@ -47,6 +54,7 @@ public:
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   std::shared_ptr<GPUMemoryArena> m_memory_arena;
+  RasterizerParams m_params;
 };
 
 /// @brief Factory function for creating rasterizers

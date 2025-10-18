@@ -62,6 +62,8 @@ set(TINYGS_SOURCES
     "src/rasterizer/fastgs.cu"
     "src/rasterizer/fastgs_ours/backward.cu"
     "src/rasterizer/fastgs_ours/forward.cu"
+    "src/rasterizer/fastgs_ours_fp16/backward.cu"
+    "src/rasterizer/fastgs_ours_fp16/forward.cu"
     # "src/rasterizer/gsplat.cu"
     # "src/rasterizer/gsplat/backward.cu"
     # "src/rasterizer/gsplat/forward.cu"

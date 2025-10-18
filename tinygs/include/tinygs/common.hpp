@@ -192,7 +192,7 @@ enum class ReductionType {
 using uuid_t = uint64_t;
 
 using f32 = float;
-using f16 = nv_half;
+using float16_t = nv_half;
 using bf16 = nv_bfloat16;
 
 using f162 = nv_half2;

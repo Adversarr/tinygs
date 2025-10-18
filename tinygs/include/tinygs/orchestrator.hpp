@@ -63,6 +63,9 @@ struct OrchestratorConfig {
   size_t reorder_gaussians_interval = 1000;         ///< Interval for reordering gaussians in strategy steps
   size_t start_pose_opt = 500;                     ///< Step to start pose optimization
 
+  // Rasterizer
+  DataType rasterize_data_type = DataType::Float32;
+
   /// @brief Convert config to JSON
   json to_json() const;
   /// @brief Load config from JSON
