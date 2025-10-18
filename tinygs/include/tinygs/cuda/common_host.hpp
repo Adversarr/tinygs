@@ -452,4 +452,7 @@ inline void maybe_sync(cudaStream_t s = 0) {
 #endif
 }
 
+template <typename T>
+T from_string(const std::string& str);
+
 }

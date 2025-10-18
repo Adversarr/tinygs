@@ -10,11 +10,19 @@
 #include <random>
 #include <thrust/host_vector.h>
 #include "tinygs/dataloader/nvtx_dl.h"
+#include <cuda_fp16.h>
 
 namespace tinygs {
 
+// Conversion constant from 8-bit integer to floating point
 constexpr float CHAR_TO_FLOAT = 1.0f / 255.0f;
 
+////////////////////////////// Conversion Kernels //////////////////////////////
+
+/// @brief Convert uint8_t image data to float32 on GPU
+/// @param input Input uint8_t image data
+/// @param output Output float32 image data
+/// @param total Total number of elements to convert
 __global__ static void convert_u8_float(
   const unsigned char* input,
   float* output,
@@ -27,6 +35,10 @@ __global__ static void convert_u8_float(
   output[idx] = CHAR_TO_FLOAT * (float) input[idx];
 }
 
+/// @brief Convert uint8_t image data to float32 on GPU using packed4 operations
+/// @param input Input uint8_t image data
+/// @param output Output float32 image data
+/// @param total Total number of elements to convert (divided by 4)
 __global__ static void convert_u8_float_packed4(
     const unsigned char* input,
     float* output,
@@ -44,7 +56,44 @@ __global__ static void convert_u8_float_packed4(
   *out = y;
 }
 
-// Nearest-neighbor resize from tiled CHW UInt8 to tiled CHW Float32
+////////////////////////////// FP16 Conversion Kernels //////////////////////////////
+
+/// @brief Convert uint8_t image data to half-precision float (FP16) on GPU
+/// @param input Input uint8_t image data
+/// @param output Output FP16 image data
+/// @param total Total number of elements to convert
+__global__ static void convert_u8_half(
+  const unsigned char* input,
+  __half* output,
+  size_t total
+) {
+  const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= total) return;
+  output[idx] = __float2half(CHAR_TO_FLOAT * static_cast<float>(input[idx]));
+}
+
+/// @brief Convert uint8_t image data to half-precision float (FP16) using packed4 operations
+/// @param input Input uint8_t image data
+/// @param output Output FP16 image data
+/// @param total Total number of elements to convert (divided by 4)
+__global__ static void convert_u8_half_packed4(
+    const unsigned char* input,
+    __half* output,
+    size_t total
+) {
+  const size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= total) return; // 4 elements per thread
+  const uchar4* in = reinterpret_cast<const uchar4*>(input) + idx;
+  __half* out = output + (idx * 4);
+  out[0] = __float2half(CHAR_TO_FLOAT * static_cast<float>(in->x));
+  out[1] = __float2half(CHAR_TO_FLOAT * static_cast<float>(in->y));
+  out[2] = __float2half(CHAR_TO_FLOAT * static_cast<float>(in->z));
+  out[3] = __float2half(CHAR_TO_FLOAT * static_cast<float>(in->w));
+}
+
+////////////////////////////// Resize Kernels //////////////////////////////
+
+/// @brief Nearest-neighbor resize from tiled CHW UInt8 to tiled CHW Float32
 __global__ static void resize_nn_u8_to_float_tiled(
     const uint8_t* __restrict__ src, float* __restrict__ dst,
     uint32_t src_w, uint32_t src_h,
@@ -66,6 +115,7 @@ __global__ static void resize_nn_u8_to_float_tiled(
   }
 }
 
+/// @brief Resize from tiled CHW UInt8 to tiled CHW Float32 with stochastic blur
 __global__ static void resize_u8_to_float_tiled_stochastic_blur(
     const uint8_t* __restrict__ src, float* __restrict__ dst,
     uint64_t* __restrict__ rng_state,
@@ -98,6 +148,57 @@ __global__ static void resize_u8_to_float_tiled_stochastic_blur(
   }
 }
 
+/// @brief Resize from tiled CHW UInt8 to tiled CHW FP16 with stochastic blur
+__global__ static void resize_u8_to_half_tiled_stochastic_blur(
+    const uint8_t* __restrict__ src, __half* __restrict__ dst,
+    uint64_t* __restrict__ rng_state,
+    uint32_t src_w, uint32_t src_h,
+    uint32_t dst_w, uint32_t dst_h,
+    uint32_t src_tiled_w, uint32_t dst_tiled_w,
+    uint32_t src_channel_stride, uint32_t dst_channel_stride,
+    uint32_t channels) {
+  const uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= dst_w || y >= dst_h) return;
+
+  const uint32_t src_y = min((uint32_t)((float)y * (float)src_h / (float)dst_h), src_h - 1);
+  const uint32_t src_x = min((uint32_t)((float)x * (float)src_w / (float)dst_w), src_w - 1);
+  const uint32_t src_x_next = min((uint32_t)((float)(x + 1) * (float)src_w / (float)dst_w), src_w - 1);
+  const uint32_t src_y_next = min((uint32_t)((float)(y + 1) * (float)src_h / (float)dst_h), src_h - 1);
+
+  const uint32_t dst_idx_base = get_linear_index_tiled(y, x, dst_tiled_w);
+  constexpr float CHAR_TO_FLOAT = 1.0f / 255.0f;
+  for (uint32_t c = 0; c < channels; ++c) {
+    const uint64_t state = rng_state[dst_idx_base + c * dst_channel_stride];
+    // randomly pick a pixel in x ... x_next and y ... y_next
+    pcg32 rng(state, 1u);
+    const uint32_t dx = rng.next_uint() % (src_x_next - src_x + 1);
+    const uint32_t dy = rng.next_uint() % (src_y_next - src_y + 1);
+    const uint32_t src_idx = get_linear_index_tiled(src_y + dy, src_x + dx, src_tiled_w);
+    const uint8_t v = src[src_idx + c * src_channel_stride];
+
+    dst[dst_idx_base + c * dst_channel_stride] = __float2half(CHAR_TO_FLOAT * (float)v);
+    rng_state[dst_idx_base + c * dst_channel_stride] = rng.state;
+  }
+}
+
+////////////////////////////// DataLoaderBase Implementation //////////////////////////////
+
+void DataLoaderParams::from_json(const json& params) {
+  if (params.contains("data_type")) {
+    std::string data_type_str = params["data_type"];
+    data_type = from_string<DataType>(data_type_str);
+  }
+}
+
+json DataLoaderParams::to_json() const {
+  json params;
+  params["data_type"] = to_string(data_type);
+  return params;
+}
+
+
+/// @brief Update the output shape for the dataloader
 void DataLoaderBase::set_output_shape(const ImageShape &shape) {
   {
     // Update shape under lock, but do not hold the lock while resetting
@@ -111,6 +212,10 @@ void DataLoaderBase::set_output_shape(const ImageShape &shape) {
   log_info("Updating output shape to {}", to_string(m_output_shape));
 }
 
+/// @brief Transfer image data from host to GPU with format conversion
+/// @param stream CUDA stream for async operations
+/// @param gpu_data Destination GPU image
+/// @param host_data Source host image
 void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
                                   const Image &host_data) {
   std::lock_guard lock(m_mutex);
@@ -141,32 +246,66 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
     return w_in_tile * h_in_tile << (2 * kImageTileLog2);
   };
 
+  // Case 1: Same type & shape - direct copy
   if (host_data.data_type == gpu_data.data_type && same_shape) {
-    // Same type & shape: direct copy
-    const size_t bytes = static_cast<size_t>(gpu_data.shape.padded_size()) * sizeof(float);
+    const size_t elem_size =
+      gpu_data.data_type == DataType::Float32 ? sizeof(float) :
+      (gpu_data.data_type == DataType::Float16 ? sizeof(__half) : sizeof(uint8_t));
+    const size_t bytes = static_cast<size_t>(gpu_data.shape.padded_size()) * elem_size;
     CUDA_CHECK_THROW(cudaMemcpyAsync(gpu_data.data, host_data.data, bytes,
                                      cudaMemcpyHostToDevice, stream));
-  } else if (host_data.data_type == ImageDataType::UInt8) {
+  } 
+  // Case 2: Converting from UInt8 host data
+  else if (host_data.data_type == DataType::UInt8) {
     // Copy source bytes to device scratch
-    const size_t src_total_bytes = static_cast<size_t>(host_data.shape.padded_size()) * sizeof(uint8_t);
+    const size_t src_total_bytes =
+        static_cast<size_t>(host_data.shape.padded_size()) * sizeof(uint8_t);
     if (m_raw_data.size() < src_total_bytes) {
       throw std::runtime_error("Internal GPU scratch buffer insufficient; preallocate via reset().");
     }
-    char* raw_data = m_raw_data.data();
-    CUDA_CHECK_THROW(cudaMemcpyAsync(raw_data, host_data.data, src_total_bytes,
-                                     cudaMemcpyHostToDevice, stream));
+    char *raw_data = m_raw_data.data();
+    CUDA_CHECK_THROW(cudaMemcpyAsync(raw_data, host_data.data,
+                                     src_total_bytes, cudaMemcpyHostToDevice,
+                                     stream));
 
+    // Case 2a: Same shape - just convert data type
     if (same_shape) {
-      // Convert only
       const uint32_t total_elements = host_data.shape.padded_size();
-      if (total_elements % 4 == 0){
-        convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>(
-          reinterpret_cast<const unsigned char*>(raw_data), reinterpret_cast<float *>(gpu_data.data), total_elements / 4);
+      if (gpu_data.data_type == DataType::Float32) {
+        // Convert UInt8 to Float32
+        if (total_elements % 4 == 0) {
+          convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0,
+                                     stream>>>(
+              reinterpret_cast<const unsigned char *>(raw_data),
+              reinterpret_cast<float *>(gpu_data.data), total_elements / 4);
+        } else {
+          convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>(
+              reinterpret_cast<const unsigned char *>(raw_data),
+              reinterpret_cast<float *>(gpu_data.data), total_elements);
+        }
+      } 
+      else if (gpu_data.data_type == DataType::Float16) {
+        // Convert UInt8 to FP16
+        if (total_elements % 4 == 0) {
+          convert_u8_half_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>(
+              reinterpret_cast<const unsigned char *>(raw_data),
+              reinterpret_cast<__half *>(gpu_data.data), total_elements / 4);
+        } else {
+          convert_u8_half<<<(total_elements + 255) / 256, 256, 0, stream>>>(
+              reinterpret_cast<const unsigned char *>(raw_data),
+              reinterpret_cast<__half *>(gpu_data.data), total_elements);
+        }
+      } 
+      else if (gpu_data.data_type == DataType::UInt8) {
+        // Same-shape UInt8 -> UInt8: device-to-device copy
+        CUDA_CHECK_THROW(cudaMemcpyAsync(gpu_data.data, raw_data,
+                                         src_total_bytes, cudaMemcpyDeviceToDevice, stream));
       } else {
-        convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>(
-          reinterpret_cast<const unsigned char*>(raw_data), reinterpret_cast<float *>(gpu_data.data), total_elements);
+        throw std::runtime_error("Unsupported GPU image data type for UInt8 host.");
       }
-    } else {
+    } 
+    // Case 2b: Different shape - resize + convert
+    else {
       // Resize + convert (nearest) in tiled CHW
       if (host_data.shape.channel != channels) {
         throw std::runtime_error("Channel mismatch (host vs gpu) not supported for resize.");
@@ -175,36 +314,50 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
       const uint32_t src_tiled_w = (src_width + kImageTileMask) >> kImageTileLog2;
       const uint32_t dst_channel_stride = compute_channel_stride(dst_width, dst_height);
       const uint32_t src_channel_stride = compute_channel_stride(src_width, src_height);
-      dim3 block(16, 16);
-      dim3 grid((dst_width + block.x - 1) / block.x, (dst_height + block.y - 1) / block.y);
-      // resize_nn_u8_to_float_tiled<<<grid, block, 0, stream>>>(reinterpret_cast<const uint8_t*>(raw_data),
-      //                                                         reinterpret_cast<float*>(gpu_data.data),
-      //                                                         src_width, src_height, dst_width, dst_height,
-      //                                                         src_tiled_w, dst_tiled_w,
-      //                                                         src_channel_stride, dst_channel_stride,
-      //                                                         channels);
+      const dim3 block(16, 16);
+      const dim3 grid((dst_width + block.x - 1) / block.x,
+                      (dst_height + block.y - 1) / block.y);
 
-      resize_u8_to_float_tiled_stochastic_blur<<<grid, block, 0, stream>>>(reinterpret_cast<const uint8_t*>(raw_data),
-                                                              reinterpret_cast<float*>(gpu_data.data),
-                                                              m_rng_state.data(),
-                                                              src_width, src_height, dst_width, dst_height,
-                                                              src_tiled_w, dst_tiled_w,
-                                                              src_channel_stride, dst_channel_stride,
-                                                              channels);
+      if (gpu_data.data_type == DataType::Float32) {
+        // Resize + convert UInt8 to Float32
+        resize_u8_to_float_tiled_stochastic_blur<<<grid, block, 0, stream>>>(
+            reinterpret_cast<const uint8_t *>(raw_data),
+            reinterpret_cast<float *>(gpu_data.data), m_rng_state.data(),
+            src_width, src_height, dst_width, dst_height, src_tiled_w,
+            dst_tiled_w, src_channel_stride, dst_channel_stride, channels);
+      } 
+      else if (gpu_data.data_type == DataType::Float16) {
+        // Resize + convert UInt8 to FP16
+        resize_u8_to_half_tiled_stochastic_blur<<<grid, block, 0, stream>>>(
+            reinterpret_cast<const uint8_t *>(raw_data),
+            reinterpret_cast<__half *>(gpu_data.data), m_rng_state.data(),
+            src_width, src_height, dst_width, dst_height, src_tiled_w,
+            dst_tiled_w, src_channel_stride, dst_channel_stride, channels);
+      } else {
+        throw std::runtime_error("Resize to unsupported GPU image data type.");
+      }
     }
-  } else if (host_data.data_type == ImageDataType::Float32) {
+  } 
+  // Case 3: Host-side float32 data (not supported)
+  else if (host_data.data_type == DataType::Float32) {
     throw std::runtime_error("Host-side float32 data type not supported for transfer.");
-  } else {
+  } 
+  // Case 4: Unsupported host data type
+  else {
     throw std::runtime_error("Unsupported host image data type for transfer.");
   }
   CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
 }
 
+/// @brief Transfer image data from host to GPU using default stream
+/// @param gpu_data Destination GPU image
+/// @param host_data Source host image
 void DataLoaderBase::transfer_gpu(const Image &gpu_data,
                                   const Image &host_data) {
   transfer_gpu(nullptr, gpu_data, host_data);
 }
 
+/// @brief Get the dataset associated with this dataloader
 std::shared_ptr<DatasetBase> DataLoaderBase::get_dataset() const {
   if (! m_dataset) {
     throw std::runtime_error("Dataset not set.");
@@ -212,6 +365,7 @@ std::shared_ptr<DatasetBase> DataLoaderBase::get_dataset() const {
   return m_dataset;
 }
 
+/// @brief Reset the dataloader and preallocate GPU buffers
 void DataLoaderBase::reset() {
   DL_FUNC_RANGE();
   // Preallocate device scratch buffer to the maximum dataset image size in bytes
@@ -222,6 +376,7 @@ void DataLoaderBase::reset() {
       m_raw_data.resize(max_bytes);
     }
 
+    // Initialize RNG state for stochastic blur
     if (m_rng_state.size() < max_elements) {
       m_rng_state.resize(max_elements);
 
@@ -234,11 +389,15 @@ void DataLoaderBase::reset() {
         h_rng_state.emplace_back((up << 32) | lo);
       }
       CUDA_CHECK_THROW(cudaMemcpy(m_rng_state.data(), h_rng_state.data(),
-                                  max_bytes, cudaMemcpyHostToDevice));
+                                  max_elements * sizeof(uint64_t), cudaMemcpyHostToDevice));
     }
   }
 }
 
+/// @brief Create a dataloader of the specified type
+/// @param dataloader_type Type of dataloader to create ("simple" or "async")
+/// @param dataset Dataset to load from
+/// @return Unique pointer to the created dataloader
 std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_type,
                                                   std::shared_ptr<DatasetBase> dataset) {
   std::string lower_dataloader_type = to_lower(dataloader_type);
@@ -247,15 +406,24 @@ std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_
     return std::make_unique<SimpleDataLoader>(dataset);
   } else if (lower_dataloader_type == "async") {
     return std::make_unique<AsyncDataLoader>(dataset);
-  } else {
-    throw std::runtime_error("Unknown dataloader type: " + dataloader_type);
   }
+  throw std::runtime_error("Unknown dataloader type: " + dataloader_type);
 }
 
-void DataLoaderBase::set_params(const json &params) { (void)params; }
+/// @brief Set parameters for the dataloader
+void DataLoaderBase::set_params(const json &params) {
+  DataLoaderParams dl_params;
+  dl_params.from_json(params);
+  m_params = dl_params;
+}
 
-json DataLoaderBase::get_params() const { return json::object(); }
+/// @brief Get parameters from the dataloader
+json DataLoaderBase::get_params() const {
+  json params = m_params.to_json();
+  return params;
+}
 
+/// @brief Constructor for DataLoaderBase
 DataLoaderBase::DataLoaderBase(std::shared_ptr<DatasetBase> dataset) : m_dataset(dataset) {
   m_output_shape = dataset->image_shape();
 }

@@ -43,9 +43,9 @@
 #include <type_traits>
 #include <nlohmann/json.hpp>
 
-#if defined(__CUDACC__)
+
 #include <cuda_fp16.h>
-#endif
+#include <cuda_bf16.h>
 
 ////////////////////////////// CUDA Macros //////////////////////////////
 
@@ -190,6 +190,13 @@ enum class ReductionType {
 
 /// The frame_id, camera_id, ... Always ui64.
 using uuid_t = uint64_t;
+
+using f32 = float;
+using f16 = nv_half;
+using bf16 = nv_bfloat16;
+
+using f162 = nv_half2;
+using bf162 = nv_bfloat162;
 
 ////////////////////////////// Utility Functions //////////////////////////////
 

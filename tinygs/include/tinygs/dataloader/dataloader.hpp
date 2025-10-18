@@ -24,6 +24,13 @@ struct GPUBatchInputOutput {
   GPUBatchOutput output;
 };
 
+struct DataLoaderParams {
+  DataType data_type = DataType::Float32;
+
+  void from_json(const json& params);
+  json to_json() const;
+};
+
 class DataLoaderBase {
 public:
   explicit DataLoaderBase(std::shared_ptr<DatasetBase> dataset);
@@ -77,6 +84,7 @@ public:
 protected:
   std::shared_ptr<DatasetBase> m_dataset;
   ImageShape m_output_shape;
+  DataLoaderParams m_params;
 
 private:
   GPUMemory<char> m_raw_data;

@@ -54,7 +54,7 @@ Image load_stbi_u8(const char* filename) {
   }
   Image img;
   img.data = data;
-  img.data_type = ImageDataType::UInt8;
+  img.data_type = DataType::UInt8;
   img.shape.width = width;
   img.shape.height = height;
   img.shape.channel = n_channels;

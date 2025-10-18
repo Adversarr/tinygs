@@ -647,8 +647,8 @@ void Orchestrator::initialize() {
   uint32_t height = training_shape.height;
 
   ImageShape rgb_shape{width, height, 3};
-  Image render_rgb = Image(rgb_shape, ImageDataType::Float32, m_render_buffer->data());
-  Image grad_rgb = Image(rgb_shape, ImageDataType::Float32, m_image_grad_buffer->data());
+  Image render_rgb = Image(rgb_shape, DataType::Float32, m_render_buffer->data());
+  Image grad_rgb = Image(rgb_shape, DataType::Float32, m_image_grad_buffer->data());
 
   // Setup rasterization context
   m_rasterize_ctx.inference = false; // Training mode
@@ -666,7 +666,7 @@ void Orchestrator::initialize() {
   m_rasterize_ctx.gaussians_grad = m_gradients;
 
   // Setup loss context
-  m_loss_ctx.loss = Image(rgb_shape, ImageDataType::Float32, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, DataType::Float32, m_loss_buffer->data());
   // TODO: alpha is ignored for now
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
@@ -930,8 +930,8 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
 
   // Create new image objects with the reallocated buffers
   ImageShape rgb_shape{new_shape.width, new_shape.height, 3};
-  Image render_rgb = Image(rgb_shape, ImageDataType::Float32, m_render_buffer->data());
-  Image grad_rgb = Image(rgb_shape, ImageDataType::Float32, m_image_grad_buffer->data());
+  Image render_rgb = Image(rgb_shape, DataType::Float32, m_render_buffer->data());
+  Image grad_rgb = Image(rgb_shape, DataType::Float32, m_image_grad_buffer->data());
 
   // Update rasterization context with new dimensions and images
   m_rasterize_ctx.fwd_input.width = new_shape.width;
@@ -942,7 +942,7 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
   m_rasterize_ctx.grad_output.image = grad_rgb;
 
   // Update loss context
-  m_loss_ctx.loss = Image(rgb_shape, ImageDataType::Float32, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, DataType::Float32, m_loss_buffer->data());
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
 

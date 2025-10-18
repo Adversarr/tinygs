@@ -174,7 +174,7 @@ int main(int argc, char** argv) {
   }
   out_image_grad.copy_from_host(out_image_grad_host);
   std::shared_ptr<GPUGaussian3d> grad = gpu_gaussian->clone();
-  params.grad_output.image = Image(shape, ImageDataType::Float32, out_image_grad.data());
+  params.grad_output.image = Image(shape, DataType::Float32, out_image_grad.data());
   params.gaussians_grad = grad;
   grad->memset(0);
   rast->backward(params);

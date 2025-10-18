@@ -60,7 +60,7 @@ GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
   // Create GPU image structure
   Image gpu_image;
   gpu_image.shape = m_output_shape;
-  gpu_image.data_type = ImageDataType::Float32;
+  gpu_image.data_type = m_params.data_type;
   gpu_image.data = m_gpu_memory.data();
 
   // Transfer data from host to GPU using the provided CUDA stream
@@ -85,10 +85,11 @@ void SimpleDataLoader::set_params(const json &params) {
   if (params.contains("seed")) {
     m_rng.seed(params["seed"].get<uint64_t>());
   }
+  DataLoaderBase::set_params(params);
 }
 
 json SimpleDataLoader::get_params() const {
-  json params = json::object();
+  json params = DataLoaderBase::get_params();
   params["type"] = "simple";
   return params;
 }

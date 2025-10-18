@@ -84,6 +84,7 @@ struct AsyncDataLoader::Impl {
   std::vector<size_t> permutation;          ///< Current permutation of dataset indices
   size_t current_index;                     ///< Current position in the permutation
   uint32_t prefetch_factor = 4;             ///< Prefetch factor for prefetching data
+  DataType data_type = DataType::Float32;   ///< Data type for GPU storage
 
   std::jthread prefetch_thread;             ///< Thread for prefetching data
   std::unique_ptr<BoundedBlockingQueue<std::pair<GPUBatchInputOutput, uint32_t>>> data_queue;
@@ -111,7 +112,8 @@ struct AsyncDataLoader::Impl {
   }
 
   /// @brief Start the prefetch thread
-  void start(DataLoaderBase& loader, DatasetBase& dataset) {
+  void start(DataLoaderBase& loader, DatasetBase& dataset, DataType data_type) {
+    this->data_type = data_type;
     data_queue = std::make_unique<BoundedBlockingQueue<std::pair<GPUBatchInputOutput, uint32_t>>>(prefetch_factor);
     index_queue = std::make_unique<BoundedBlockingQueue<uint32_t>>(prefetch_factor);
     // Preallocate ring buffer to maximum dataset image stride to avoid future reallocations
@@ -223,7 +225,7 @@ struct AsyncDataLoader::Impl {
     // Create GPU image structure
     Image gpu_image;
     gpu_image.shape = m_output_shape;
-    gpu_image.data_type = ImageDataType::Float32;
+    gpu_image.data_type = data_type;
     // Use maximum stride for per-buffer segment to avoid overlap after resolution increases
     const size_t stride = dataset.image_shape().padded_size();
     gpu_image.data = this->gpu_memory.data() + stride * buffer_idx;
@@ -319,11 +321,13 @@ void AsyncDataLoader::set_params(const json &params) {
     m_impl->rngseed = params["seed"].get<uint64_t>();
     m_impl->rng.seed(m_impl->rngseed);
   }
+
+  DataLoaderBase::set_params(params);
 }
 
 json AsyncDataLoader::get_params() const {
   std::lock_guard<std::mutex> lock(m_impl->state_mutex_);
-  json params = json::object();
+  json params = DataLoaderBase::get_params();
   params["type"] = "async";
   params["seed"] = m_impl->rngseed;
   return params;
@@ -349,7 +353,7 @@ void AsyncDataLoader::reset() {
   m_impl->generate_permutation(m_dataset->size());
 
   // Relaunch prefetch thread and prime index queue
-  m_impl->start(*this, *m_dataset);
+  m_impl->start(*this, *m_dataset, m_params.data_type);
 }
 
 } // namespace tinygs

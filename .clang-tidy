@@ -181,3 +181,4 @@ CheckOptions:
   readability-identifier-naming.UnionCase: lower_case
   readability-identifier-naming.UsingCase: lower_case
   readability-identifier-naming.ClassIgnoredRegexp: "([a-z_]+_t)|([A-Za-z0-9]+_[A-Za-z0-9]+)"
+  readability-identifier-naming.StructIgnoredRegexp: "([a-z_]+_t)|([A-Za-z0-9]+_[A-Za-z0-9]+)"

@@ -276,7 +276,7 @@ Data VideoDataset::operator[](size_t index) const {
   // Set up image data
   uint8_t* image_ptr = m_timestamp_data.at(timestamp);
   data.image.shape = image_shape();
-  data.image.data_type = ImageDataType::UInt8;
+  data.image.data_type = DataType::UInt8;
   data.image.data = image_ptr;
 
   // Set camera matrices from camera loader
