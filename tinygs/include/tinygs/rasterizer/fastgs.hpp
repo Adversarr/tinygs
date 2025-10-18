@@ -3,6 +3,13 @@
 
 namespace tinygs {
 
+struct FastGSRasterizerParams {
+  float f16_grad_scaler = 1.0f;
+
+  void from_json(const json& params);
+  json to_json() const;
+};
+
 class FastGSRasterizer final : public RasterizerBase {
 public:
   FastGSRasterizer();
@@ -24,6 +31,8 @@ public:
   struct Impl;
 private:
   std::unique_ptr<Impl> m_impl;
+
+  FastGSRasterizerParams m_params;
 };
 
 }

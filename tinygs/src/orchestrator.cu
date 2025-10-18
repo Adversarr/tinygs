@@ -18,6 +18,8 @@
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 #include "tinygs/core/gaussian.hpp"
+#include "tinygs/utils/image_format.hpp"
+#include "tinygs/common.hpp"
 #include <cub/device/device_radix_sort.cuh>
 namespace tinygs {
 
@@ -872,11 +874,19 @@ cv::Mat Orchestrator::to_opencv() const {
 
   // Copy GPU rendered image to CPU for visualization
   std::vector<float> cpu_image(shape.padded_size());
-  CUDA_CHECK_THROW(
-      cudaMemcpy(cpu_image.data(), 
-        m_rasterize_ctx.fwd_output.image.data,
-        // m_loss_ctx.target.data,
-        shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
+  if (m_rasterize_ctx.fwd_output.image.data_type == DataType::Float16) {
+    // Convert FP16 buffer to FP32 on GPU before host copy
+    GPUMemory<float> fp32_tmp(shape.padded_size());
+    half_to_float_gpu(fp32_tmp.data(), reinterpret_cast<const float16_t*>(m_rasterize_ctx.fwd_output.image.data), shape.padded_size());
+    CUDA_CHECK_THROW(cudaMemcpy(cpu_image.data(), fp32_tmp.data(), shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
+  } else if (m_rasterize_ctx.fwd_output.image.data_type == DataType::Float32) {
+    CUDA_CHECK_THROW(cudaMemcpy(cpu_image.data(), 
+      m_rasterize_ctx.fwd_output.image.data,
+      shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
+  } else {
+    throw std::runtime_error("to_opencv expects float32 or float16 image data");
+  }
+
   // Convert float RGB to 8-bit BGR for OpenCV
   cv::Mat img(height, width, CV_8UC3);
   for (int y = 0; y < height; ++y) {
