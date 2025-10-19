@@ -688,7 +688,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     uint* tile_max_n_contributions,
     uint* tile_n_contributions,
     uint* bucket_tile_index,
-    float4* bucket_color_transmittance,
+    ColorTransmittance* bucket_color_transmittance_scaled,
     const uint width,
     const uint height,
     const uint grid_width,
@@ -728,18 +728,27 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         bucket_tile_index[bucket_offset + current_bucket_idx] = tile_idx;
     }
 
-    // setup shared memory
+    // ===== shared memory =====
     __shared__ float2 collected_mean2d[config::block_size_blend];
+    // bank conflict free storage
     __shared__ __half2 collected_conic_xy[config::block_size_blend];
     __shared__ __half2 collected_conic_z_raw_opacity[config::block_size_blend];
+    struct alignas(4) ColorSimd {
+        uchar3 rgb;
+        char padding_donotuse;
+    };
+    __shared__ ColorSimd collected_color[config::block_size_blend];
 
-    __shared__ float3 collected_color[config::block_size_blend];
     // initialize local storage
-    float3 color_pixel = make_float3(0.0f);
-    float transmittance = 1.0f;
+    // float3 color_pixel = make_float3(0.0f);
+    // float transmittance = 1.0f;
+    packed_half2x2 color_transmittance_scaled;
+    fast_zero(color_transmittance_scaled);
+    color_transmittance_scaled.zw.y = TINYGS_SCALE_HALF;
     uint n_possible_contributions = 0;
     uint n_contributions = 0;
     bool done = !inside;
+
     // collaborative loading and processing
     for (int n_points_remaining = n_points_total, current_fetch_idx = tile_range.x + thread_rank;
          n_points_remaining > 0;
@@ -753,16 +762,20 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             const auto& info = primitive_infos[primitive_idx];
             collected_conic_xy[thread_rank] = info.conic_xy;
             collected_conic_z_raw_opacity[thread_rank] = info.conic_z_raw_opacity;
-            uchar32float3(collected_color[thread_rank], info.rgb);
+            collected_color[thread_rank] = ColorSimd{info.rgb, char(0)};
         }
         block.sync();
         const int current_batch_size = min(config::block_size_blend, n_points_remaining);
         int j;
         for (j = 0; !done && j < current_batch_size; ++j) {
             if (j % 32 == 0) {
-                const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
                 const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
-                bucket_color_transmittance[bucket_offset * config::block_size_blend + off] = current_color_transmittance;
+                // const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
+                // ColorTransmittance ct{
+                //     __float22half2_rn(make_float2(current_color_transmittance.x, current_color_transmittance.y)),
+                //     __float22half2_rn(make_float2(current_color_transmittance.z, current_color_transmittance.w))
+                // };
+                bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off] = color_transmittance_scaled;
                 bucket_offset++;
             }
             n_possible_contributions++;
@@ -780,20 +793,37 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             const float alpha = fminf(opacity * gaussian, config::max_fragment_alpha);
             if (alpha < config::min_alpha_threshold)
                 continue;
+
+            const float transmittance = __half2float(color_transmittance_scaled.zw.y);
             const float next_transmittance = transmittance * (1.0f - alpha);
-            if (next_transmittance < config::transmittance_threshold) {
+            if (next_transmittance < (config::transmittance_threshold * TINYGS_SCALE_FULL)) {
                 done = true;
                 continue;
             }
-            color_pixel += transmittance * alpha * collected_color[j];
-            transmittance = next_transmittance;
+
+            // unpack the next gaussian's color
+            // float3 rgb_01;
+            // uchar32float3(rgb_01, collected_color[j].rgb);
+            // color_pixel += transmittance * alpha * rgb_01;
+            // transmittance = next_transmittance;
+            const float ta = transmittance * alpha * TINYGS_UNSCALE_FULL;
+            const __half2 tah2 = make_half2(__float2half_rn(ta), __float2half_rn(ta));
+            color_transmittance_scaled.xy = __hfma2(
+                tah2,
+                make_half2(__ushort2half_rn(collected_color[j].rgb.x),
+                           __ushort2half_rn(collected_color[j].rgb.y)),
+                color_transmittance_scaled.xy);
+            color_transmittance_scaled.zw.x = __hfma(
+                tah2.x, __ushort2half_rn(collected_color[j].rgb.z),
+                color_transmittance_scaled.zw.x);
+            color_transmittance_scaled.zw.y = __float2half_rn(next_transmittance);
             n_contributions = n_possible_contributions;
         }
+
         j = ((j + 31) / 32) * 32; // round up to next warp
         for (; j < current_batch_size; j += 32) {
-            const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
             const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
-            bucket_color_transmittance[bucket_offset * config::block_size_blend + off] = current_color_transmittance;
+            bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off] = color_transmittance_scaled;
             bucket_offset++;
         }
     }
@@ -804,10 +834,13 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
                 /* col */ pixel_coords.x,
                 width_in_tile);
 
-        image[physical_pixel_idx] = __float2half(color_pixel.x);
-        image[physical_pixel_idx + channel_stride] = __float2half(color_pixel.y);
-        image[physical_pixel_idx + 2 * channel_stride] = __float2half(color_pixel.z);
-        alpha_map[physical_pixel_idx] = __float2half(1.0f - transmittance);
+        // Write the buffers, the image is in [0, 1] range.
+        color_transmittance_scaled.xy = __hmul2(color_transmittance_scaled.xy, TINYGS_UNSCALE_HALF2);
+        color_transmittance_scaled.zw.x = __hmul(color_transmittance_scaled.zw.x, TINYGS_UNSCALE_HALF);
+        image[physical_pixel_idx] = color_transmittance_scaled.xy.x;
+        image[physical_pixel_idx + channel_stride] = color_transmittance_scaled.xy.y;
+        image[physical_pixel_idx + 2 * channel_stride] = color_transmittance_scaled.zw.x;
+        alpha_map[physical_pixel_idx] = __hsub(CUDART_ONE_FP16, color_transmittance_scaled.zw.y); // 1-transmittance
         tile_n_contributions[physical_pixel_idx] = n_contributions;
     }
 

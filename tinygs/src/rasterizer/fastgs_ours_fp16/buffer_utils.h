@@ -131,12 +131,12 @@ struct PerTileBuffers {
 
 struct PerBucketBuffers {
   uint* tile_index;
-  float4* color_transmittance;
+  ColorTransmittance* color_transmittance;
 
   static PerBucketBuffers from_blob(char*& blob, size_t n_buckets) {
     PerBucketBuffers buffers;
-    obtain(blob, buffers.tile_index, n_buckets * config::block_size_blend, config::block_size_blend);
-    obtain(blob, buffers.color_transmittance, n_buckets * config::block_size_blend, config::block_size_blend);
+    obtain(blob, buffers.tile_index, n_buckets * config::block_size_blend, 256);
+    obtain(blob, buffers.color_transmittance, n_buckets * config::block_size_blend, 256);
     return buffers;
   }
 };

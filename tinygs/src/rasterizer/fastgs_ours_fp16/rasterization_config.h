@@ -55,6 +55,29 @@ struct alignas(4) PrimitiveInfo {
   uchar3 rgb;                   // 3B, typically in [0, 255)
 };
 
+
+// 256.0 half
+#define TINYGS_SCALE_FULL 255.0f
+// #define TINYGS_SCALE_HALF __ushort_as_half((unsigned short)0x5C00U)
+#define TINYGS_SCALE_HALF __float2half_rn(TINYGS_SCALE_FULL)
+#define TINYGS_SCALE_HALF2 make_half2(TINYGS_SCALE_HALF, TINYGS_SCALE_HALF)
+// 1/256.0 half
+#define TINYGS_UNSCALE_FULL (1.0f / TINYGS_SCALE_FULL)
+// #define TINYGS_UNSCALE_HALF __ushort_as_half((unsigned short)0x1C00U)
+#define TINYGS_UNSCALE_HALF __float2half_rn(TINYGS_UNSCALE_FULL)
+#define TINYGS_UNSCALE_HALF2 make_half2(TINYGS_UNSCALE_HALF, TINYGS_UNSCALE_HALF)
+
+struct alignas(4) packed_half2x2 {
+  __half2 xy;
+  __half2 zw;
+};
+
+__device__ __forceinline__ void fast_zero(packed_half2x2& p) {
+  reinterpret_cast<uint64_t&>(p) = 0ull;
+}
+
+using ColorTransmittance = packed_half2x2;
+
 static_assert(std::is_trivially_copyable_v<PrimitiveInfo>, "PrimitiveInfo must be trivially copyable");
 
 __device__ __forceinline__ void fast_copy(PrimitiveInfo& dst, const PrimitiveInfo& src) {
@@ -80,9 +103,3 @@ __device__ __forceinline__ void uchar32float3(float3& f, const uchar3& uc) {
 }
 
 #undef DEF
-
-// 256.0 half
-#define TINYGS_SCALE_TRANSMITTANCE_HALF __ushort_as_half((unsigned short)0x5C00U)
-
-// 1/256.0 half
-#define TINYGS_UNSCALE_TRANSMITTANCE_HALF __ushort_as_half((unsigned short)0x1C00U)

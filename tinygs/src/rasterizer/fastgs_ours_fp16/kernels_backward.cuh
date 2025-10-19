@@ -436,7 +436,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     const uint* __restrict__ tile_max_n_contributions,
     const uint* __restrict__ tile_n_contributions,
     const uint* __restrict__ bucket_tile_index,
-    const float4* __restrict__ bucket_color_transmittance,
+    const ColorTransmittance* __restrict__ bucket_color_transmittance_scaled,
     float2* __restrict__ grad_mean2d,
     float2* __restrict__ absgrad_mean2d,
     float* __restrict__ grad_conic,
@@ -481,7 +481,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
     const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_height};
 
-    bucket_color_transmittance += bucket_idx * config::block_size_blend;
+    bucket_color_transmittance_scaled += bucket_idx * config::block_size_blend;
 
     if (valid_primitive) {
         primitive_idx = instance_primitive_indices[instance_idx];
@@ -555,7 +555,11 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             float4 color_transmittance{0.f, 0.f, 0.f, 0.f};
 
             if (is_valid) {
-                color_transmittance = bucket_color_transmittance[i];
+                color_transmittance = make_float4(
+                    __half2float(bucket_color_transmittance_scaled[i].xy.x) * TINYGS_UNSCALE_FULL,
+                    __half2float(bucket_color_transmittance_scaled[i].xy.y) * TINYGS_UNSCALE_FULL,
+                    __half2float(bucket_color_transmittance_scaled[i].zw.x) * TINYGS_UNSCALE_FULL,
+                    __half2float(bucket_color_transmittance_scaled[i].zw.y) * TINYGS_UNSCALE_FULL);
                 local_upper.last_contributor = tile_n_contributions[physical_pixel_idx];
                 local_upper.grad_color_pixel = make_float3(__half2float(grad_image[physical_pixel_idx]),
                                 __half2float(grad_image[physical_pixel_idx + channel_stride]),
@@ -618,13 +622,11 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             }
 
             const float blending_weight = transmittance * alpha;
-            // const float inv_contribution = sqrtf(1.0f / (blending_weight + config::min_alpha_threshold));
-            const float inv_contribution = 1;
             const float one_minus_alpha = 1.0f - alpha;
             // color gradient
             const float3 dL_dcolor = blending_weight * grad_color_pixel;
             // dL_dcolor_accum += dL_dcolor;
-            dL_dcolor_accum += dL_dcolor * inv_contribution;
+            dL_dcolor_accum += dL_dcolor;
             color_pixel_after -= blending_weight * color;
             const float color_pixel_after_dot_grad_color_pixel = dot(color_pixel_after, grad_color_pixel);
             const float2 prepare_dl_dmean2d =
@@ -635,16 +637,16 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel / one_minus_alpha;
             const float dL_draw_opacity_partial = alpha * dL_dalpha_from_color;
             // dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
-            dL_draw_opacity_partial_accum += dL_draw_opacity_partial * inv_contribution;
+            dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
 
             // conic and mean2d gradient
             const float3 dL_dconic = -0.5f * dL_draw_opacity_partial * delta_coefs;
             // dL_dconic_accum += dL_dconic;
-            dL_dconic_accum += dL_dconic * inv_contribution;
+            dL_dconic_accum += dL_dconic;
             const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
 
             // dL_dmean2d_accum -= dL_dmean2d;
-            dL_dmean2d_accum -= dL_dmean2d * inv_contribution;
+            dL_dmean2d_accum -= dL_dmean2d;
             absdL_dmean2d_accum += make_float2(fabsf(dL_dmean2d.x), fabsf(dL_dmean2d.y));
             transmittance *= one_minus_alpha;
         }
