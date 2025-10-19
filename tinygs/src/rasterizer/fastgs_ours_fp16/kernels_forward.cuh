@@ -263,7 +263,6 @@ __global__ void preprocess_cu(
     uint* __restrict__ primitive_n_touched_tiles,
     ushort4* __restrict__ primitive_screen_bounds,
     float2* __restrict__ primitive_mean2d,
-    float4* __restrict__ primitive_conic_opacity,
     float3* __restrict__ primitive_color,
     uint* __restrict__ n_visible_primitives,
     uint* __restrict__ n_instances,
@@ -489,7 +488,6 @@ __global__ void preprocess_cu(
         static_cast<ushort>(screen_bounds.z),
         static_cast<ushort>(screen_bounds.w));
     primitive_mean2d[primitive_idx] = mean2d;
-    primitive_conic_opacity[primitive_idx] = make_float4(conic, opacity);
     primitive_color[primitive_idx] = convert_sh_to_color(
         sh_coefficients_0, sh_coefficients_rest,
         mean3d, cam_position[0],
@@ -732,7 +730,6 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
 
     // setup shared memory
     __shared__ float2 collected_mean2d[config::block_size_blend];
-    // __shared__ float4 collected_conic_opacity[config::block_size_blend];
     __shared__ __half2 collected_conic_xy[config::block_size_blend];
     __shared__ __half2 collected_conic_z_raw_opacity[config::block_size_blend];
 
@@ -753,7 +750,6 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         if (current_fetch_idx < tile_range.y) {
             const uint primitive_idx = instance_primitive_indices[current_fetch_idx];
             collected_mean2d[thread_rank] = primitive_mean2d[primitive_idx];
-            // collected_conic_opacity[thread_rank] = primitive_conic_opacity[primitive_idx];
             const auto& info = primitive_infos[primitive_idx];
             collected_conic_xy[thread_rank] = info.conic_xy;
             collected_conic_z_raw_opacity[thread_rank] = info.conic_z_raw_opacity;
@@ -765,16 +761,11 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         for (j = 0; !done && j < current_batch_size; ++j) {
             if (j % 32 == 0) {
                 const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
-                // for a 16x16 render tile, we divide by 2x2 to get our tile.
-                //      col0 col1
-                // row0  0    1
-                // row1  2    3
                 const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
                 bucket_color_transmittance[bucket_offset * config::block_size_blend + off] = current_color_transmittance;
                 bucket_offset++;
             }
             n_possible_contributions++;
-            // const float4 conic_opacity = collected_conic_opacity[j];
             const float4 conic_opacity = make_float4(__half2float(collected_conic_xy[j].x),
                                                      __half2float(collected_conic_xy[j].y),
                                                      __half2float(collected_conic_z_raw_opacity[j].x),

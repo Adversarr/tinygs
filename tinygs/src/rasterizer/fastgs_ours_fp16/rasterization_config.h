@@ -80,3 +80,9 @@ __device__ __forceinline__ void uchar32float3(float3& f, const uchar3& uc) {
 }
 
 #undef DEF
+
+// 256.0 half
+#define TINYGS_SCALE_TRANSMITTANCE_HALF __ushort_as_half((unsigned short)0x5C00U)
+
+// 1/256.0 half
+#define TINYGS_UNSCALE_TRANSMITTANCE_HALF __ushort_as_half((unsigned short)0x1C00U)

@@ -106,7 +106,6 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
             per_primitive_buffers.n_touched_tiles,
             per_primitive_buffers.screen_bounds,
             per_primitive_buffers.mean2d,
-            per_primitive_buffers.conic_opacity,
             per_primitive_buffers.color,
             per_primitive_buffers.n_visible_primitives,
             per_primitive_buffers.n_instances,
