@@ -171,8 +171,6 @@ using range = nvtx3::scoped_range_in<SimpleAdam_domain>;
 using attr = nvtx3::event_attributes;
 using regstr = nvtx3::registered_string_in<SimpleAdam_domain>;
 using ncat = nvtx3::named_category_in<SimpleAdam_domain>;
-static const nvtx3::rgb C_BLUE{0, 153, 255};
-static const nvtx3::rgb C_ORANGE{255, 153, 0};
 struct m_step {
   static constexpr char const *message{"simple_adam_step"};
 };
@@ -287,8 +285,6 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
   }
 
   auto n = m_gaussians->size();
-  const int grid = (n + block_size - 1) / block_size;
-
   float g_scale = 1.0f;
   if (m_adam_params.decay_reduction == "mean") {
     g_scale = 1.0f / n;

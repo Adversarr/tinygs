@@ -337,8 +337,6 @@ using range = nvtx3::scoped_range_in<adamw_domain>;
 using attr = nvtx3::event_attributes;
 using regstr = nvtx3::registered_string_in<adamw_domain>;
 using ncat = nvtx3::named_category_in<adamw_domain>;
-static constexpr nvtx3::rgb C_BLUE{0, 153, 255};
-static constexpr nvtx3::rgb C_ORANGE{255, 153, 0};
 struct m_gs_major {
   static constexpr char const *message{"adam_major"};
 };

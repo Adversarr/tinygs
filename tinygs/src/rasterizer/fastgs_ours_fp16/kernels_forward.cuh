@@ -45,6 +45,7 @@ __device__ float3 convert_sh_to_color(
     return result;
 }
 
+
 // based on https://github.com/r4dl/StopThePop-Rasterization/blob/d8cad09919ff49b11be3d693d1e71fa792f559bb/cuda_rasterizer/stopthepop/stopthepop_common.cuh#L131
 __device__ inline bool will_primitive_contribute(
     const float2& mean,
@@ -83,10 +84,96 @@ __device__ inline bool will_primitive_contribute(
     return max_power_in_tile <= power_threshold;
 }
 
+__device__ __forceinline__ __half2 h2copysign(const __half2& x, const __half2& y) {
+    // return make_half2(__float2half(copysignf(__half2float(x.x), __half2float(y.x))),
+    //                   __float2half(copysignf(__half2float(x.y), __half2float(y.y))));
+
+    // TODO: check can we use bitwise operation to implement this
+    // Reinterpret __half2 as a 32-bit unsigned integer
+    uint32_t ix = reinterpret_cast<const uint32_t&>(x);
+    uint32_t iy = reinterpret_cast<const uint32_t&>(y);
+    // Sign-bit mask for both halfs (bit 31 and bit 15)
+    const uint32_t sign_mask = 0x80008000;
+    // 1. Clear sign bits of x: ix & ~sign_mask
+    // 2. Extract sign bits of y: iy & sign_mask
+    // 3. Merge y's sign bits into x
+    uint32_t result_int = (ix & ~sign_mask) | (iy & sign_mask);
+    // Reinterpret result back to __half2
+    return reinterpret_cast<__half2&>(result_int);
+}
+
+__device__ static __forceinline__ __half2 h2lerp(__half2 v0, __half2 v1, __half2 t) {
+  return __hfma2(t, v1, __hfma2(-t, v0, v0));
+}
+
+
+struct alignas(8) ConicOpacity {
+    __half2 xy;
+    __half2 zw;
+};
+
+__device__ ConicOpacity make_conic_opacity(__half2 xy, __half2 zw) {
+    return ConicOpacity{xy, zw};
+}
+
+__device__ ConicOpacity make_conic_opacity(float3 conic, float opacity) {
+  return ConicOpacity{__float22half2_rn(make_float2(conic.x, conic.y)),
+                      __float22half2_rn(make_float2(conic.z, opacity))};
+}
+
+
+__device__ __forceinline__ bool will_primitive_contribute_half(
+    float2 mean, ConicOpacity conic,
+    const uint tile_x, const uint tile_y,
+    const float power_threshold) {
+    //? Reference float version
+    // auto f3_conic = make_float3(__half2float(conic.xy.x), __half2float(conic.xy.y), __half2float(conic.zw.x));
+    // return will_primitive_contribute(mean, f3_conic, tile_x, tile_y, power_threshold);
+
+    const __half2 one = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
+    const __half2 zero = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
+    const __half2 tile_sizes = make_half2(
+        __float2half_rd(((float) config::tile_width - 1.0f) / (float) config::tile_width),
+        __float2half_rd(((float) config::tile_height - 1.0f) / (float) config::tile_height));
+    const __half2 min_diff = make_half2(
+        __float2half_rd((float) tile_x - mean.x * (1.0f / config::tile_width)),
+        __float2half_rd((float) tile_y - mean.y * (1.0f / config::tile_height)));
+    const __half2 max_diff = min_diff + tile_sizes;
+
+    // rect_min.x - mean.x > 0, rect_min.y - mean.y > 0
+    const __half2 x_left_y_above = __hgtu2(min_diff, zero);
+    // rect_max.x - mean.x < 0, rect_max.y - mean.y < 0
+    const __half2 x_right_y_below = __hltu2(max_diff, zero);
+    const __half2 not_in_range = x_left_y_above + x_right_y_below;
+    if (__hbeq2(not_in_range, zero)) {
+        // both are zero => none of the four ineq is true => intile.
+        return true;
+    }
+    const __half2 d = h2copysign(tile_sizes, min_diff);
+    // we already includes mean in the xx_diff.
+    const __half2 diff = -h2lerp(max_diff, min_diff, x_left_y_above);
+    const __half2 diff_xx = make_half2(diff.x, diff.x);
+    const __half2 diff_yy = make_half2(diff.y, diff.y);
+    const __half2 xy = conic.xy;
+    const __half2 yz = make_half2(conic.xy.y, conic.zw.x);
+    const __half2 xz = make_half2(conic.xy.x, conic.zw.x);
+    // NOTE: Here, we do not need to unscale by tile_size, the division will handle this.
+    const __half2 t_raw = __h2div(d * xy * diff_xx + d * yz * diff_yy, d * d * xz);
+    const __half2 t = __hmul2_sat(t_raw, make_half2(not_in_range.y, not_in_range.x));
+    const float2 delta = __half22float2(diff - t * d) * config::tile_width;
+    const float fx = __half2float(conic.xy.x);
+    const float fy = __half2float(conic.xy.y);
+    const float fz = __half2float(conic.zw.x);
+    const float max_power_in_tile =
+        0.5f * (fx * delta.x * delta.x + fz * delta.y * delta.y) +
+        fy * delta.x * delta.y;
+    return max_power_in_tile <= power_threshold;
+}
+
 // based on https://github.com/r4dl/StopThePop-Rasterization/blob/d8cad09919ff49b11be3d693d1e71fa792f559bb/cuda_rasterizer/stopthepop/stopthepop_common.cuh#L177
 __device__ uint compute_exact_n_touched_tiles(
     const float2& mean2d,
-    const float3& conic,
+    const ConicOpacity& conic,
     const uint4& screen_bounds,
     const float power_threshold,
     const uint tile_count,
@@ -99,7 +186,7 @@ __device__ uint compute_exact_n_touched_tiles(
         for (uint instance_idx = 0; instance_idx < tile_count && instance_idx < config::n_sequential_threshold; instance_idx++) {
             const uint tile_y = screen_bounds.z + (instance_idx / screen_bounds_width);
             const uint tile_x = screen_bounds.x + (instance_idx % screen_bounds_width);
-            if (will_primitive_contribute(mean2d_shifted, conic, tile_x, tile_y, power_threshold))
+            if (will_primitive_contribute_half(mean2d_shifted, conic, tile_x, tile_y, power_threshold))
                 n_touched_tiles++;
         }
     }
@@ -130,10 +217,14 @@ __device__ uint compute_exact_n_touched_tiles(
         const float2 mean2d_shifted_coop = make_float2(
             __shfl_sync(0xffffffffu, mean2d_shifted.x, current_lane),
             __shfl_sync(0xffffffffu, mean2d_shifted.y, current_lane));
-        const float3 conic_coop = make_float3(
-            __shfl_sync(0xffffffffu, conic.x, current_lane),
-            __shfl_sync(0xffffffffu, conic.y, current_lane),
-            __shfl_sync(0xffffffffu, conic.z, current_lane));
+        // const float3 conic_coop = make_float3(
+        //     __shfl_sync(0xffffffffu, conic.x, current_lane),
+        //     __shfl_sync(0xffffffffu, conic.y, current_lane),
+        //     __shfl_sync(0xffffffffu, conic.z, current_lane));
+        ConicOpacity conic_coop;
+        conic_coop.xy = __shfl_sync(0xffffffffu, conic.xy, current_lane);
+        conic_coop.zw = __shfl_sync(0xffffffffu, conic.zw, current_lane);
+
         const float power_threshold_coop = __shfl_sync(0xffffffffu, power_threshold, current_lane);
 
         const uint remaining_tile_count = tile_count_coop - config::n_sequential_threshold;
@@ -143,7 +234,10 @@ __device__ uint compute_exact_n_touched_tiles(
             const int active_current = instance_idx < tile_count_coop;
             const uint tile_y = screen_bounds_coop.z + (instance_idx / screen_bounds_width_coop);
             const uint tile_x = screen_bounds_coop.x + (instance_idx % screen_bounds_width_coop);
-            const uint contributes = active_current && will_primitive_contribute(mean2d_shifted_coop, conic_coop, tile_x, tile_y, power_threshold_coop);
+            const uint contributes =
+                active_current && will_primitive_contribute_half(
+                                      mean2d_shifted_coop, conic_coop, tile_x,
+                                      tile_y, power_threshold_coop);
             const uint contributes_ballot = __ballot_sync(0xffffffffu, contributes);
             const uint n_contributes = __popc(contributes_ballot);
             if (lane_idx == current_lane) n_touched_tiles += n_contributes;
@@ -173,6 +267,7 @@ __global__ void preprocess_cu(
     float3* __restrict__ primitive_color,
     uint* __restrict__ n_visible_primitives,
     uint* __restrict__ n_instances,
+    PrimitiveInfo* __restrict__ primitive_infos,
     const uint n_primitives,
     const uint grid_width,
     const uint grid_height,
@@ -238,10 +333,10 @@ __global__ void preprocess_cu(
 
     // load opacity
     pipeline.consumer_wait();
-    const float raw_opacity = shm_opacities[block.thread_rank()];
+    const __half raw_opacity = __float2half_rn(shm_opacities[block.thread_rank()]);
     pipeline.consumer_release();
 
-    const float opacity = tinygs::activate_opacity(raw_opacity);
+    const float opacity = tinygs::activate_opacity(__half2float(raw_opacity));
     if (opacity < config::min_alpha_threshold)
         active = false;
 
@@ -256,7 +351,6 @@ __global__ void preprocess_cu(
         tinygs::activate_scale(raw_scale.z) * tinygs::activate_scale(raw_scale.z));
     pipeline.consumer_wait();
     auto [qr, qx, qy, qz] = shm_raw_rotations[block.thread_rank()];
-    // auto [qr, qx, qy, qz] = raw_rotations[primitive_idx];
     pipeline.consumer_release();
 
     const float qrr_raw = qr * qr, qxx_raw = qx * qx, qyy_raw = qy * qy, qzz_raw = qz * qz;
@@ -369,9 +463,10 @@ __global__ void preprocess_cu(
     if (__ballot_sync(0xffffffffu, active) == 0)
         return;
 
+    ConicOpacity conic_opacity = make_conic_opacity(conic, __half2float(raw_opacity));
     // compute exact number of tiles the primitive overlaps
     const uint n_touched_tiles = compute_exact_n_touched_tiles(
-        mean2d, conic, screen_bounds,
+        mean2d, conic_opacity, screen_bounds,
         power_threshold, n_touched_tiles_max, active);
 
     // cooperative threads no longer needed
@@ -384,8 +479,10 @@ __global__ void preprocess_cu(
     assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif
     primitive_n_touched_tiles[primitive_idx] = n_touched_tiles;
-    // WARNING: screen_bounds are cast to ushort. This may overflow if grid dimensions exceed 65535.
-    // For very high resolutions, consider changing primitive_screen_bounds to use uint.
+#ifndef NDEBUG
+    assert(screen_bounds.x <= 0xffffu && screen_bounds.y <= 0xffffu &&
+           screen_bounds.z <= 0xffffu && screen_bounds.w <= 0xffffu);
+#endif
     primitive_screen_bounds[primitive_idx] = make_ushort4(
         static_cast<ushort>(screen_bounds.x),
         static_cast<ushort>(screen_bounds.y),
@@ -398,15 +495,18 @@ __global__ void preprocess_cu(
         mean3d, cam_position[0],
         primitive_idx, active_sh_bases, total_bases_sh_rest);
 
-    // printf("%d: conic.x=%.6f, .y=%.6f, .z=%6f, opacity=%.6f\n", 
-    //     (int) primitive_idx,
-    //     conic.x, conic.y, conic.z, opacity);
-
     const uint offset = atomicAdd(n_visible_primitives, 1);
     const uint depth_key = __float_as_uint(depth);
     primitive_depth_keys[offset] = depth_key;
     primitive_indices[offset] = primitive_idx;
     atomicAdd(n_instances, n_touched_tiles);
+
+    //! Handle half precision modifications
+    PrimitiveInfo info;
+    info.conic_xy = __float22half2_rn(make_float2(conic.x, conic.y));
+    info.conic_z_raw_opacity = make_half2(__float2half(conic.z), raw_opacity);
+    float32uchar3(info.rgb, primitive_color[primitive_idx]);
+    fast_copy(primitive_infos[primitive_idx], info);
 }
 
 __global__ void apply_depth_ordering_cu(
@@ -427,9 +527,9 @@ __global__ void create_instances_cu(
     const uint* primitive_offsets,
     const ushort4* primitive_screen_bounds,
     const float2* primitive_mean2d,
-    const float4* primitive_conic_opacity,
     ushort* instance_keys,
     uint* instance_primitive_indices,
+    const PrimitiveInfo* __restrict__ primitive_infos,
     const uint grid_width,
     const uint n_visible_primitives) {
     auto block = cg::this_thread_block();
@@ -453,10 +553,15 @@ __global__ void create_instances_cu(
 
     __shared__ ushort4 collected_screen_bounds[config::block_size_create_instances];
     __shared__ float2 collected_mean2d_shifted[config::block_size_create_instances];
-    __shared__ float4 collected_conic_opacity[config::block_size_create_instances];
+    __shared__ __half2 collected_conic_xy[config::block_size_create_instances];
+    __shared__ __half2 collected_conic_z_raw_opacity[config::block_size_create_instances];
     collected_screen_bounds[block.thread_rank()] = screen_bounds;
     collected_mean2d_shifted[block.thread_rank()] = primitive_mean2d[primitive_idx] - 0.5f;
-    collected_conic_opacity[block.thread_rank()] = primitive_conic_opacity[primitive_idx];
+    {
+      const PrimitiveInfo info = primitive_infos[primitive_idx];
+      collected_conic_xy[block.thread_rank()] = info.conic_xy;
+      collected_conic_z_raw_opacity[block.thread_rank()] = info.conic_z_raw_opacity;
+    }
 
     block.sync();
 
@@ -464,14 +569,16 @@ __global__ void create_instances_cu(
 
     if (active) {
         const float2 mean2d_shifted = collected_mean2d_shifted[block.thread_rank()];
-        const float4 conic_opacity = collected_conic_opacity[block.thread_rank()];
-        const float3 conic = make_float3(conic_opacity);
-        const float power_threshold = logf(conic_opacity.w * config::min_alpha_threshold_rcp);
+        ConicOpacity conic = make_conic_opacity(
+            collected_conic_xy[block.thread_rank()],
+            collected_conic_z_raw_opacity[block.thread_rank()]);
+        // const float3 conic = make_float3(conic_opacity);
+        const float power_threshold = logf(activate_opacity(__half2float(conic.zw.y)) * config::min_alpha_threshold_rcp);
 
         for (uint instance_idx = 0; instance_idx < tile_count && instance_idx < config::n_sequential_threshold; instance_idx++) {
             const uint tile_y = screen_bounds.z + (instance_idx / screen_bounds_width);
             const uint tile_x = screen_bounds.x + (instance_idx % screen_bounds_width);
-            if (will_primitive_contribute(mean2d_shifted, conic, tile_x, tile_y, power_threshold)) {
+            if (will_primitive_contribute_half(mean2d_shifted, conic, tile_x, tile_y, power_threshold)) {
                 const ushort tile_key = static_cast<ushort>(tile_y * grid_width + tile_x);
                 instance_keys[current_write_offset] = tile_key;
                 instance_primitive_indices[current_write_offset] = primitive_idx;
@@ -499,9 +606,13 @@ __global__ void create_instances_cu(
         const uint tile_count_coop = screen_bounds_width_coop * static_cast<uint>(screen_bounds_coop.w - screen_bounds_coop.z);
 
         const float2 mean2d_shifted_coop = collected_mean2d_shifted[warp.meta_group_rank() * 32 + current_lane];
-        const float4 conic_opacity_coop = collected_conic_opacity[warp.meta_group_rank() * 32 + current_lane];
-        const float3 conic_coop = make_float3(conic_opacity_coop);
-        const float power_threshold_coop = logf(conic_opacity_coop.w * config::min_alpha_threshold_rcp);
+        ConicOpacity conic_opacity_coop = make_conic_opacity(
+            (collected_conic_xy[warp.meta_group_rank() * 32 + current_lane]),
+            (collected_conic_z_raw_opacity[warp.meta_group_rank() * 32 + current_lane]));
+
+        const float power_threshold_coop =
+            logf(activate_opacity(__half2float(conic_opacity_coop.zw.y)) *
+                 config::min_alpha_threshold_rcp);
 
         const uint remaining_tile_count = tile_count_coop - config::n_sequential_threshold;
         const int n_iterations = div_round_up(remaining_tile_count, 32u);
@@ -510,13 +621,17 @@ __global__ void create_instances_cu(
             const int active_current = instance_idx < tile_count_coop;
             const uint tile_y = screen_bounds_coop.z + (instance_idx / screen_bounds_width_coop);
             const uint tile_x = screen_bounds_coop.x + (instance_idx % screen_bounds_width_coop);
-            const uint write = active_current && will_primitive_contribute(mean2d_shifted_coop, conic_coop, tile_x, tile_y, power_threshold_coop);
+            const uint write = active_current && will_primitive_contribute_half(mean2d_shifted_coop, conic_opacity_coop, tile_x, tile_y, power_threshold_coop);
             const uint write_ballot = __ballot_sync(0xffffffffu, write);
             const uint n_writes = __popc(write_ballot);
             const uint write_offset_current = __popc(write_ballot & lane_mask_allprev_excl);
             const uint write_offset = current_write_offset_coop + write_offset_current;
             if (write) {
-                const ushort tile_key = static_cast<ushort>(tile_y * grid_width + tile_x);
+                const uint tile_key_u32 = tile_y * grid_width + tile_x;
+#ifndef NDEBUG
+                assert(tile_key_u32 <= 0xffffu);
+#endif
+                const ushort tile_key = static_cast<ushort>(tile_key_u32);
                 instance_keys[write_offset] = tile_key;
                 instance_primitive_indices[write_offset] = primitive_idx_coop;
             }
@@ -569,8 +684,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     const uint* tile_bucket_offsets,
     const uint* instance_primitive_indices,
     const float2* primitive_mean2d,
-    const float4* primitive_conic_opacity,
-    const float3* primitive_color,
+    const PrimitiveInfo* primitive_infos,
     float16_t* image,
     float16_t* alpha_map,
     uint* tile_max_n_contributions,
@@ -618,7 +732,10 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
 
     // setup shared memory
     __shared__ float2 collected_mean2d[config::block_size_blend];
-    __shared__ float4 collected_conic_opacity[config::block_size_blend];
+    // __shared__ float4 collected_conic_opacity[config::block_size_blend];
+    __shared__ __half2 collected_conic_xy[config::block_size_blend];
+    __shared__ __half2 collected_conic_z_raw_opacity[config::block_size_blend];
+
     __shared__ float3 collected_color[config::block_size_blend];
     // initialize local storage
     float3 color_pixel = make_float3(0.0f);
@@ -636,9 +753,11 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         if (current_fetch_idx < tile_range.y) {
             const uint primitive_idx = instance_primitive_indices[current_fetch_idx];
             collected_mean2d[thread_rank] = primitive_mean2d[primitive_idx];
-            collected_conic_opacity[thread_rank] = primitive_conic_opacity[primitive_idx];
-            const float3 color = fmaxf(primitive_color[primitive_idx], 0.0f);
-            collected_color[thread_rank] = color;
+            // collected_conic_opacity[thread_rank] = primitive_conic_opacity[primitive_idx];
+            const auto& info = primitive_infos[primitive_idx];
+            collected_conic_xy[thread_rank] = info.conic_xy;
+            collected_conic_z_raw_opacity[thread_rank] = info.conic_z_raw_opacity;
+            uchar32float3(collected_color[thread_rank], info.rgb);
         }
         block.sync();
         const int current_batch_size = min(config::block_size_blend, n_points_remaining);
@@ -655,7 +774,11 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
                 bucket_offset++;
             }
             n_possible_contributions++;
-            const float4 conic_opacity = collected_conic_opacity[j];
+            // const float4 conic_opacity = collected_conic_opacity[j];
+            const float4 conic_opacity = make_float4(__half2float(collected_conic_xy[j].x),
+                                                     __half2float(collected_conic_xy[j].y),
+                                                     __half2float(collected_conic_z_raw_opacity[j].x),
+                                                     activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)));
             const float3 conic = make_float3(conic_opacity);
             const float2 delta = collected_mean2d[j] - pixel;
             const float opacity = conic_opacity.w;
@@ -698,7 +821,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     }
 
     // max reduce the number of contributions
-    typedef cub::BlockReduce<uint, config::tile_width, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_height> BlockReduce;
+    using BlockReduce = cub::BlockReduce<uint, config::tile_width, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_height>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
     n_contributions = BlockReduce(temp_storage).Reduce(n_contributions, cub::Max());
     if (thread_rank == 0) {

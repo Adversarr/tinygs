@@ -5,6 +5,8 @@
 #pragma once
 
 #include "helper_math.h"
+#include <cuda_fp16.h>
+#include <cuda_bf16.h>
 
 #define DEF inline constexpr
 
@@ -19,7 +21,7 @@ namespace tinygs::fast_gs_fp16::config {
   DEF float min_alpha_threshold_rcp = 255.0f;
   DEF float min_alpha_threshold = 1.0f / min_alpha_threshold_rcp; // 0.00392156862
   DEF float min_alpha_threshold_deactivated = -5.537334267018537f; // log(255 - 1.0)
-  DEF float max_fragment_alpha = 0.999f;                          // 0.99f in original 3dgs
+  DEF float max_fragment_alpha = 0.99f;                          // 0.99f in original 3dgs
   DEF float transmittance_threshold = 1e-4f;
   // block size constants
   DEF int block_size_preprocess = 128;
@@ -43,5 +45,38 @@ namespace tinygs::fast_gs_fp16::config {
 } // namespace tinygs::fast_gs_fp16::config
 
 namespace config = tinygs::fast_gs_fp16::config;
+
+namespace tinygs::fast_gs_fp16 {
+
+// 12B = 3bank, really good alignment for shared memory
+struct alignas(4) PrimitiveInfo {
+  __half2_raw conic_xy;             // 4B
+  __half2_raw conic_z_raw_opacity;  // 4B
+  uchar3 rgb;                   // 3B, typically in [0, 255)
+};
+
+static_assert(std::is_trivially_copyable_v<PrimitiveInfo>, "PrimitiveInfo must be trivially copyable");
+
+__device__ __forceinline__ void fast_copy(PrimitiveInfo& dst, const PrimitiveInfo& src) {
+  // dst = src;
+  float3& dst_rgb = reinterpret_cast<float3&>(dst);
+  const float3& src_rgb = reinterpret_cast<const float3&>(src);
+  dst_rgb = src_rgb;
+}
+
+__device__ __forceinline__ void float32uchar3(uchar3& uc, const float3& c) {
+  uc.x = static_cast<unsigned char>(__saturatef(c.x) * 255.0f);
+  uc.y = static_cast<unsigned char>(__saturatef(c.y) * 255.0f);
+  uc.z = static_cast<unsigned char>(__saturatef(c.z) * 255.0f);
+}
+
+__device__ __forceinline__ void uchar32float3(float3& f, const uchar3& uc) {
+  constexpr float inv_255 = 1.0f / 255.0f;
+  f.x = static_cast<float>(uc.x) * inv_255;
+  f.y = static_cast<float>(uc.y) * inv_255;
+  f.z = static_cast<float>(uc.z) * inv_255;
+}
+
+}
 
 #undef DEF

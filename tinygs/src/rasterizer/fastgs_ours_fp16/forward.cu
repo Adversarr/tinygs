@@ -110,6 +110,7 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
             per_primitive_buffers.color,
             per_primitive_buffers.n_visible_primitives,
             per_primitive_buffers.n_instances,
+            per_primitive_buffers.primitive_infos,
             n_primitives,
             grid.x,
             grid.y,
@@ -194,9 +195,9 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
             per_primitive_buffers.offset,
             per_primitive_buffers.screen_bounds,
             per_primitive_buffers.mean2d,
-            per_primitive_buffers.conic_opacity,
             per_instance_buffers.keys.Current(),
             per_instance_buffers.primitive_indices.Current(),
+            per_primitive_buffers.primitive_infos,
             grid.x,
             n_visible_primitives);
         CHECK_CUDA(config::debug, "create_instances");
@@ -270,8 +271,7 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
             per_tile_buffers.bucket_offsets,
             per_instance_buffers.primitive_indices.Current(),
             per_primitive_buffers.mean2d,
-            per_primitive_buffers.conic_opacity,
-            per_primitive_buffers.color,
+            per_primitive_buffers.primitive_infos,
             image,
             alpha,
             per_tile_buffers.max_n_contributions,

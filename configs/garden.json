@@ -118,7 +118,7 @@
     "resolution_scales": [0.5, 0.75, 1.0],
     "test_steps": [3000, 5000, 7000, 10000, 15000, 30000],
     "out_dir": "outputs",
-    "export_rasterized": true,
+    "export_rasterized": false,
     "max_seconds": 240
   }
 }

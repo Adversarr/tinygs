@@ -88,8 +88,8 @@ __global__ void fused_ssim_cuda_fp32(
     const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
     const uint physical_pixel_idx = get_linear_index_tiled(pix_y, pix_x, width_in_tile);
 
-    const int pix_id = pix_y * W + pix_x;
-    const int num_pix = H * W;
+    // const int pix_id = pix_y * W + pix_x;
+    // const int num_pix = H * W;
 
     // Shared memory for the tile (img1, img2)
     // __shared__ float sTile[SHARED_Y][SHARED_X][2];
@@ -107,7 +107,7 @@ __global__ void fused_ssim_cuda_fp32(
         {
             const int tileSize = SHARED_Y * SHARED_X;
             const int threads = BLOCK_X * BLOCK_Y;
-            const int steps = (tileSize + threads - 1) / threads;
+            // const int steps = (tileSize + threads - 1) / threads;
 
             const int this_warp = block.thread_rank() / 32;         // 0..7
             const int lane_id = block.thread_rank() % 32;           // 0..31
@@ -150,7 +150,7 @@ __global__ void fused_ssim_cuda_fp32(
         // ------------------------------------------------------------
         {
             int ly = threadIdx.y;
-            int lx = threadIdx.x + HALO;  // skip left halo
+            // int lx = threadIdx.x + HALO;  // skip left halo
 
             float sumX   = 0.f;
             float sumX2  = 0.f;
@@ -210,7 +210,7 @@ __global__ void fused_ssim_cuda_fp32(
         // 3) Vertical convolution (1x11) + final SSIM
         // ------------------------------------------------------------
         {
-            int ly = threadIdx.y + HALO;
+            // int ly = threadIdx.y + HALO;
             int lx = threadIdx.x;
 
             float out0 = 0.f, out1 = 0.f, out2 = 0.f, out3 = 0.f, out4 = 0.f;
@@ -300,8 +300,8 @@ __global__ void fused_ssim_fp32_backward(
 
     const int pix_y  = block.group_index().y * BLOCK_Y + block.thread_index().y;
     const int pix_x  = block.group_index().x * BLOCK_X + block.thread_index().x;
-    const int pix_id = pix_y * W + pix_x;
-    const int num_pix = H * W;
+    // const int pix_id = pix_y * W + pix_x;
+    // const int num_pix = H * W;
 
     const uint width_in_tile = (W + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
     const uint height_in_tile = (H + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
