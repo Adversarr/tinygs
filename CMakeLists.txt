@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.21)
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Set CUDA standard
-set(CMAKE_CUDA_STANDARD 20)
+set(CMAKE_CUDA_STANDARD 17)
 set(CMAKE_CUDA_STANDARD_REQUIRED ON)
 set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
@@ -65,8 +65,8 @@ if(CMAKE_CUDA_COMPILER_LOADED)
 endif()
 
 # CUDA version validation (following tiny-cuda-nn pattern)
-if(CUDA_VERSION VERSION_LESS 10.2)
-    message(FATAL_ERROR "CUDA version too low. tinygs requires CUDA 10.2 or higher. Found: ${CUDA_VERSION}")
+if(CUDA_VERSION VERSION_LESS 12.4)
+    message(FATAL_ERROR "CUDA version too low. tinygs requires CUDA 12.4 or higher. Found: ${CUDA_VERSION}")
 endif()
 
 add_subdirectory(tinygs)
