@@ -264,8 +264,10 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
     PerBucketBuffers per_bucket_buffers = PerBucketBuffers::from_blob(per_bucket_buffers_blob, n_buckets);
 
     {
+        const dim3 block2(config::tile_width / 2, config::tile_width, 1);
         GS_RANGE_SCOPE(m_blend, C_RED, catK(), n_buckets);
-        kernels::forward::blend_cu<<<grid, block, 0, major_stream>>>(
+        // kernels::forward::blend_cu<<<grid, block, 0, major_stream>>>(
+        kernels::forward::blend_cu2<<<grid, block2, 0, major_stream>>>(
             per_tile_buffers.instance_ranges,
             per_tile_buffers.bucket_offsets,
             per_instance_buffers.primitive_indices.Current(),

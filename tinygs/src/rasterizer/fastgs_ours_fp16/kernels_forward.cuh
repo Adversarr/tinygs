@@ -886,8 +886,8 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     const uint height,
     const uint grid_width,
     const uint n_tiles) {
-    constexpr int block_size_blend = config::tile_width * config::tile_width; // 256
-    constexpr int blend_width = config::block_size_blend / 2; // 128
+    constexpr int block_size_total = config::tile_width * config::tile_width; // 256
+    constexpr int block_size_launch = config::block_size_blend / 2; // 128
 
     // SIMD acceleration for ushort2.
     union simd32i {
@@ -896,32 +896,39 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
         int32_t data_i32;
     };
 
+    // --- Thread and block info ---
     auto block = cg::this_thread_block();
     const dim3 group_index = block.group_index();
     const dim3 thread_index = block.thread_index();
     const uint thread_rank = block.thread_rank();
-
+    // --- Constants ---
     const __half2 hinv_16 = __float22half2_rn(make_float2(0.0625f, 0.0625f));
-    const __half2 h_16 = __float22half2_rn(make_float2(16.0f, 16.0f));
+    const __half2 h_16_2 = __float22half2_rn(make_float2(16.0f, 16.0f));
     const __half h0_5 = __float2half_rn(0.5f);
-    const __half2 h0_52 = make_half2(h0_5, h0_5);
-    const __half2 h02 = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
+    const __half2 h0_5_2 = make_half2(h0_5, h0_5);
+    const __half2 h0_2 = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
+    const float2 anchor = make_float2(group_index.x, group_index.y);
+    constexpr uint32_t one_u162 = 0x00010001u;
+    const __half2 one_h2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
+    const __half2 least_acceptable_transmittance_h2 = make_half2(__float2half_rd(config::transmittance_threshold * TINYGS_SCALE_FULL),
+                                                                 __float2half_rd(config::transmittance_threshold * TINYGS_SCALE_FULL));
 
     // each thread is responsible for 2 pixel in the tile. (2x, y) and (2x+1, y)
     const uint2 intile = make_uint2(thread_index.x * 2, thread_index.y);
     const uint2 pixel_coords = make_uint2(group_index.x * config::tile_width + intile.x,
                                           group_index.y * config::tile_width + intile.y);
-    simd32i inside;
-    // in tiled coordinates
-    __half2 pixel_tiled_x, pixel_tiled_y;
-    inside.data = ushort2{static_cast<ushort>((pixel_coords.x < width && pixel_coords.y < height) ? 1u: 0u),
-                          static_cast<ushort>((pixel_coords.x + 1 < width && pixel_coords.y < height) ? 1u: 0u)};
+    const simd32i inside = simd32i(ushort2(
+        static_cast<ushort>((pixel_coords.x < width && pixel_coords.y < height) ? 1u : 0u),
+        static_cast<ushort>((pixel_coords.x + 1 < width && pixel_coords.y < height) ? 1u : 0u)));
+
+        // in tiled coordinates
+    __half2 offset_x, offset_y;
     {
-        const __half2 pixel_tiled = __hfma2(hinv_16,
-            __hadd2(h0_52, make_half2(__uint2half_rn(intile.x), __uint2half_rn(intile.y))),
-            make_half2(__uint2half_rn(group_index.x), __uint2half_rn(group_index.y)));
-        pixel_tiled_x = make_half2(pixel_tiled.x, __hfma(hinv_16.x, h0_5, pixel_tiled.x));
-        pixel_tiled_y = make_half2(pixel_tiled.y, pixel_tiled.y);
+        const __half2 offset0 = __hfma2(hinv_16,
+            make_half2(__uint2half_rn(intile.x), __uint2half_rn(intile.y)),
+            make_half2(__float2half(1.0f/32.0f), __float2half(1.0f/32.0f)));
+        offset_x = make_half2(offset0.x, __hadd(hinv_16.x, offset0.x));
+        offset_y = make_half2(offset0.y, offset0.y);
     }
 
     const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
@@ -942,21 +949,21 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     const int n_buckets = div_round_up(n_points_total, 32);
     for (int n_buckets_remaining = n_buckets, current_bucket_idx = thread_rank;
          n_buckets_remaining > 0;
-         n_buckets_remaining -= config::block_size_blend, current_bucket_idx += config::block_size_blend) {
+         n_buckets_remaining -= block_size_launch, current_bucket_idx += block_size_launch) {
       if (current_bucket_idx < n_buckets)
         bucket_tile_index[bucket_offset + current_bucket_idx] = tile_idx;
     }
 
     // ===== shared memory =====
-    __shared__ __half2 collected_mean2d[config::block_size_blend];
-    // bank conflict free storage
-    __shared__ __half2 collected_conic_xy[config::block_size_blend];
-    __shared__ __half2 collected_conic_z_raw_opacity[config::block_size_blend];
+    // Relative to block anchor
+    __shared__ __half2 collected_mean2d[block_size_launch];
+    __shared__ __half2 collected_conic_xy[block_size_launch];
+    __shared__ __half2 collected_conic_z_raw_opacity[block_size_launch];
     struct alignas(4) ColorSimd {
         uchar3 rgb;
         char padding_donotuse;
     };
-    __shared__ ColorSimd collected_color[config::block_size_blend];
+    __shared__ ColorSimd collected_color[block_size_launch];
 
     // initialize local storage
     // packed_half2x2 color_transmittance_scaled;
@@ -964,56 +971,49 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     // color_transmittance_scaled.zw.y = TINYGS_SCALE_HALF;
     // uint n_possible_contributions = 0;
     // uint n_contributions = 0;
-    __half2 color_r;
-    __half2 color_g;
-    __half2 color_b;
+    __half2 color_r = h0_2;
+    __half2 color_g = h0_2;
+    __half2 color_b = h0_2;
     __half2 transmittance = TINYGS_SCALE_HALF2;
-    constexpr uint32_t one_u162 = 0x00010001u;
-    const __half2 one_h2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
-    const __half2 least_acceptable_transmittance_h2 = make_half2(__float2half_rn(config::transmittance_threshold * TINYGS_SCALE_FULL),
-                                                                 __float2half_rn(config::transmittance_threshold * TINYGS_SCALE_FULL));
 
     simd32i n_possible_contributions;
     n_possible_contributions.data_i32 = 0;
     simd32i n_contributions;
-    n_possible_contributions.data_i32 = 0;
-
-    // 1 => unfinished, 0 => finished
-    simd32i unfinished; // = ! inside => 1 - inside
+    n_contributions.data_i32 = 0;
+    simd32i unfinished; // 1 => unfinished, 0 => finished
     unfinished.data_u32 = inside.data_u32;
 
     // collaborative loading and processing
     for (int n_points_remaining = n_points_total, current_fetch_idx = tile_range.x + thread_rank;
          n_points_remaining > 0;
-         n_points_remaining -= config::block_size_blend, current_fetch_idx += config::block_size_blend) {
-        if (__syncthreads_count(unfinished.data_i32) == config::block_size_blend)
+         n_points_remaining -= block_size_launch, current_fetch_idx += block_size_launch) {
+        if (__syncthreads_count(unfinished.data_i32) == 0)
             break;
         // load gaussian parameters.
         if (current_fetch_idx < tile_range.y) {
             const uint primitive_idx = instance_primitive_indices[current_fetch_idx];
-            collected_mean2d[thread_rank] = __float22half2_rn(primitive_mean2d[primitive_idx] / 16.0f);
+            collected_mean2d[thread_rank] = __float22half2_rn(primitive_mean2d[primitive_idx] / 16.0f - anchor);
             const auto& info = primitive_infos[primitive_idx];
             collected_conic_xy[thread_rank] = info.conic_xy;
             collected_conic_z_raw_opacity[thread_rank] = info.conic_z_raw_opacity;
             collected_color[thread_rank] = ColorSimd{info.rgb, char(0)};
         }
         block.sync();
-        const int current_batch_size = min(config::block_size_blend, n_points_remaining);
+        const int current_batch_size = min(block_size_launch, n_points_remaining);
         int j;
         for (j = 0; /* !done */ unfinished.data_u32 && j < current_batch_size; ++j) {
             if (j % 32 == 0) {
                 const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
-                bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off] = packed_half2x2{
+                bucket_color_transmittance_scaled[bucket_offset * block_size_total + off] = packed_half2x2{
                     make_half2(color_r.x, color_g.x),
                     make_half2(color_b.x, transmittance.x)
                 };
-                bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off + 1] = packed_half2x2{
+                bucket_color_transmittance_scaled[bucket_offset * block_size_total + off + 1] = packed_half2x2{
                     make_half2(color_r.y, color_g.y),
                     make_half2(color_b.y, transmittance.y)
                 };
                 bucket_offset++;
             }
-            // n_possible_contributions++;
             n_possible_contributions.data_u32 = __vadd2(n_possible_contributions.data_u32, unfinished.data_u32);
 
             // Convert parameters and computations to half precision (SIMD version)
@@ -1025,38 +1025,29 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
                 __float2half_rn(activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)))
             );
             // const __half2 delta_h2 = __h2div(__hsub2(collected_mean2d[j], pixel_tiled), hinv_16);
-            __half2 collected_mean2d_x = make_half2(collected_mean2d[j].x, collected_mean2d[j].x);
-            __half2 collected_mean2d_y = make_half2(collected_mean2d[j].y, collected_mean2d[j].y);
-            const __half2 dx = __hmul2(__hsub2(collected_mean2d_x, pixel_tiled_x), h_16);
-            const __half2 dy = __hmul2(__hsub2(collected_mean2d_y, pixel_tiled_y), h_16);
+            const __half2 collected_mean2d_x = make_half2(collected_mean2d[j].x, collected_mean2d[j].x);
+            const __half2 collected_mean2d_y = make_half2(collected_mean2d[j].y, collected_mean2d[j].y);
+            const __half2 dx = __hsub2(collected_mean2d_x, offset_x);
+            const __half2 dy = __hsub2(collected_mean2d_y, offset_y);
+            const __half2 conic_x_dxx = __hmul2(dx, __hmul2(__hmul2(conic_x, dx), h_16_2));
+            const __half2 conic_z_dyy = __hmul2(dy, __hmul2(__hmul2(conic_z, dy), h_16_2));
+            const __half2 conic_y_dxy = __hmul2(dx, __hmul2(__hmul2(conic_y, dy), h_16_2));
+            const __half2 quad = __hadd2(conic_x_dxx, conic_z_dyy);
+            const __half2 sigma_over_2_h = __hmul2(__hfma2(h0_5_2, quad, conic_y_dxy), h_16_2);
+            // no continue is triggered in original code.
+            uint32_t enable_this_mask = __hge2_mask(sigma_over_2_h, h0_2) & __vcmpeq2(unfinished.data_u32, one_u162);
 
-            const __half2 dxx = __hmul2(dx, dx);
-            const __half2 dyy = __hmul2(dy, dy);
-            const __half2 dxy = __hmul2(dx, dy);
-            const __half2 quad = __hadd2(__hmul2(conic_x, dxx), __hmul2(conic_z, dyy));
-            const __half2 sigma_over_2_h = __hfma2(conic_y, dxy, __hmul2(h0_52, quad));
-
-            // if (__half2float(sigma_over_2_h) < 0.0f)
-            //     continue;
-            uint32_t enable_this_mask = __hge2_mask(sigma_over_2_h, h02); // no continue is triggered in original code.
-
-            // const __half gaussian_h = __float2half_rn(__expf(-__half2float(sigma_over_2_h)));
-            // const __half alpha_raw_h = __hmul(opacity_h, gaussian_h);
-            // const __half alpha_h = __float2half_rn(fminf(__half2float(alpha_raw_h), config::max_fragment_alpha));
-            // if (__half2float(alpha_h) < config::min_alpha_threshold)
-            //     continue;
+            // on my machine, it will cast to f32 and compute, no precision loss is here.
             const __half2 gaussian_h = h2exp(__hneg2(sigma_over_2_h));
             const __half2 alpha_raw_h = __hmul2(opacity_h, gaussian_h);
             const __half2 alpha_h = __hmin2(alpha_raw_h,
-                make_half2(__float2half_rd(config::max_fragment_alpha),
-                           __float2half_rd(config::max_fragment_alpha)));
+                make_half2(__float2half_ru(config::max_fragment_alpha),
+                           __float2half_ru(config::max_fragment_alpha)));
+            enable_this_mask &= __hge2_mask(alpha_h, make_half2(__float2half_rd(config::min_alpha_threshold),
+                                                                __float2half_rd(config::min_alpha_threshold)));
 
             // next_transmittance = transmittance * (1 - alpha)
             __half2 next_transmittance_h = __hmul2(transmittance, __hsub2(one_h2, alpha_h));
-            // if (__half2float(next_transmittance_h) < (config::transmittance_threshold * TINYGS_SCALE_FULL)) {
-            //     unfinished = true;
-            //     continue;
-            // }
             // next_transmittance > THRESHOLD => mask = 0xFFFF
             const uint32_t next_transmittance_acceptable_mask = __hge2_mask(
                 next_transmittance_h, least_acceptable_transmittance_h2);
@@ -1065,40 +1056,24 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
             enable_this_mask &= next_transmittance_acceptable_mask;
 
             // 颜色累加统一半精度
-            // const __half2 tah2 = __hmul2(
-            //     __hmul2(make_half2(transmittance_h, transmittance_h), make_half2(alpha_h, alpha_h)),
-            //     TINYGS_UNSCALE_HALF2);
-            // color_transmittance_scaled.xy = __hfma2(
-            //     tah2,
-            //     make_half2(__ushort2half_rn(collected_color[j].rgb.x),
-            //                __ushort2half_rn(collected_color[j].rgb.y)),
-            //     color_transmittance_scaled.xy);
-            // color_transmittance_scaled.zw.x = __hfma(
-            //     tah2.x, __ushort2half_rn(collected_color[j].rgb.z),
-            //     color_transmittance_scaled.zw.x);
-            // color_transmittance_scaled.zw.y = next_transmittance_h;
             __half2 tah2 = __hmul2(__hmul2(transmittance, alpha_h), TINYGS_UNSCALE_HALF2);
             reinterpret_cast<uint32_t&>(tah2) &= enable_this_mask;
 
-            color_r = __hfma2(make_half2(__ushort2half_rn(collected_color[j].rgb.x), __ushort2half_rn(collected_color[j].rgb.x)),
+            ColorSimd rgb = collected_color[j];
+            color_r = __hfma2(make_half2(__ushort2half_rn(rgb.rgb.x), __ushort2half_rn(rgb.rgb.x)),
                 tah2, color_r);
-            color_g = __hfma2(make_half2(__ushort2half_rn(collected_color[j].rgb.y), __ushort2half_rn(collected_color[j].rgb.y)),
+            color_g = __hfma2(make_half2(__ushort2half_rn(rgb.rgb.y), __ushort2half_rn(rgb.rgb.y)),
                 tah2, color_g);
-            color_b = __hfma2(make_half2(__ushort2half_rn(collected_color[j].rgb.z), __ushort2half_rn(collected_color[j].rgb.z)),
+            color_b = __hfma2(make_half2(__ushort2half_rn(rgb.rgb.z), __ushort2half_rn(rgb.rgb.z)),
                 tah2, color_b);
-            reinterpret_cast<uint32_t&>(next_transmittance_h) &= enable_this_mask;
-            reinterpret_cast<uint32_t&>(transmittance) &= ~enable_this_mask;
-            reinterpret_cast<uint32_t&>(transmittance) |= reinterpret_cast<const uint32_t&>(next_transmittance_h);
-
-            // n_contributions = n_possible_contributions;
-            // if (n_contributions >= config::max_contributions) {
-            //     unfinished = true;
-            //     break;
-            // }
+            reinterpret_cast<uint32_t&>(transmittance) = 
+                (~enable_this_mask & reinterpret_cast<const uint32_t&>(transmittance)) |
+                ( enable_this_mask & reinterpret_cast<const uint32_t&>(next_transmittance_h));
 
             //? we set max_contributions to 0xFFFF (for each ushort). We increase the value by 1 everytime
             //? Therefore, no overflow will be caused.
-            n_contributions.data_u32 = __vadd2(n_possible_contributions.data_u32, unfinished.data_u32);
+            n_contributions.data_u32 = (n_possible_contributions.data_u32 &  enable_this_mask) |
+                                       (n_contributions.data_u32          & ~enable_this_mask);
             // If n_contributions == 0xFFFF => set unfinished to false.
             unfinished.data_u32 &= __vcmpltu2(n_contributions.data_u32, 0xFFFF'FFFFu);
         }
@@ -1127,15 +1102,19 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     color_r = __hmul2(color_r, TINYGS_UNSCALE_HALF2);
     color_g = __hmul2(color_g, TINYGS_UNSCALE_HALF2);
     color_b = __hmul2(color_b, TINYGS_UNSCALE_HALF2);
+    transmittance = __hmul2(transmittance, TINYGS_UNSCALE_HALF2);
     if (inside.data_u32 != 0) {
+        // Our allocation ensures the image physical width is a multiple of 8.
         *(reinterpret_cast<__half2*>(image + physical_pixel_idx)) = color_r;
         *(reinterpret_cast<__half2*>(image + physical_pixel_idx + channel_stride)) = color_g;
         *(reinterpret_cast<__half2*>(image + physical_pixel_idx + 2 * channel_stride)) = color_b;
         *(reinterpret_cast<__half2*>(alpha_map + physical_pixel_idx)) = __hsub2(one_h2, transmittance);
+        tile_n_contributions[physical_pixel_idx] = n_contributions.data.x;
+        tile_n_contributions[physical_pixel_idx + 1] = n_contributions.data.y;
     }
 
     // max reduce the number of contributions
-    using BlockReduce = cub::BlockReduce<ushort, config::tile_width, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_width>;
+    using BlockReduce = cub::BlockReduce<ushort, config::tile_width / 2, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_width>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
     ushort max_xy = n_contributions.data.x > n_contributions.data.y ? n_contributions.data.x : n_contributions.data.y;
     max_xy = BlockReduce(temp_storage).Reduce(max_xy, cub::Max());
