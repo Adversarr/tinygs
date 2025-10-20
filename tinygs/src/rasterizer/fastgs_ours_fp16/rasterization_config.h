@@ -33,8 +33,7 @@ namespace tinygs::fast_gs_fp16::config {
   DEF int tile_width = 16;
   DEF int tile_width_minus_1 = tile_width - 1;
   DEF int tile_width_log2 = 4; // log2(16) = 4
-  DEF int tile_height = 16;
-  DEF int block_size_blend = tile_width * tile_height;   // 256
+  DEF int block_size_blend = tile_width * tile_width;   // 256
   DEF int block_size_blend_mask = block_size_blend - 1;  // 255
   DEF int n_sequential_threshold = 8;
 

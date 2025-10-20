@@ -402,7 +402,7 @@ __device__ __half dot3(const packed_half2x2 &a, const packed_half2x2 &b)
     return res;
 }
 
-__global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward_cu2(
+__global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward_cu(
     const uint2* __restrict__ tile_instance_ranges,
     const uint* __restrict__ tile_bucket_offsets,
     const uint* __restrict__ instance_primitive_indices,
@@ -471,7 +471,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
     // tile metadata
     const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
-    const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_height};
+    const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_width};
 
     bucket_color_transmittance_scaled += bucket_idx * config::block_size_blend;
 
@@ -538,7 +538,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             assert(local_tile < 4);
             assert(intile < tinygs::kImageTile * tinygs::kImageTile);
             assert(dx < config::tile_width);
-            assert(dy < config::tile_height);
+            assert(dy < config::tile_width);
             const uint2 pixel_coords = {start_pixel_coords.x + dx, start_pixel_coords.y + dy};
 
             // const uint pixel_idx = width * pixel_coords.y + pixel_coords.x;
@@ -548,7 +548,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
                 width_in_tile);
             const bool is_valid =
                 pixel_coords.x < width && pixel_coords.y < height &&
-                dx < config::tile_width && dy < config::tile_height;
+                dx < config::tile_width && dy < config::tile_width;
 
             PerPixel_Lower local_lower;
             fast_zero(local_lower);
