@@ -852,7 +852,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     }
 
     // max reduce the number of contributions
-    using BlockReduce = cub::BlockReduce<uint, config::tile_width, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_height>;
+    using BlockReduce = cub::BlockReduce<ushort, config::tile_width, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_height>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
     n_contributions = BlockReduce(temp_storage).Reduce(n_contributions, cub::Max());
     if (thread_rank == 0) {
