@@ -85,10 +85,6 @@ __device__ inline bool will_primitive_contribute(
 }
 
 __device__ __forceinline__ __half2 h2copysign(const __half2& x, const __half2& y) {
-    // return make_half2(__float2half(copysignf(__half2float(x.x), __half2float(y.x))),
-    //                   __float2half(copysignf(__half2float(x.y), __half2float(y.y))));
-
-    // TODO: check can we use bitwise operation to implement this
     // Reinterpret __half2 as a 32-bit unsigned integer
     uint32_t ix = reinterpret_cast<const uint32_t&>(x);
     uint32_t iy = reinterpret_cast<const uint32_t&>(y);
@@ -159,8 +155,8 @@ __device__ __forceinline__ bool will_primitive_contribute_half(
     const __half2 xz = make_half2(conic.xy.x, conic.zw.x);
     // NOTE: Here, we do not need to unscale by tile_size, the division will handle this.
     const __half2 t_raw = __h2div(d * xy * diff_xx + d * yz * diff_yy, d * d * xz);
-    const __half2 t = __hmul2_sat(t_raw, make_half2(not_in_range.y, not_in_range.x));
-    const float2 delta = __half22float2(diff - t * d) * config::tile_width;
+    const __half2 t = __hmul2_sat(t_raw, __lowhigh2highlow(not_in_range));
+    const float2 delta = __half22float2(diff - t * d) * config::tile_width; //! Recover to pixel unit.
     const float fx = __half2float(conic.xy.x);
     const float fy = __half2float(conic.xy.y);
     const float fz = __half2float(conic.zw.x);
@@ -685,8 +681,8 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     const PrimitiveInfo* primitive_infos,
     float16_t* image,
     float16_t* alpha_map,
-    uint* tile_max_n_contributions,
-    uint* tile_n_contributions,
+    ushort* tile_max_n_contributions,
+    ushort* tile_n_contributions,
     uint* bucket_tile_index,
     ColorTransmittance* bucket_color_transmittance_scaled,
     const uint width,
@@ -779,35 +775,42 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
                 bucket_offset++;
             }
             n_possible_contributions++;
-            const float4 conic_opacity = make_float4(__half2float(collected_conic_xy[j].x),
-                                                     __half2float(collected_conic_xy[j].y),
-                                                     __half2float(collected_conic_z_raw_opacity[j].x),
-                                                     activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)));
-            const float3 conic = make_float3(conic_opacity);
-            const float2 delta = collected_mean2d[j] - pixel;
-            const float opacity = conic_opacity.w;
-            const float sigma_over_2 = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-            if (sigma_over_2 < 0.0f)
-                continue;
-            const float gaussian = expf(-sigma_over_2);
-            const float alpha = fminf(opacity * gaussian, config::max_fragment_alpha);
-            if (alpha < config::min_alpha_threshold)
+            // 将参数与计算统一为半精度
+            const __half conic_x = collected_conic_xy[j].x;
+            const __half conic_y = collected_conic_xy[j].y;
+            const __half conic_z = collected_conic_z_raw_opacity[j].x;
+            const __half opacity_h = __float2half_rn(activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)));
+
+            const __half2 delta_h2 = __hsub2(__float22half2_rn(collected_mean2d[j]), __float22half2_rn(pixel));
+            const __half dx = delta_h2.x;
+            const __half dy = delta_h2.y;
+
+            const __half h0_5 = __float2half_rn(0.5f);
+            const __half dxx = __hmul(dx, dx);
+            const __half dyy = __hmul(dy, dy);
+            const __half dxy = __hmul(dx, dy);
+            const __half quad = __hadd(__hmul(conic_x, dxx), __hmul(conic_z, dyy));
+            const __half sigma_over_2_h = __hfma(conic_y, dxy, __hmul(h0_5, quad));
+            if (__half2float(sigma_over_2_h) < 0.0f)
                 continue;
 
-            const float transmittance = __half2float(color_transmittance_scaled.zw.y);
-            const float next_transmittance = transmittance * (1.0f - alpha);
-            if (next_transmittance < (config::transmittance_threshold * TINYGS_SCALE_FULL)) {
+            const __half gaussian_h = __float2half_rn(__expf(-__half2float(sigma_over_2_h)));
+            const __half alpha_raw_h = __hmul(opacity_h, gaussian_h);
+            const __half alpha_h = __float2half_rn(fminf(__half2float(alpha_raw_h), config::max_fragment_alpha));
+            if (__half2float(alpha_h) < config::min_alpha_threshold)
+                continue;
+
+            const __half transmittance_h = color_transmittance_scaled.zw.y;
+            const __half next_transmittance_h = __hmul(transmittance_h, __hsub(CUDART_ONE_FP16, alpha_h));
+            if (__half2float(next_transmittance_h) < (config::transmittance_threshold * TINYGS_SCALE_FULL)) {
                 done = true;
                 continue;
             }
 
-            // unpack the next gaussian's color
-            // float3 rgb_01;
-            // uchar32float3(rgb_01, collected_color[j].rgb);
-            // color_pixel += transmittance * alpha * rgb_01;
-            // transmittance = next_transmittance;
-            const float ta = transmittance * alpha * TINYGS_UNSCALE_FULL;
-            const __half2 tah2 = make_half2(__float2half_rn(ta), __float2half_rn(ta));
+            // 颜色累加统一半精度
+            const __half2 tah2 = __hmul2(
+                __hmul2(make_half2(transmittance_h, transmittance_h), make_half2(alpha_h, alpha_h)),
+                TINYGS_UNSCALE_HALF2);
             color_transmittance_scaled.xy = __hfma2(
                 tah2,
                 make_half2(__ushort2half_rn(collected_color[j].rgb.x),
@@ -816,8 +819,12 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             color_transmittance_scaled.zw.x = __hfma(
                 tah2.x, __ushort2half_rn(collected_color[j].rgb.z),
                 color_transmittance_scaled.zw.x);
-            color_transmittance_scaled.zw.y = __float2half_rn(next_transmittance);
+            color_transmittance_scaled.zw.y = next_transmittance_h;
             n_contributions = n_possible_contributions;
+            if (n_contributions >= config::max_contributions) {
+                done = true;
+                break;
+            }
         }
 
         j = ((j + 31) / 32) * 32; // round up to next warp
@@ -841,7 +848,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         image[physical_pixel_idx + channel_stride] = color_transmittance_scaled.xy.y;
         image[physical_pixel_idx + 2 * channel_stride] = color_transmittance_scaled.zw.x;
         alpha_map[physical_pixel_idx] = __hsub(CUDART_ONE_FP16, color_transmittance_scaled.zw.y); // 1-transmittance
-        tile_n_contributions[physical_pixel_idx] = n_contributions;
+        tile_n_contributions[physical_pixel_idx] = static_cast<ushort>(n_contributions);
     }
 
     // max reduce the number of contributions
@@ -853,7 +860,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         // Boundary check for tile arrays
         assert(tile_idx >= 0 && tile_idx < n_tiles);
 #endif
-        tile_max_n_contributions[tile_idx] = n_contributions;
+        tile_max_n_contributions[tile_idx] = static_cast<ushort>(n_contributions);
     }
 }
 

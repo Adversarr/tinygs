@@ -112,8 +112,8 @@ struct PerTileBuffers {
   uint2* instance_ranges;
   uint* n_buckets;
   uint* bucket_offsets;
-  uint* max_n_contributions;
-  uint* n_contributions;
+  ushort* max_n_contributions;
+  ushort* n_contributions;
 
   static PerTileBuffers from_blob(char*& blob, size_t n_tiles) {
     PerTileBuffers buffers;
