@@ -599,26 +599,33 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
 
             // 半精度路径：像素与偏移、二次型、sigma、gaussian 统一到 __half
-            const __half2 pixel_h2 = make_half2(__uint2half_rn(pixel_coords.x), __uint2half_rn(pixel_coords.y));
-            const __half2 mean2d_h2 = __float22half2_rn(mean2d);
-            const __half h0_5 = __float2half_rn(0.5f);
-            const __half2 delta_h2 = __hsub2(__hsub2(mean2d_h2, make_half2(h0_5, h0_5)), pixel_h2);
-            const __half dx_h = delta_h2.x;
-            const __half dy_h = delta_h2.y;
-            const __half dxx_h = __hmul(dx_h, dx_h);
-            const __half dyy_h = __hmul(dy_h, dy_h);
-            const __half dxy_h = __hmul(dx_h, dy_h);
-            const __half cx_h = __float2half_rn(conic.x);
-            const __half cy_h = __float2half_rn(conic.y);
-            const __half cz_h = __float2half_rn(conic.z);
-            const __half quad_h = __hadd(__hmul(cx_h, dxx_h), __hmul(cz_h, dyy_h));
-            const __half sigma_over_2_h_raw = __hfma(cy_h, dxy_h, __hmul(__float2half_rn(0.5f), quad_h));
-            const float sigma_over_2 = fmaxf(__half2float(sigma_over_2_h_raw), 0.0f);
-            const __half gaussian_h = __float2half_rn(__expf(-sigma_over_2));
-            const float gaussian = __half2float(gaussian_h);
-            // 为后续梯度保留浮点版本
-            const float2 delta = make_float2(__half2float(dx_h), __half2float(dy_h));
-            const float3 delta_coefs = make_float3(__half2float(dxx_h), __half2float(dxy_h), __half2float(dyy_h));
+            // const __half2 pixel_h2 = make_half2(__uint2half_rn(pixel_coords.x), __uint2half_rn(pixel_coords.y));
+            // const __half2 mean2d_h2 = __float22half2_rn(mean2d);
+            // const __half h0_5 = __float2half_rn(0.5f);
+            // const __half2 delta_h2 = __hsub2(__hsub2(mean2d_h2, make_half2(h0_5, h0_5)), pixel_h2);
+            // const __half dx_h = delta_h2.x;
+            // const __half dy_h = delta_h2.y;
+            // const __half dxx_h = __hmul(dx_h, dx_h);
+            // const __half dyy_h = __hmul(dy_h, dy_h);
+            // const __half dxy_h = __hmul(dx_h, dy_h);
+            // const __half cx_h = __float2half_rn(conic.x);
+            // const __half cy_h = __float2half_rn(conic.y);
+            // const __half cz_h = __float2half_rn(conic.z);
+            // const __half quad_h = __hadd(__hmul(cx_h, dxx_h), __hmul(cz_h, dyy_h));
+            // const __half sigma_over_2_h_raw = __hfma(cy_h, dxy_h, __hmul(__float2half_rn(0.5f), quad_h));
+            // const float sigma_over_2 = fmaxf(__half2float(sigma_over_2_h_raw), 0.0f);
+            // const __half gaussian_h = __float2half_rn(__expf(-sigma_over_2));
+            // const float gaussian = __half2float(gaussian_h);
+            // // 为后续梯度保留浮点版本
+            // const float2 delta = make_float2(__half2float(dx_h), __half2float(dy_h));
+            // const float3 delta_coefs = make_float3(__half2float(dxx_h), __half2float(dxy_h), __half2float(dyy_h));
+
+            const float2 pixel = make_float2(__uint2float_rn(pixel_coords.x), __uint2float_rn(pixel_coords.y));
+            const float2 delta = (mean2d - 0.5f) - pixel;
+            const float3 delta_coefs = make_float3(delta.x * delta.x, delta.x * delta.y, delta.y * delta.y);
+            const float sigma_over_2_gt = 0.5f * (conic.x * delta_coefs.x + conic.z * delta_coefs.z) + conic.y * delta_coefs.y;
+            const float sigma_over_2 = fmaxf(sigma_over_2_gt, 0.0f); // ensures >= 0
+            const float gaussian = __expf(-sigma_over_2);
 
             // leader thread loads values from shared memory into registers
             if (lane_idx == 0 && valid_general) {
