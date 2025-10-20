@@ -775,11 +775,6 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         for (j = 0; !done && j < current_batch_size; ++j) {
             if (j % 32 == 0) {
                 const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
-                // const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
-                // ColorTransmittance ct{
-                //     __float22half2_rn(make_float2(current_color_transmittance.x, current_color_transmittance.y)),
-                //     __float22half2_rn(make_float2(current_color_transmittance.z, current_color_transmittance.w))
-                // };
                 bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off] = color_transmittance_scaled;
                 bucket_offset++;
             }
@@ -790,15 +785,18 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             const __half conic_z = collected_conic_z_raw_opacity[j].x;
             const __half opacity_h = __float2half_rn(activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)));
 
-            const __half2 delta_h2 = __h2div(__hsub2(collected_mean2d[j], pixel_tiled), hinv_16);
+            const __half2 delta_h2 = collected_mean2d[j] - pixel_tiled;
+            const __half h16 = __float2half_rn(16.0f);
+
             const __half dx = delta_h2.x;
             const __half dy = delta_h2.y;
 
-            const __half dxx = __hmul(dx, dx);
-            const __half dyy = __hmul(dy, dy);
-            const __half dxy = __hmul(dx, dy);
-            const __half quad = __hadd(__hmul(conic_x, dxx), __hmul(conic_z, dyy));
-            const __half sigma_over_2_h = __hfma(conic_y, dxy, __hmul(h0_5, quad));
+            const __half h0_5 = __float2half_rn(0.5f);
+            const __half conic_x_dxx = __hmul(dx, __hmul(__hmul(conic_x, dx), h16));
+            const __half conic_z_dyy = __hmul(dy, __hmul(__hmul(conic_z, dy), h16));
+            const __half conic_y_dxy = __hmul(dx, __hmul(__hmul(conic_y, dy), h16));
+            const __half quad = __hadd(conic_x_dxx, conic_z_dyy);
+            const __half sigma_over_2_h = __hmul(__hfma(h0_5, quad, conic_y_dxy), h16);
             if (__half2float(sigma_over_2_h) < 0.0f)
                 continue;
 
