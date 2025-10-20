@@ -700,15 +700,15 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
 
     // each thread is responsible for a pixel in the tile.
     const uint2 intile = make_uint2(thread_index.x, thread_index.y);
-    const uint2 pixel_coords = make_uint2(group_index.x * config::tile_width  + intile.x,
+    const uint2 pixel_coords = make_uint2(group_index.x * config::tile_width + intile.x,
                                           group_index.y * config::tile_width + intile.y);
     const bool inside = pixel_coords.x < width && pixel_coords.y < height;
     // in tiled coordinates
-    const __half2 pixel_tiled = __hfma2(
+    const float2 anchor = make_float2(group_index.x, group_index.y);
+    const __half2 intile_offset = __hfma2(
         hinv_16,
-        __hadd2(h0_52, make_half2(__uint2half_rn(intile.x), __uint2half_rn(intile.y))),
-        make_half2(__uint2half_rn(group_index.x), __uint2half_rn(group_index.y)));
-
+        make_half2(__uint2half_rn(intile.x), __uint2half_rn(intile.y)),
+        make_half2(__float2half(1.0f/32.0f), __float2half(1.0f/32.0f)));
 
     const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
     const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
@@ -763,7 +763,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         // load gaussian parameters.
         if (current_fetch_idx < tile_range.y) {
             const uint primitive_idx = instance_primitive_indices[current_fetch_idx];
-            collected_mean2d[thread_rank] = __float22half2_rn(primitive_mean2d[primitive_idx] / 16.0f);
+            collected_mean2d[thread_rank] = __float22half2_rn(primitive_mean2d[primitive_idx] / 16.0f - anchor);
             const auto& info = primitive_infos[primitive_idx];
             collected_conic_xy[thread_rank] = info.conic_xy;
             collected_conic_z_raw_opacity[thread_rank] = info.conic_z_raw_opacity;
@@ -785,7 +785,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             const __half conic_z = collected_conic_z_raw_opacity[j].x;
             const __half opacity_h = __float2half_rn(activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)));
 
-            const __half2 delta_h2 = collected_mean2d[j] - pixel_tiled;
+            const __half2 delta_h2 = collected_mean2d[j] - intile_offset;
             const __half h16 = __float2half_rn(16.0f);
 
             const __half dx = delta_h2.x;
@@ -817,13 +817,12 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             const __half2 tah2 = __hmul2(
                 __hmul2(make_half2(transmittance_h, transmittance_h), make_half2(alpha_h, alpha_h)),
                 TINYGS_UNSCALE_HALF2);
-            color_transmittance_scaled.xy = __hfma2(
-                tah2,
+            color_transmittance_scaled.xy = __hfma2(tah2,
                 make_half2(__ushort2half_rn(collected_color[j].rgb.x),
                            __ushort2half_rn(collected_color[j].rgb.y)),
                 color_transmittance_scaled.xy);
-            color_transmittance_scaled.zw.x = __hfma(
-                tah2.x, __ushort2half_rn(collected_color[j].rgb.z),
+            color_transmittance_scaled.zw.x = __hfma(tah2.x,
+                __ushort2half_rn(collected_color[j].rgb.z),
                 color_transmittance_scaled.zw.x);
             color_transmittance_scaled.zw.y = next_transmittance_h;
             n_contributions = n_possible_contributions;
