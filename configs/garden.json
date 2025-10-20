@@ -103,7 +103,7 @@
     "early_stopping_threshold": 1.0e-6,
     "enable_early_stopping": false,
     "far_plane": 100.0,
-    "grad_scaler": 1.0,
+    "grad_scaler": 128.0,
     "log_interval": 100,
     "max_sh_degree": 3,
     "max_steps": 30000,

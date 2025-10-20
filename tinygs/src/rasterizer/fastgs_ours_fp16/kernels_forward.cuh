@@ -775,7 +775,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
                 bucket_offset++;
             }
             n_possible_contributions++;
-            // 将参数与计算统一为半精度
+            // Convert parameters and computations to half precision
             const __half conic_x = collected_conic_xy[j].x;
             const __half conic_y = collected_conic_xy[j].y;
             const __half conic_z = collected_conic_z_raw_opacity[j].x;

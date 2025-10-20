@@ -93,13 +93,14 @@ __global__ void preprocess_backward_cu(
     const float4* __restrict__ w2c,
     const float3* __restrict__ cam_position,
     const uint* __restrict__ primitive_n_touched_tiles,
-    const float2* __restrict__ grad_mean2d,
-    const float* __restrict__ grad_conic,
+    // const float2* __restrict__ grad_mean2d,
+    // const float* __restrict__ grad_conic,
+    const PrimitiveInfoGradient* __restrict__ primitive_info_gradients,
     const float2* __restrict__ absgrad_mean2d,
     float3* __restrict__ grad_means,
     float3* __restrict__ grad_raw_scales,
     float4* __restrict__ grad_raw_rotations,
-    float3* __restrict__ grad_color,
+    // float3* __restrict__ grad_color,
     float3* __restrict__ grad_sh_coefficients_0,
     float3* __restrict__ grad_sh_coefficients_rest,
     float4* __restrict__ grad_w2c_per_gs,
@@ -123,9 +124,13 @@ __global__ void preprocess_backward_cu(
     // printf("%d: dl_dsh0: %f %f %f\n", (int)primitive_idx, grad_sh_coefficients_0[primitive_idx].x, grad_sh_coefficients_0[primitive_idx].y, grad_sh_coefficients_0[primitive_idx].z);
 
     // sh evaluation backward
+    const float3 primitive_grad_color = make_float3(
+        __half2float(primitive_info_gradients[primitive_idx].color_rg.x),
+        __half2float(primitive_info_gradients[primitive_idx].color_rg.y),
+        __half2float(primitive_info_gradients[primitive_idx].conic_c_color_b.y));
     const float3 dL_dmean3d_from_color = convert_sh_to_color_backward(
         sh_coefficients_rest, grad_sh_coefficients_0, grad_sh_coefficients_rest,
-        grad_color[primitive_idx],
+        primitive_grad_color,
         mean3d, cam_position[0],
         primitive_idx, active_sh_bases, total_bases_sh_rest);
 
@@ -204,9 +209,9 @@ __global__ void preprocess_backward_cu(
     const float determinant_rcp = 1.0f / (determinant + 1e-8f);  // Add epsilon for numerical stability
     const float determinant_rcp_sq = determinant_rcp * determinant_rcp;
     const float3 dL_dconic = make_float3(
-        grad_conic[primitive_idx],
-        grad_conic[n_primitives + primitive_idx],
-        grad_conic[2 * n_primitives + primitive_idx]);
+        __half2float(primitive_info_gradients[primitive_idx].conic_ab.x),
+        __half2float(primitive_info_gradients[primitive_idx].conic_ab.y),
+        __half2float(primitive_info_gradients[primitive_idx].conic_c_color_b.x));
     const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
                 2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
                 // GPT-5 claims here should have a 2.0f, but the reference does not have it
@@ -248,7 +253,8 @@ __global__ void preprocess_backward_cu(
 
     float djwr1_dz_helper = dL_dj11 - 2.0f * tx * dL_dj13_clamped;
     float djwr2_dz_helper = dL_dj22 - 2.0f * ty * dL_dj23_clamped;
-    const float2 dL_dmean2d = grad_mean2d[primitive_idx];
+    // const float2 dL_dmean2d = grad_mean2d[primitive_idx];
+    const float2 dL_dmean2d = __half22float2(primitive_info_gradients[primitive_idx].mean_xy);
     const float3 dL_dmean3d_cam = make_float3(
         j11 * (dL_dmean2d.x - dL_dj13_clamped / depth),
         j22 * (dL_dmean2d.y - dL_dj23_clamped / depth),
@@ -350,11 +356,6 @@ __global__ void preprocess_backward_cu(
     }
 }
 
-inline __device__ void prefetch(const void* ptr) {
-    asm volatile("prefetch.global.L1 [%0];" :: "l"(ptr));
-}
-
-
 struct alignas(8) PerPixel_Upper {
     __half2 grad_color_pixel_rg;
     __half2_raw grad_color_pixel_b_last_contributor;
@@ -413,11 +414,12 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     const ushort* __restrict__ tile_n_contributions,
     const uint* __restrict__ bucket_tile_index,
     const ColorTransmittance* __restrict__ bucket_color_transmittance_scaled,
-    float2* __restrict__ grad_mean2d,
+    // float2* __restrict__ grad_mean2d,
     float2* __restrict__ absgrad_mean2d,
-    float* __restrict__ grad_conic,
+    // float* __restrict__ grad_conic,
     float* __restrict__ grad_raw_opacity,
-    float3* __restrict__ grad_color,
+    // float3* __restrict__ grad_color,
+    PrimitiveInfoGradient* __restrict__ primitive_info_gradients,
     const uint n_buckets,
     const uint n_primitives,
     const uint width,
@@ -699,20 +701,20 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         // Boundary check for gradient arrays
         assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif
-        atomicAdd(&grad_mean2d[primitive_idx].x, dL_dmean2d_accum.x);
-        atomicAdd(&grad_mean2d[primitive_idx].y, dL_dmean2d_accum.y);
+        atomicAdd(&primitive_info_gradients[primitive_idx].mean_xy,
+                  __float22half2_rn(make_float2(dL_dmean2d_accum.x, dL_dmean2d_accum.y)));
         if (absgrad_mean2d != nullptr) {
             atomicAdd(&absgrad_mean2d[primitive_idx].x, absdL_dmean2d_accum.x);
             atomicAdd(&absgrad_mean2d[primitive_idx].y, absdL_dmean2d_accum.y);
         }
-        atomicAdd(&grad_conic[primitive_idx], dL_dconic_accum.x);
-        atomicAdd(&grad_conic[n_primitives + primitive_idx], dL_dconic_accum.y);
-        atomicAdd(&grad_conic[2 * n_primitives + primitive_idx], dL_dconic_accum.z);
         const float dL_draw_opacity = dL_draw_opacity_partial_accum * (1.0f - opacity);
         atomicAdd(&grad_raw_opacity[primitive_idx], dL_draw_opacity);
-        atomicAdd(&grad_color[primitive_idx].x, dL_dcolor_accum.x);
-        atomicAdd(&grad_color[primitive_idx].y, dL_dcolor_accum.y);
-        atomicAdd(&grad_color[primitive_idx].z, dL_dcolor_accum.z);
+        atomicAdd(&primitive_info_gradients[primitive_idx].conic_ab,
+                  __float22half2_rn(make_float2(dL_dconic_accum.x, dL_dconic_accum.y)));
+        atomicAdd(&primitive_info_gradients[primitive_idx].color_rg,
+                  __float22half2_rn(make_float2(dL_dcolor_accum.x, dL_dcolor_accum.y)));
+        atomicAdd(&primitive_info_gradients[primitive_idx].conic_c_color_b,
+                  __float22half2_rn(make_float2(dL_dconic_accum.z, dL_dcolor_accum.z)));
     }
 }
 
