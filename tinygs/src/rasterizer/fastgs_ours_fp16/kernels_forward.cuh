@@ -766,11 +766,6 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         for (j = 0; !done && j < current_batch_size; ++j) {
             if (j % 32 == 0) {
                 const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
-                // const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
-                // ColorTransmittance ct{
-                //     __float22half2_rn(make_float2(current_color_transmittance.x, current_color_transmittance.y)),
-                //     __float22half2_rn(make_float2(current_color_transmittance.z, current_color_transmittance.w))
-                // };
                 bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off] = color_transmittance_scaled;
                 bucket_offset++;
             }
@@ -781,16 +776,18 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             const __half conic_z = collected_conic_z_raw_opacity[j].x;
             const __half opacity_h = __float2half_rn(activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)));
 
-            const __half2 delta_h2 = __float22half2_rn((collected_mean2d[j] - pixel));
+            const __half2 delta_h2 = __float22half2_rn((collected_mean2d[j] - pixel) / 16.0f);
+            const __half h16 = __float2half_rn(16.0f);
+
             const __half dx = delta_h2.x;
             const __half dy = delta_h2.y;
 
             const __half h0_5 = __float2half_rn(0.5f);
-            const __half conic_x_dxx = __hmul(dx, __hmul(conic_x, dx));
-            const __half conic_z_dyy = __hmul(dy, __hmul(conic_z, dy));
-            const __half conic_y_dxy = __hmul(dx, __hmul(conic_y, dy));
+            const __half conic_x_dxx = __hmul(dx, __hmul(__hmul(conic_x, dx), h16));
+            const __half conic_z_dyy = __hmul(dy, __hmul(__hmul(conic_z, dy), h16));
+            const __half conic_y_dxy = __hmul(dx, __hmul(__hmul(conic_y, dy), h16));
             const __half quad = __hadd(conic_x_dxx, conic_z_dyy);
-            const __half sigma_over_2_h = __hfma(h0_5, quad, conic_y_dxy);
+            const __half sigma_over_2_h = __hmul(__hfma(h0_5, quad, conic_y_dxy), h16);
             if (__half2float(sigma_over_2_h) < 0.0f)
                 continue;
 
@@ -820,43 +817,6 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
                 tah2.x, __ushort2half_rn(collected_color[j].rgb.z),
                 color_transmittance_scaled.zw.x);
             color_transmittance_scaled.zw.y = next_transmittance_h;
-
-            // const float4 conic_opacity = make_float4(__half2float(collected_conic_xy[j].x),
-            //                                          __half2float(collected_conic_xy[j].y),
-            //                                          __half2float(collected_conic_z_raw_opacity[j].x),
-            //                                          activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)));
-            // const float3 conic = make_float3(conic_opacity);
-            // const float2 delta = collected_mean2d[j] - pixel;
-            // const float opacity = conic_opacity.w;
-            // const float sigma_over_2 = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-            // if (sigma_over_2 < 0.0f)
-            //     continue;
-            // const float gaussian = expf(-sigma_over_2);
-            // const float alpha = fminf(opacity * gaussian, config::max_fragment_alpha);
-            // if (alpha < config::min_alpha_threshold)
-            //     continue;
-            // const float transmittance = __half2float(color_transmittance_scaled.zw.y);
-            // const float next_transmittance = transmittance * (1.0f - alpha);
-            // if (next_transmittance < (config::transmittance_threshold * TINYGS_SCALE_FULL)) {
-            //     done = true;
-            //     continue;
-            // }
-            // // unpack the next gaussian's color
-            // // float3 rgb_01;
-            // // uchar32float3(rgb_01, collected_color[j].rgb);
-            // // color_pixel += transmittance * alpha * rgb_01;
-            // // transmittance = next_transmittance;
-            // const float ta = transmittance * alpha * TINYGS_UNSCALE_FULL;
-            // const __half2 tah2 = make_half2(__float2half_rn(ta), __float2half_rn(ta));
-            // color_transmittance_scaled.xy = __hfma2(
-            //     tah2,
-            //     make_half2(__ushort2half_rn(collected_color[j].rgb.x),
-            //                __ushort2half_rn(collected_color[j].rgb.y)),
-            //     color_transmittance_scaled.xy);
-            // color_transmittance_scaled.zw.x = __hfma(
-            //     tah2.x, __ushort2half_rn(collected_color[j].rgb.z),
-            //     color_transmittance_scaled.zw.x);
-            // color_transmittance_scaled.zw.y = __float2half_rn(next_transmittance);
             n_contributions = n_possible_contributions;
             if (n_contributions >= config::max_contributions) {
                 done = true;
