@@ -750,7 +750,10 @@ struct alignas(16) PackedPixels_Upper {
     __half2 grad_color_r;
     __half2 grad_color_g;
     __half2 grad_color_b;
-    ushort2 last_contributor;
+    union {
+      ushort2 last_contributor;
+      uint32_t last_contributor_ui32;
+    };
 };
 
 struct alignas(16) PackedPixels_Lower {
@@ -760,29 +763,6 @@ struct alignas(16) PackedPixels_Lower {
     __half2 transmittance;
 };
 
-struct alignas(32) PackedPixels {
-    __half2 grad_color_r;
-    __half2 grad_color_g;
-    __half2 grad_color_b;
-    union{ushort2 last_contributor; uint32_t last_contributor_ui32;};
-
-    __half2 color_after_r;
-    __half2 color_after_g;
-    __half2 color_after_b;
-    __half2 transmittance;
-};
-
-__device__ void set_from_upper_lower_slow(PackedPixels& packed, const PackedPixels_Upper& upper, const PackedPixels_Lower& lower) {
-    packed.grad_color_r = upper.grad_color_r;
-    packed.grad_color_g = upper.grad_color_g;
-    packed.grad_color_b = upper.grad_color_b;
-    packed.last_contributor = upper.last_contributor;
-
-    packed.color_after_r = lower.color_after_r;
-    packed.color_after_g = lower.color_after_g;
-    packed.color_after_b = lower.color_after_b;
-    packed.transmittance = lower.transmittance;
-}
 
 template<typename T>
 __device__ inline void fast_zero_aligned_8b(T& val) {
@@ -791,6 +771,11 @@ __device__ inline void fast_zero_aligned_8b(T& val) {
     for (int i = 0; i < sizeof(T) / sizeof(uint64_t); ++i) {
         eight_byte[i] = 0;
     }
+}
+
+template<typename T>
+__device__ inline void fast_copy_16bytes(T& dst, const T& src) {
+  reinterpret_cast<uint4 &>(dst) = reinterpret_cast<const uint4 &>(src);
 }
 
 __device__ inline __half2 doth3(__half2 x1, __half2 y1, __half2 z1,
@@ -807,10 +792,6 @@ __device__ inline __nv_bfloat162 doth3(__nv_bfloat162 x1, __nv_bfloat162 y1, __n
     return __hmul2(z1, z2) + __hmul2(x1, x2) + __hmul2(y1, y2);
 #endif
 }
-
-struct PackedPixelBits {
-  uint64_t data[4]; // 8B x4
-};
 
 __device__ inline float sum_float(const __half2& inc) {
     return __half2float(inc.x) + __half2float(inc.y);
@@ -956,10 +937,14 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     // } REG;
     // fast_zero(REG.full);
     union {
-        PackedPixels REG;
-        PackedPixelBits REG_bits;
+        PackedPixels_Upper REGup;
+        uint4 REGup_bits;
     };
-    fast_zero_aligned_8b(REG);
+
+    union {
+        PackedPixels_Lower REGlow;
+        uint4 REGlow_bits;
+    };
 
     constexpr int warp_size = 32;
     constexpr int warp_size_2 = warp_size * 2;
@@ -1062,8 +1047,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
 
             // REG.as_uint4 = warp.shfl_up(REG.as_uint4, 1);
-            // REG = warp.shfl_up(REG, 1);
-            REG_bits = warp.shfl_up(REG_bits, 1);
+            REGup_bits = warp.shfl_up(REGup_bits, 1);
+            REGlow_bits = warp.shfl_up(REGlow_bits, 1);
 
             const float2 off = make_float2(dx, dy) + 0.5f;
             const float2 off_div_16 = off / 16.0f;
@@ -1080,7 +1065,6 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 conic_y_dxy = __hmul2(delta_x, conic_y_dy);
             const __half2 quad = __hadd2(conic_x_dxx, conic_z_dyy);
             const __half2 sigma_over_2_h = __hmul2(__hfma2(h0_5_2, quad, conic_y_dxy), h_16_2);
-            // const float gaussian = __expf(-fmaxf(__half2float(sigma_over_2_h), 0.f));
             const __half2 gaussian = h2exp(__hneg2(sigma_over_2_h));
 
             //! We have to compute another bf16 version to guarantee the non-vanishing gradient
@@ -1106,14 +1090,15 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
                 // asm volatile("ld.shared.v2.f32 {%0, %1}, [%2];"
                 //     : "=f"(dst_view->z), "=f"(dst_view->w)
                 //     : "l"(saddr_lower + (i % 32) * sizeof(PerPixel_Lower)));
-                const PackedPixels_Upper upper = cached_per_pixel_upper[j];
-                const PackedPixels_Lower lower = cached_per_pixel_lower[j];
-                set_from_upper_lower_slow(REG, upper, lower);
+                // const PackedPixels_Upper upper = cached_per_pixel_upper[j];
+                // const PackedPixels_Lower lower = cached_per_pixel_lower[j];
+                fast_copy_16bytes(REGlow, cached_per_pixel_lower[j]);
+                fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
             }
 
             // const bool skip = !valid_general || tile_primitive_idx >= REG.parts.grad_color_pixel_b_last_contributor.y;
             const uint enable_mask = (valid_general ? 0xFFFFFFFFu : 0u) &
-                                      __vcmpltu2(tile_primitive_idx_ui32, REG.last_contributor_ui32);
+                                      __vcmpltu2(tile_primitive_idx_ui32, REGup.last_contributor_ui32);
 
             __half2 alpha_prepare = __hmul2(opacity, gaussian);
             // alpha is set to zero if not enabled.
@@ -1121,7 +1106,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // const float color_dot_grad_color_pixel = __half2float(dot3(color, reinterpret_cast<const packed_half2x2&>(REG)));
             const __half2 color_dot_grad_color_pixel = doth3(
                 color_r, color_g, color_b,
-                REG.grad_color_r, REG.grad_color_g, REG.grad_color_b
+                REGup.grad_color_r, REGup.grad_color_g, REGup.grad_color_b
             );
             // float alpha = 0.f;
             // if (!skip) [[likely]] {
@@ -1136,15 +1121,15 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // TODO: it seems the transmittance could be very small, should we use bf16 to store it?
             // Alternatively, we could us a scaled transmittance.
             // aha we have set the maximum transmittance to be about 0.99
-            const __half2 transmittance = REG.transmittance;
+            const __half2 transmittance = REGlow.transmittance;
             const __half2 blending_weight = __hmul2(transmittance, alpha);
             const __half2 one_minus_alpha = __hsub2(h_1_2, alpha);
 
             // --- color gradient ---
             // const float3 dL_dcolor = blending_weight * grad_color_pixel;
-            const __half2 dl_dcolor_r = __hmul2(blending_weight, REG.grad_color_r);
-            const __half2 dl_dcolor_g = __hmul2(blending_weight, REG.grad_color_g);
-            const __half2 dl_dcolor_b = __hmul2(blending_weight, REG.grad_color_b);
+            const __half2 dl_dcolor_r = __hmul2(blending_weight, REGup.grad_color_r);
+            const __half2 dl_dcolor_g = __hmul2(blending_weight, REGup.grad_color_g);
+            const __half2 dl_dcolor_b = __hmul2(blending_weight, REGup.grad_color_b);
             dL_dcolor_accum.x += __half2float(__hadd(dl_dcolor_r.x, dl_dcolor_r.y));
             dL_dcolor_accum.y += __half2float(__hadd(dl_dcolor_g.x, dl_dcolor_g.y));
             dL_dcolor_accum.z += __half2float(__hadd(dl_dcolor_b.x, dl_dcolor_b.y));
@@ -1157,9 +1142,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
             // --- update reg ---
             // color_pixel_after -= blending_weight * color;
-            REG.color_after_r = __hfma2(__hneg2(blending_weight), color_r, REG.color_after_r);
-            REG.color_after_g = __hfma2(__hneg2(blending_weight), color_g, REG.color_after_g);
-            REG.color_after_b = __hfma2(__hneg2(blending_weight), color_b, REG.color_after_b);
+            REGlow.color_after_r = __hfma2(__hneg2(blending_weight), color_r, REGlow.color_after_r);
+            REGlow.color_after_g = __hfma2(__hneg2(blending_weight), color_g, REGlow.color_after_g);
+            REGlow.color_after_b = __hfma2(__hneg2(blending_weight), color_b, REGlow.color_after_b);
             // REG.full.color_pixel_after_rg = __hfma2(
                 //   make_half2(__float2half(-blending_weight), __float2half(-blending_weight)),
                 //   color.xy,
@@ -1176,8 +1161,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             //     dot3(reinterpret_cast<const packed_half2x2 &>(REG.parts.upper),
             //          REG.parts.lower));
             const __half2 color_pixel_after_dot_grad_color_pixel = doth3(
-                REG.color_after_r, REG.color_after_g, REG.color_after_b,
-                REG.grad_color_r, REG.grad_color_g, REG.grad_color_b
+                REGlow.color_after_r, REGlow.color_after_g, REGlow.color_after_b,
+                REGup.grad_color_r, REGup.grad_color_g, REGup.grad_color_b
             );
 
             //! Here is the problem of half, the gradient of conic.x * delta.x is too small if we are using half.
@@ -1229,7 +1214,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             absdL_dmean2d_accum += make_float2(fabsf(dL_dmean2d.x), fabsf(dL_dmean2d.y));
             // transmittance *= one_minus_alpha;
             // REG.full.color_pixel_after_b_transmittance.y = __float2half_rn(transmittance * one_minus_alpha);
-            REG.transmittance = __hmul2(REG.transmittance, one_minus_alpha);
+            REGlow.transmittance = __hmul2(REGlow.transmittance, one_minus_alpha);
         }
     }
 
