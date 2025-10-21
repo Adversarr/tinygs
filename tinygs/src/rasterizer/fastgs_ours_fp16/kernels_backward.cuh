@@ -808,6 +808,18 @@ __device__ inline __nv_bfloat162 doth3(__nv_bfloat162 x1, __nv_bfloat162 y1, __n
 #endif
 }
 
+struct PackedPixelBits {
+  uint64_t data[4]; // 8B x4
+};
+
+__device__ inline float sum_float(const __half2& inc) {
+    return __half2float(inc.x) + __half2float(inc.y);
+}
+
+__device__ inline float sum_float(const __nv_bfloat162& inc) {
+    return __bfloat162float(inc.x) + __bfloat162float(inc.y);
+}
+
 /* -------------------- half version -------------------- */
 // 2 pixel X 1 GS per thread
 __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward_cu2(
@@ -920,6 +932,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     const __half2 h0_2 = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
     const __half2 h_1_2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
     const __half2 h_two_pixel_offset_x = make_half2(CUDART_ZERO_FP16, __float2half_rn(1.0f/16.0f));
+    const __nv_bfloat162 bf16_two_pixel_offset_x = __float22bfloat162_rn(__half22float2(h_two_pixel_offset_x));
     const __half2 h_max_fragment_alpha_2 = make_half2(__float2half_rn(config::max_fragment_alpha),
                                                       __float2half_rn(config::max_fragment_alpha));
     constexpr uint32_t one_u162 = 0x00010001u;
@@ -942,7 +955,10 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     //   uint4 as_uint4; // also 16B
     // } REG;
     // fast_zero(REG.full);
-    PackedPixels REG;
+    union {
+        PackedPixels REG;
+        PackedPixelBits REG_bits;
+    };
     fast_zero_aligned_8b(REG);
 
     constexpr int warp_size = 32;
@@ -1034,7 +1050,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         for (uint j = 0; j < warp_size; ++j) {
             const uint i = ii + j * 2;
             // which pixel index should this thread deal with?
-            const uint idx = i - lane_idx_uint; // overflow is ok, will much greater than the block size, and mark invalid
+            // overflow is ok, will much greater than the block size, and mark invalid
+            const uint idx = i - 2 * lane_idx_uint;
             const uint local_tile = idx >> (2 * tinygs::kImageTileLog2); // 0..3
             const uint intile = idx % (tinygs::kImageTile * tinygs::kImageTile); // 0..63
             const uint dx = (intile % tinygs::kImageTile) + (local_tile % 2) * tinygs::kImageTile; // 0..16
@@ -1045,15 +1062,15 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
 
             // REG.as_uint4 = warp.shfl_up(REG.as_uint4, 1);
-            REG = warp.shfl_up(REG, 1);
+            // REG = warp.shfl_up(REG, 1);
+            REG_bits = warp.shfl_up(REG_bits, 1);
 
             const float2 off = make_float2(dx, dy) + 0.5f;
-            const float2 delta0 = mean2d - off / 16.0f;
-            const __half2 delta_x = __hsub2(make_half2(__float2half_rn(delta0.x),
-                                                       __float2half_rn(delta0.x)),
-                                            h_two_pixel_offset_x);
-            const __half2 delta_y = make_half2(__float2half_rn(delta0.y),
-                                               __float2half_rn(delta0.y));
+            const float2 off_div_16 = off / 16.0f;
+            const float2 delta0_f = mean2d - off_div_16;
+            const float2 delta1_f = mean2d - (off + make_float2(1.0f, 0.0f)) / 16.0f;
+            const __half2 delta_x = make_half2(__float2half_rn(delta0_f.x), __float2half_rn(delta1_f.x));
+            const __half2 delta_y = make_half2(__float2half_rn(delta0_f.y), __float2half_rn(delta1_f.y));
 
             const __half2 conic_x_dx = __hmul2(__hmul2(conic_x, delta_x), h_16_2); // conic.x * delta.x
             const __half2 conic_z_dy = __hmul2(__hmul2(conic_z, delta_y), h_16_2); // conic.z * delta.y
@@ -1067,9 +1084,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 gaussian = h2exp(__hneg2(sigma_over_2_h));
 
             //! We have to compute another bf16 version to guarantee the non-vanishing gradient
-            const __nv_bfloat162 delta_bf16_x = make_bfloat162(__float2bfloat16_rn(delta0.x), __float2bfloat16_rn(delta0.x));
-            const __nv_bfloat162 delta_bf16_y = make_bfloat162(__float2bfloat16_rn(delta0.y), __float2bfloat16_rn(delta0.y));
-            
+            const __nv_bfloat162 delta_bf16_x = make_bfloat162(__float2bfloat16_rn(delta0_f.x), __float2bfloat16_rn(delta1_f.x));
+            const __nv_bfloat162 delta_bf16_y = make_bfloat162(__float2bfloat16_rn(delta0_f.y), __float2bfloat16_rn(delta1_f.y));
+
             // const __nv_bfloat162 delta_bf16 = __float22bfloat162_rn(delta0 / 16.0f);
             const __nv_bfloat162 delta_coefs_bf16_xx = __hmul2(delta_bf16_x, delta_bf16_x);
             const __nv_bfloat162 delta_coefs_bf16_xy = __hmul2(delta_bf16_x, delta_bf16_y);
@@ -1188,7 +1205,6 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             //     __bfloat162float(delta_coefs_bf16_yy)
             // ) * 256;
 
-            
             const __nv_bfloat162 dL_draw_opacity_partial_bf16 =
                 __float22bfloat162_rn(__half22float2(dL_draw_opacity_partial));
             const __nv_bfloat162 dL_draw_opacity_partial_bf16_neg128 =
@@ -1199,17 +1215,16 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __nv_bfloat162 dL_dconic_z = __hmul2(dL_draw_opacity_partial_bf16_neg128, delta_coefs_bf16_yy);
 
             // dL_dconic_accum += dL_dconic;
-            dL_dconic_accum.x += __bfloat162float(__hadd(dL_dconic_x.x, dL_dconic_x.y));
-            dL_dconic_accum.y += __bfloat162float(__hadd(dL_dconic_y.x, dL_dconic_y.y));
-            dL_dconic_accum.z += __bfloat162float(__hadd(dL_dconic_z.x, dL_dconic_z.y));
+            dL_dconic_accum.x += sum_float(dL_dconic_x);
+            dL_dconic_accum.y += sum_float(dL_dconic_y);
+            dL_dconic_accum.z += sum_float(dL_dconic_z);
 
             // const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
             const __nv_bfloat162 dL_dmean2d_x = __hmul2(dL_draw_opacity_partial_bf16, prepare_dl_dmean2d_x);
             const __nv_bfloat162 dL_dmean2d_y = __hmul2(dL_draw_opacity_partial_bf16, prepare_dl_dmean2d_y);
 
             // dL_dmean2d_accum -= dL_dmean2d;
-            const float2 dL_dmean2d = {__bfloat162float(__hadd(dL_dmean2d_x.x, dL_dmean2d_x.y)),
-                                       __bfloat162float(__hadd(dL_dmean2d_y.x, dL_dmean2d_y.y))};
+            const float2 dL_dmean2d = {sum_float(dL_dmean2d_x), sum_float(dL_dmean2d_y)};
             dL_dmean2d_accum -= dL_dmean2d;
             absdL_dmean2d_accum += make_float2(fabsf(dL_dmean2d.x), fabsf(dL_dmean2d.y));
             // transmittance *= one_minus_alpha;
