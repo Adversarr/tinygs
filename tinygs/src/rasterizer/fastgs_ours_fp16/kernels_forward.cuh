@@ -869,6 +869,14 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     }
 }
 
+__device__ inline __half2 activate_opacity_half2(const __half2 & val) noexcept {
+    // sigmoid's half precision implementation.
+    // 1 / (1 + exp(-x))
+    __half2 exp_val = h2exp(__hneg2(val));
+    __half2 one_h2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
+    return __h2div(one_h2, __hadd2(one_h2, exp_val));
+}
+
 // launch as 128, get 256 throughput, 2 pixel per thread.
 __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     const uint2* tile_instance_ranges,
@@ -886,6 +894,14 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     const uint height,
     const uint grid_width,
     const uint n_tiles) {
+    /**
+     * TODO: Improve the memory throughput of this kernel. This version is 10% SLOWER than the float version.
+     * 
+     * 1. Increase the occupancy. Although we rely on the thread_rank to get the pixel coordinates,
+     *    we can rewrite this logic to increase the block_size to hide latency.
+     * 2. Replace the global memory IO to a more efficient, vectorized version.
+     * 3. Replace the __half constants to their ushort16 version.
+     */
     constexpr int block_size_total = config::tile_width * config::tile_width; // 256
     constexpr int block_size_launch = config::block_size_blend / 2; // 128
 
@@ -1020,11 +1036,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
             const __half2 conic_x = make_half2(collected_conic_xy[j].x, collected_conic_xy[j].x);
             const __half2 conic_y = make_half2(collected_conic_xy[j].y, collected_conic_xy[j].y);
             const __half2 conic_z = make_half2(collected_conic_z_raw_opacity[j].x, collected_conic_z_raw_opacity[j].x);
-            const __half2 opacity_h = make_half2(
-                __float2half_rn(activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y))),
-                __float2half_rn(activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)))
-            );
-            // const __half2 delta_h2 = __h2div(__hsub2(collected_mean2d[j], pixel_tiled), hinv_16);
+            const __half2 opacity_h = activate_opacity_half2(make_half2(collected_conic_z_raw_opacity[j].y, collected_conic_z_raw_opacity[j].y));
             const __half2 collected_mean2d_x = make_half2(collected_mean2d[j].x, collected_mean2d[j].x);
             const __half2 collected_mean2d_y = make_half2(collected_mean2d[j].y, collected_mean2d[j].y);
             const __half2 dx = __hsub2(collected_mean2d_x, offset_x);

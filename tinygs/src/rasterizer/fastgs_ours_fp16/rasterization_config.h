@@ -68,7 +68,7 @@ struct alignas(4) PrimitiveInfo {
 #define TINYGS_UNSCALE_HALF __float2half_rn(TINYGS_UNSCALE_FULL)
 #define TINYGS_UNSCALE_HALF2 make_half2(TINYGS_UNSCALE_HALF, TINYGS_UNSCALE_HALF)
 
-struct alignas(4) packed_half2x2 {
+struct alignas(8) packed_half2x2 {
   __half2 xy;
   __half2 zw;
 };
@@ -84,7 +84,8 @@ __device__ __forceinline__ void fast_zero(packed_half2x2& p) {
   reinterpret_cast<uint64_t&>(p) = 0ull;
 }
 
-__device__ __forceinline__ void fast_copy(packed_half2x2& dst, const packed_half2x2& src) {
+__device__ __forceinline__
+void fast_copy(packed_half2x2& dst, const packed_half2x2& src) {
   reinterpret_cast<uint64_t&>(dst) = reinterpret_cast<const uint64_t&>(src);
 }
 
