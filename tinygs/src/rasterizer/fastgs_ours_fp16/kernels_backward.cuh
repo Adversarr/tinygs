@@ -942,7 +942,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     if (valid_primitive) {
         primitive_idx = instance_primitive_indices[instance_idx];
         auto mean2d_float = primitive_mean2d[primitive_idx] / 16.0f - make_float2(tile_coords);
-        mean2d = __float22half2_rn(mean2d_float);
+        mean2d = __float22half2_rn(mean2d_float - 1.0 / 32.0f);
         mean2d_x = make_half2(mean2d.x, mean2d.x);
         mean2d_y = make_half2(mean2d.y, mean2d.y);
 
@@ -1065,8 +1065,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
 
             // This pixel information
-            const __half2 off_x = __hadd2(make_half2(__uint2half_rn(dx), __uint2half_rn(dx + 1)), h0_5_2);
-            const __half2 off_y = __hadd2(make_half2(__uint2half_rn(dy), __uint2half_rn(dy)), h0_5_2);
+            const __half2 off_x = make_half2(__uint2half_rn(dx), __uint2half_rn(dx + 1));
+            const __half2 off_y = make_half2(__uint2half_rn(dy), __uint2half_rn(dy));
             const __half2 delta_x = __hfma2(hinv_16, __hneg2(off_x), mean2d_x);
             const __half2 delta_y = __hfma2(hinv_16, __hneg2(off_y), mean2d_y);
 
