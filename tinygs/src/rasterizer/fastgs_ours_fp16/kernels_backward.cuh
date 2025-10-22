@@ -823,6 +823,28 @@ __device__ __forceinline__ void load4a_gmem(PackedPixels_Lower& dst, const packe
     reinterpret_cast<uint4&>(dst) = *(reinterpret_cast<const uint4*>(src));
 }
 
+
+#ifndef NDEBUG
+#define CHECK_FINITE_HALF(v)                                                   \
+  do {                                                                         \
+    float flt_##v = __half2float(v);                                           \
+    assert(isfinite(flt_##v));                                                 \
+  } while (0)
+
+#define CHECK_FINITE_HALF2(v)                                                  \
+  do {                                                                         \
+    float2 flt_##v = __half22float2(v);                                        \
+    assert(isfinite(flt_##v.x) && isfinite(flt_##v.y));                        \
+  } while (0)
+
+#else
+
+#define CHECK_FINITE_HALF(x) ((void) x)
+#define CHECK_FINITE_HALF2(x) ((void) x)
+
+#endif
+
+
 /* -------------------- half version -------------------- */
 // 2 pixel X 1 GS per thread
 __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward_cu2(
@@ -887,13 +909,11 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     // --- Constants ---
     const __half2 hinv_16 = __float22half2_rn(make_float2(0.0625f, 0.0625f));
     const __half2 h_16_2 = __float22half2_rn(make_float2(16.0f, 16.0f));
-    const __nv_bfloat162 bf16_16_2 = __float22bfloat162_rn(make_float2(16.0f, 16.0f));
     const __half h0_5 = __float2half_rn(0.5f);
     const __half2 h0_5_2 = make_half2(h0_5, h0_5);
     const __half2 h0_2 = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
     const __half2 h_1_2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
     const __half2 h_two_pixel_offset_x = make_half2(CUDART_ZERO_FP16, __float2half_rn(1.0f/16.0f));
-    const __nv_bfloat162 bf16_two_pixel_offset_x = __float22bfloat162_rn(__half22float2(h_two_pixel_offset_x));
     const __half2 h_max_fragment_alpha_2 = make_half2(__float2half_rn(config::max_fragment_alpha),
                                                       __float2half_rn(config::max_fragment_alpha));
     constexpr uint32_t one_u162 = 0x00010001u;
@@ -904,9 +924,6 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     __half2 conic_x{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
     __half2 conic_y{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
     __half2 conic_z{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    __nv_bfloat162 conic_bf16_x{CUDART_ZERO_BF16, CUDART_ZERO_BF16};
-    __nv_bfloat162 conic_bf16_y{CUDART_ZERO_BF16, CUDART_ZERO_BF16};
-    __nv_bfloat162 conic_bf16_z{CUDART_ZERO_BF16, CUDART_ZERO_BF16};
     __half2 opacity{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
     __half2 color_r{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
     __half2 color_g{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
@@ -925,9 +942,6 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         conic_x = make_half2(__ushort_as_half(info.conic_xy.x), __ushort_as_half(info.conic_xy.x));
         conic_y = make_half2(__ushort_as_half(info.conic_xy.y), __ushort_as_half(info.conic_xy.y));
         conic_z = make_half2(__ushort_as_half(info.conic_z_raw_opacity.x), __ushort_as_half(info.conic_z_raw_opacity.x));
-        conic_bf16_x = __float22bfloat162_rn(__half22float2(conic_x));
-        conic_bf16_y = __float22bfloat162_rn(__half22float2(conic_y));
-        conic_bf16_z = __float22bfloat162_rn(__half22float2(conic_z));
         const float f_opacity = activate_opacity(__half2float(__ushort_as_half(info.conic_z_raw_opacity.y)));
         opacity = make_half2(__float2half_rn(f_opacity), __float2half_rn(f_opacity));
         color_r = make_half2(__ushort2half_rn(info.rgb.x), __ushort2half_rn(info.rgb.x));
@@ -939,9 +953,6 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     conic_x = __hmul2(conic_x, h_16_2);
     conic_y = __hmul2(conic_y, h_16_2);
     conic_z = __hmul2(conic_z, h_16_2);
-    conic_bf16_x = __hmul2(conic_bf16_x, bf16_16_2);
-    conic_bf16_y = __hmul2(conic_bf16_y, bf16_16_2);
-    conic_bf16_z = __hmul2(conic_bf16_z, bf16_16_2);
 
     color_r = __hmul2(color_r, TINYGS_UNSCALE_HALF2);
     color_g = __hmul2(color_g, TINYGS_UNSCALE_HALF2);
@@ -1048,6 +1059,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 delta_y = make_half2(__float2half_rn(delta0_f.y), __float2half_rn(delta1_f.y));
 
             const __half2 conic_x_dx = __hmul2(conic_x, delta_x); // conic.x * delta.x
+            const __half2 conic_y_dx = __hmul2(conic_y, delta_x); // conic.y * delta.x
             const __half2 conic_z_dy = __hmul2(conic_z, delta_y); // conic.z * delta.y
             const __half2 conic_y_dy = __hmul2(conic_y, delta_y); // conic.y * delta.y
             const __half2 conic_x_dxx = __hmul2(delta_x, conic_x_dx);
@@ -1057,17 +1069,10 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 sigma_over_2_h = __hmul2(__hfma2_relu(h0_5_2, quad, conic_y_dxy), h_16_2);
             const __half2 gaussian = h2exp(__hneg2(sigma_over_2_h));
 
-            //! We have to compute another bf16 version to guarantee the non-vanishing gradient
-            const __nv_bfloat162 delta_bf16_x = make_bfloat162(__float2bfloat16_rn(delta0_f.x), __float2bfloat16_rn(delta1_f.x));
-            const __nv_bfloat162 delta_bf16_y = make_bfloat162(__float2bfloat16_rn(delta0_f.y), __float2bfloat16_rn(delta1_f.y));
+            const __half2 dxdx = __hmul2(delta_x, delta_x);
+            const __half2 dxdy = __hmul2(delta_x, delta_y);
+            const __half2 dydy = __hmul2(delta_y, delta_y);
 
-            const __nv_bfloat162 delta_coefs_bf16_xx = __hmul2(delta_bf16_x, delta_bf16_x);
-            const __nv_bfloat162 delta_coefs_bf16_xy = __hmul2(delta_bf16_x, delta_bf16_y);
-            const __nv_bfloat162 delta_coefs_bf16_yy = __hmul2(delta_bf16_y, delta_bf16_y);
-            const __nv_bfloat162 conic_x_dx_bf16 = __hmul2(conic_bf16_x, delta_bf16_x); // conic.x * delta.x
-            const __nv_bfloat162 conic_z_dy_bf16 = __hmul2(conic_bf16_z, delta_bf16_y); // conic.z * delta.y
-            const __nv_bfloat162 conic_y_dx_bf16 = __hmul2(conic_bf16_y, delta_bf16_x); // conic.y * delta.x
-            const __nv_bfloat162 conic_y_dy_bf16 = __hmul2(conic_bf16_y, delta_bf16_y); // conic.y * delta.y
 
             { // Prepare the upper part of the register
               uint4 &regup = reinterpret_cast<uint4 &>(REGup);
@@ -1097,6 +1102,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             );
             const __half2 alpha = __hmin2(alpha_prepare, h_max_fragment_alpha_2);
 
+            //! small alpha should be skipped
+            uint32_t enable = __hle2_mask(alpha, make_half2(CUDART_MIN_DENORM_FP16, CUDART_MIN_DENORM_FP16));
+
             // we have set the maximum transmittance to be about 0.99, and alpha is always larger than half precision.
             const __half2 transmittance = REGlow.transmittance;
             const __half2 blending_weight = __hmul2(transmittance, alpha);
@@ -1123,8 +1131,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             );
 
             //! Here is the problem of half, the gradient of conic.x * delta.x is too small if we are using half.
-            const __nv_bfloat162 prepare_dl_dmean2d_x = __hadd2(conic_x_dx_bf16, conic_y_dy_bf16);
-            const __nv_bfloat162 prepare_dl_dmean2d_y = __hadd2(conic_y_dx_bf16, conic_z_dy_bf16);
+            const __half2 prepare_dl_dmean2d_x = __hadd2(conic_x_dx, conic_y_dy);
+            const __half2 prepare_dl_dmean2d_y = __hadd2(conic_y_dx, conic_z_dy);
 
             // alpha gradient
             // const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel / one_minus_alpha;
@@ -1135,14 +1143,16 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
             // dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
             dL_draw_opacity_partial_accum += sum_float(dL_draw_opacity_partial);
-            const __nv_bfloat162 dL_draw_opacity_partial_bf16 = __float22bfloat162_rn(__half22float2(dL_draw_opacity_partial));
             // conic and mean2d gradient
-            const __nv_bfloat162 dL_draw_opacity_partial_bf16_neg128 =
-                __hmul2(dL_draw_opacity_partial_bf16, __float22bfloat162_rn(make_float2(-128.f, -128.f)));
+            const __half2 dL_draw_opacity_partial_neg128 =
+                __hmul2(dL_draw_opacity_partial, __float22half2_rn(make_float2(-128.f, -128.f)));
 
-            const __nv_bfloat162 dL_dconic_x = __hmul2(dL_draw_opacity_partial_bf16_neg128, delta_coefs_bf16_xx);
-            const __nv_bfloat162 dL_dconic_y = __hmul2(dL_draw_opacity_partial_bf16_neg128, delta_coefs_bf16_xy);
-            const __nv_bfloat162 dL_dconic_z = __hmul2(dL_draw_opacity_partial_bf16_neg128, delta_coefs_bf16_yy);
+            __half2 dL_dconic_x = __hmul2(dL_draw_opacity_partial_neg128, dxdx);
+            reinterpret_cast<uint32_t&>(dL_dconic_x) &= enable_mask;
+            __half2 dL_dconic_y = __hmul2(dL_draw_opacity_partial_neg128, dxdy);
+            reinterpret_cast<uint32_t&>(dL_dconic_y) &= enable_mask;
+            __half2 dL_dconic_z = __hmul2(dL_draw_opacity_partial_neg128, dydy);
+            reinterpret_cast<uint32_t&>(dL_dconic_z) &= enable_mask;
 
             // dL_dconic_accum += dL_dconic;
             dL_dconic_accum.x += sum_float(dL_dconic_x);
@@ -1150,8 +1160,10 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             dL_dconic_accum.z += sum_float(dL_dconic_z);
 
             // const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
-            const __nv_bfloat162 dL_dmean2d_x = __hmul2(dL_draw_opacity_partial_bf16, prepare_dl_dmean2d_x);
-            const __nv_bfloat162 dL_dmean2d_y = __hmul2(dL_draw_opacity_partial_bf16, prepare_dl_dmean2d_y);
+            __half2 dL_dmean2d_x = __hmul2(dL_draw_opacity_partial, prepare_dl_dmean2d_x);
+            reinterpret_cast<uint32_t&>(dL_dmean2d_x) &= enable_mask;
+            __half2 dL_dmean2d_y = __hmul2(dL_draw_opacity_partial, prepare_dl_dmean2d_y);
+            reinterpret_cast<uint32_t&>(dL_dmean2d_y) &= enable_mask;
 
             // dL_dmean2d_accum -= dL_dmean2d;
             const float2 dL_dmean2d = {sum_float(dL_dmean2d_x), sum_float(dL_dmean2d_y)};
