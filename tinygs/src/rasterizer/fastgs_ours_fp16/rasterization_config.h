@@ -37,7 +37,7 @@ namespace tinygs::fast_gs_fp16::config {
   DEF int block_size_blend_mask = block_size_blend - 1;  // 255
   DEF int n_sequential_threshold = 8;
 
-  DEF int blend_bwd_n_warps = 8; // number of warps per block
+  DEF int blend_bwd_n_warps = 4; // number of warps per block
   DEF int blend_bwd2_n_warps = 4; // number of warps per block
 
   DEF ushort max_contributions = 0xFFFFU; // 65535
