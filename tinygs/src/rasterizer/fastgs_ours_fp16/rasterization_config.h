@@ -113,6 +113,29 @@ __device__ __forceinline__ void uchar32float3(float3& f, const uchar3& uc) {
   f.z = static_cast<float>(uc.z) * inv_255;
 }
 
+__device__ __forceinline__ uint32_t half2asui32(__half2 h) {
+  return reinterpret_cast<const uint32_t&>(h);
+}
+
+__device__ __forceinline__ __half2 ui32ashalf2(uint32_t u) {
+  return reinterpret_cast<const __half2&>(u);
+}
+
+// Aligned store 2 packed_half2x2 (4 half2)
+__device__ __forceinline__ 
+void store4a(packed_half2x2* dst, __half2 x, __half2 y, __half2 z, __half2 w) {
+  *(reinterpret_cast<uint4*>(dst)) = make_uint4(half2asui32(x), half2asui32(y), half2asui32(z), half2asui32(w));
+}
+
+__device__ __forceinline__
+void load4a(const packed_half2x2* src, __half2& x, __half2& y, __half2& z, __half2& w) {
+  const uint4 u = *(reinterpret_cast<const uint4*>(src));
+  x = ui32ashalf2(u.x);
+  y = ui32ashalf2(u.y);
+  z = ui32ashalf2(u.z);
+  w = ui32ashalf2(u.w);
+}
+
 }
 
 #undef DEF

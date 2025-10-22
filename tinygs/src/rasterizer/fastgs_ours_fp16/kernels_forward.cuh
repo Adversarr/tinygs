@@ -1020,14 +1020,16 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
         for (j = 0; /* !done */ unfinished.data_u32 && j < current_batch_size; ++j) {
             if (j % 32 == 0) {
                 const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
-                bucket_color_transmittance_scaled[bucket_offset * block_size_total + off] = packed_half2x2{
-                    make_half2(color_r.x, color_g.x),
-                    make_half2(color_b.x, transmittance.x)
-                };
-                bucket_color_transmittance_scaled[bucket_offset * block_size_total + off + 1] = packed_half2x2{
-                    make_half2(color_r.y, color_g.y),
-                    make_half2(color_b.y, transmittance.y)
-                };
+                // bucket_color_transmittance_scaled[bucket_offset * block_size_total + off] = packed_half2x2{
+                //     make_half2(color_r.x, color_g.x),
+                //     make_half2(color_b.x, transmittance.x)
+                // };
+                // bucket_color_transmittance_scaled[bucket_offset * block_size_total + off + 1] = packed_half2x2{
+                //     make_half2(color_r.y, color_g.y),
+                //     make_half2(color_b.y, transmittance.y)
+                // };
+                store4a(bucket_color_transmittance_scaled + bucket_offset * config::block_size_blend + off,
+                    color_r, color_g, color_b, transmittance);
                 bucket_offset++;
             }
             n_possible_contributions.data_u32 = __vadd2(n_possible_contributions.data_u32, unfinished.data_u32);
@@ -1093,14 +1095,16 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
         j = ((j + 31) / 32) * 32; // round up to next warp
         for (; j < current_batch_size; j += 32) {
             const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
-            bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off] = packed_half2x2{
-                make_half2(color_r.x, color_g.x),
-                make_half2(color_b.x, transmittance.x)
-            };
-            bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off + 1] = packed_half2x2{
-                make_half2(color_r.y, color_g.y),
-                make_half2(color_b.y, transmittance.y)
-            };
+            // bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off] = packed_half2x2{
+            //     make_half2(color_r.x, color_g.x),
+            //     make_half2(color_b.x, transmittance.x)
+            // };
+            // bucket_color_transmittance_scaled[bucket_offset * config::block_size_blend + off + 1] = packed_half2x2{
+            //     make_half2(color_r.y, color_g.y),
+            //     make_half2(color_b.y, transmittance.y)
+            // };
+            store4a(bucket_color_transmittance_scaled + bucket_offset * config::block_size_blend + off,
+                color_r, color_g, color_b, transmittance);
             bucket_offset++;
         }
     }
