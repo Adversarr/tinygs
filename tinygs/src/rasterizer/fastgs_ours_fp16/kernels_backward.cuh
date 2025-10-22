@@ -1059,20 +1059,19 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const uint intile = idx % (tinygs::kImageTile * tinygs::kImageTile); // 0..63
             const uint dx = (intile % tinygs::kImageTile) + (local_tile % 2) * tinygs::kImageTile; // 0..16
             const uint dy = (intile / tinygs::kImageTile) + (local_tile / 2) * tinygs::kImageTile; // 0..16
-            // This is the 0- pixel's position.
-            const uint2 pixel_coords = {start_pixel_coords.x + dx, start_pixel_coords.y + dy};
-            const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;
-            const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
-
-            // This pixel information
+            const uint pixel_coords_x = start_pixel_coords.x + dx;
+            const uint pixel_coords_y = start_pixel_coords.y + dy;
+            // Issue 4 float conversions
             const __half2 off_x = make_half2(__uint2half_rn(dx), __uint2half_rn(dx + 1));
             const __half2 off_y = make_half2(__uint2half_rn(dy), __uint2half_rn(dy));
+            const bool valid_pixel = pixel_coords_x < width && pixel_coords_y < height;
+            const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
+            REGup.grad_color_r = warp.shfl_up(REGup.grad_color_r, 1);
             const __half2 delta_x = __hfma2(hinv_16, __hneg2(off_x), mean2d_x);
             const __half2 delta_y = __hfma2(hinv_16, __hneg2(off_y), mean2d_y);
 
             const __half2 conic_x_dx = __hmul2(conic_x, delta_x); // conic.x * delta.x
             const __half2 conic_y_dx = __hmul2(conic_y, delta_x); // conic.y * delta.x
-            REGup.grad_color_r = warp.shfl_up(REGup.grad_color_r, 1);
             const __half2 conic_z_dy = __hmul2(conic_z, delta_y); // conic.z * delta.y
             const __half2 conic_y_dy = __hmul2(conic_y, delta_y); // conic.y * delta.y
             REGup.grad_color_g = warp.shfl_up(REGup.grad_color_g, 1);
@@ -1088,17 +1087,6 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
             const __half2 sigma_over_2_h = __hmul2(__hfma2_relu(h0_5_2, quad, conic_y_dxy), h_16_2);
             const __half2 gaussian = h2exp(__hneg2(sigma_over_2_h));
-
-            const __half2 dxdx = __hmul2(delta_x, delta_x);
-            const __half2 dxdy = __hmul2(delta_x, delta_y);
-            const __half2 dydy = __hmul2(delta_y, delta_y);
-
-            // { // Prepare the upper part of the register
-            //   uint4 &regup = reinterpret_cast<uint4 &>(REGup);
-            //   regup = warp.shfl_up(regup, 1);
-            //   if (lane_idx == 0)
-            //     fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
-            // }
 
             { // Prepare the lower part of the register
               uint4 &reglow = reinterpret_cast<uint4 &>(REGlow);
@@ -1168,10 +1156,15 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // const __half2 dL_draw_opacity_partial_neg128 =
             //     __hmul2(dL_draw_opacity_partial, __float22half2_rn(make_float2(-128.f, -128.f)));
 
+            const __half2 dxdx = __hmul2(delta_x, delta_x);
             __half2 dL_dconic_x = __hmul2(dL_draw_opacity_partial, dxdx);
             reinterpret_cast<uint32_t&>(dL_dconic_x) &= enable_mask;
+
+            const __half2 dxdy = __hmul2(delta_x, delta_y);
             __half2 dL_dconic_y = __hmul2(dL_draw_opacity_partial, dxdy);
             reinterpret_cast<uint32_t&>(dL_dconic_y) &= enable_mask;
+
+            const __half2 dydy = __hmul2(delta_y, delta_y);
             __half2 dL_dconic_z = __hmul2(dL_draw_opacity_partial, dydy);
             reinterpret_cast<uint32_t&>(dL_dconic_z) &= enable_mask;
 
