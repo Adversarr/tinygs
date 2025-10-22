@@ -918,8 +918,6 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
                                                       __float2half_rn(config::max_fragment_alpha));
     constexpr uint32_t one_u162 = 0x00010001u;
     const __half2 delta1_offset_x{CUDART_ZERO_FP16, __float2half_rn(1.0f / 16.0f)}; // [0, 1/16]
-    const float grad_scaler = 512.0f;
-    const __half2 h_grad_scaler2 = __float22half2_rn(make_float2(grad_scaler, grad_scaler));
 
     // load gaussian data
     uint primitive_idx = 0;
@@ -1067,16 +1065,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
 
             // This pixel information
-
-            const __half2 off_x = make_half2(__uint2half_rn(dx), __uint2half_rn(dx + 1));
-            const __half2 off_y = make_half2(__uint2half_rn(dy), __uint2half_rn(dy));
-            // const float2 off = make_float2(dx, dy) + 0.5f;
-            // const float2 off_div_16 = off / 16.0f;
-            // const float2 delta0_f = mean2d - off_div_16;
-            // const float2 delta1_f = mean2d - (off + make_float2(1.0f, 0.0f)) / 16.0f;
-            // const __half2 delta_x = make_half2(__float2half_rn(delta0_f.x), __float2half_rn(delta1_f.x));
-            // const __half2 delta_y = make_half2(__float2half_rn(delta0_f.y), __float2half_rn(delta1_f.y));
-
+            const __half2 off_x = __hadd2(make_half2(__uint2half_rn(dx), __uint2half_rn(dx + 1)), h0_5_2);
+            const __half2 off_y = __hadd2(make_half2(__uint2half_rn(dy), __uint2half_rn(dy)), h0_5_2);
             const __half2 delta_x = __hfma2(hinv_16, __hneg2(off_x), mean2d_x);
             const __half2 delta_y = __hfma2(hinv_16, __hneg2(off_y), mean2d_y);
 
@@ -1144,9 +1134,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 dl_dcolor_r = __hmul2(blending_weight, REGup.grad_color_r);
             const __half2 dl_dcolor_g = __hmul2(blending_weight, REGup.grad_color_g);
             const __half2 dl_dcolor_b = __hmul2(blending_weight, REGup.grad_color_b);
-            dl_dcolor_accum_r = __hfma2(h_grad_scaler2, dl_dcolor_r, dl_dcolor_accum_r);
-            dl_dcolor_accum_g = __hfma2(h_grad_scaler2, dl_dcolor_g, dl_dcolor_accum_g);
-            dl_dcolor_accum_b = __hfma2(h_grad_scaler2, dl_dcolor_b, dl_dcolor_accum_b);
+            dl_dcolor_accum_r = __hfma2(TINYGS_SCALE_HALF2, dl_dcolor_r, dl_dcolor_accum_r);
+            dl_dcolor_accum_g = __hfma2(TINYGS_SCALE_HALF2, dl_dcolor_g, dl_dcolor_accum_g);
+            dl_dcolor_accum_b = __hfma2(TINYGS_SCALE_HALF2, dl_dcolor_b, dl_dcolor_accum_b);
 
             // --- update reg ---
             // color_pixel_after -= blending_weight * color;
@@ -1189,9 +1179,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // dL_dconic_accum.x += sum_float(dL_dconic_x);
             // dL_dconic_accum.y += sum_float(dL_dconic_y);
             // dL_dconic_accum.z += sum_float(dL_dconic_z);
-            dl_dconic_accum_x = __hfma2(h_grad_scaler2, dL_dconic_x, dl_dconic_accum_x);
-            dl_dconic_accum_y = __hfma2(h_grad_scaler2, dL_dconic_y, dl_dconic_accum_y);
-            dl_dconic_accum_z = __hfma2(h_grad_scaler2, dL_dconic_z, dl_dconic_accum_z);
+            dl_dconic_accum_x = __hfma2(TINYGS_SCALE_HALF2, dL_dconic_x, dl_dconic_accum_x);
+            dl_dconic_accum_y = __hfma2(TINYGS_SCALE_HALF2, dL_dconic_y, dl_dconic_accum_y);
+            dl_dconic_accum_z = __hfma2(TINYGS_SCALE_HALF2, dL_dconic_z, dl_dconic_accum_z);
 
 
             // const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
@@ -1200,12 +1190,12 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             __half2 dL_dmean2d_y = __hmul2(dL_draw_opacity_partial, prepare_dl_dmean2d_y);
             reinterpret_cast<uint32_t&>(dL_dmean2d_y) &= enable_mask;
 
-            dl_dmean2d_accum_x = __hfma2(h_grad_scaler2, dL_dmean2d_x, dl_dmean2d_accum_x);
-            dl_dmean2d_accum_y = __hfma2(h_grad_scaler2, dL_dmean2d_y, dl_dmean2d_accum_y);
+            dl_dmean2d_accum_x = __hfma2(TINYGS_SCALE_HALF2, dL_dmean2d_x, dl_dmean2d_accum_x);
+            dl_dmean2d_accum_y = __hfma2(TINYGS_SCALE_HALF2, dL_dmean2d_y, dl_dmean2d_accum_y);
             const __half2 abs_dldx = __habs2(dL_dmean2d_x);
-            abs_dl_dmean2d_accum_x = __hfma2(h_grad_scaler2, abs_dldx, abs_dl_dmean2d_accum_x);
+            abs_dl_dmean2d_accum_x = __hfma2(TINYGS_SCALE_HALF2, abs_dldx, abs_dl_dmean2d_accum_x);
             const __half2 abs_dldy = __habs2(dL_dmean2d_y);
-            abs_dl_dmean2d_accum_y = __hfma2(h_grad_scaler2, abs_dldy, abs_dl_dmean2d_accum_y);
+            abs_dl_dmean2d_accum_y = __hfma2(TINYGS_SCALE_HALF2, abs_dldy, abs_dl_dmean2d_accum_y);
 
             // transmittance *= one_minus_alpha;
             REGlow.transmittance = __hmul2(REGlow.transmittance, one_minus_alpha);
@@ -1221,17 +1211,17 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         float dL_draw_opacity_partial_accum_f = 0.0f;
         float3 dL_dcolor_accum_f = {0.0f, 0.0f, 0.0f};
 
-        dL_dmean2d_accum_f.x = -sum_float(dl_dmean2d_accum_x) / grad_scaler;
-        dL_dmean2d_accum_f.y = -sum_float(dl_dmean2d_accum_y) / grad_scaler;
-        absdL_dmean2d_accum_f.x = sum_float(abs_dl_dmean2d_accum_x) / grad_scaler;
-        absdL_dmean2d_accum_f.y = sum_float(abs_dl_dmean2d_accum_y) / grad_scaler;
-        dL_dconic_accum_f.x = - 128.0f * sum_float(dl_dconic_accum_x) / grad_scaler;
-        dL_dconic_accum_f.y = - 128.0f * sum_float(dl_dconic_accum_y) / grad_scaler;
-        dL_dconic_accum_f.z = - 128.0f * sum_float(dl_dconic_accum_z) / grad_scaler;
-        dL_draw_opacity_partial_accum_f = sum_float(dl_draw_opacity_partial) /grad_scaler;
-        dL_dcolor_accum_f.x = sum_float(dl_dcolor_accum_r) /grad_scaler;
-        dL_dcolor_accum_f.y = sum_float(dl_dcolor_accum_g) /grad_scaler;
-        dL_dcolor_accum_f.z = sum_float(dl_dcolor_accum_b) /grad_scaler;
+        dL_dmean2d_accum_f.x = -sum_float(dl_dmean2d_accum_x) / TINYGS_SCALE_FULL;
+        dL_dmean2d_accum_f.y = -sum_float(dl_dmean2d_accum_y) / TINYGS_SCALE_FULL;
+        absdL_dmean2d_accum_f.x = sum_float(abs_dl_dmean2d_accum_x) / TINYGS_SCALE_FULL;
+        absdL_dmean2d_accum_f.y = sum_float(abs_dl_dmean2d_accum_y) / TINYGS_SCALE_FULL;
+        dL_dconic_accum_f.x = - 128.0f * sum_float(dl_dconic_accum_x) / TINYGS_SCALE_FULL;
+        dL_dconic_accum_f.y = - 128.0f * sum_float(dl_dconic_accum_y) / TINYGS_SCALE_FULL;
+        dL_dconic_accum_f.z = - 128.0f * sum_float(dl_dconic_accum_z) / TINYGS_SCALE_FULL;
+        dL_draw_opacity_partial_accum_f = sum_float(dl_draw_opacity_partial) /TINYGS_SCALE_FULL;
+        dL_dcolor_accum_f.x = sum_float(dl_dcolor_accum_r) /TINYGS_SCALE_FULL;
+        dL_dcolor_accum_f.y = sum_float(dl_dcolor_accum_g) /TINYGS_SCALE_FULL;
+        dL_dcolor_accum_f.z = sum_float(dl_dcolor_accum_b) /TINYGS_SCALE_FULL;
 
 
 #ifndef NDEBUG
