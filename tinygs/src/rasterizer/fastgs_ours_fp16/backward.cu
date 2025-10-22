@@ -228,14 +228,14 @@ void tinygs::fast_gs_fp16::backward(
     float3* grad_sh_coefficients_0,
     float3* grad_sh_coefficients_rest,
     float2* grad_mean2d_helper,
-    float* grad_conic_helper,
+    float* /* grad_conic_helper */,
     float3* grad_color,
     float4* grad_w2c,
     float4* grad_w2c_per_gs,
     tinygs::DensificationInfo* densification_info,
     float2* absgrad_mean2d_helper,
     const int n_primitives,
-    const int n_visible_primitives,
+    const int /* n_visible_primitives */,
     const int n_instances,
     const int n_buckets,
     const int primitive_primitive_indices_selector,
@@ -253,7 +253,7 @@ void tinygs::fast_gs_fp16::backward(
     using namespace gs_nvtx;
     GS_FUNC_RANGE();
 
-    const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
+    const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_width), 1);
     const int n_tiles = grid.x * grid.y;
 
     PerPrimitiveBuffers per_primitive_buffers = PerPrimitiveBuffers::from_blob(per_primitive_buffers_blob, n_primitives);
@@ -262,11 +262,13 @@ void tinygs::fast_gs_fp16::backward(
     PerBucketBuffers per_bucket_buffers = PerBucketBuffers::from_blob(per_bucket_buffers_blob, n_buckets);
     per_primitive_buffers.primitive_indices.selector = primitive_primitive_indices_selector;
     per_instance_buffers.primitive_indices.selector = instance_primitive_indices_selector;
+    CUDA_CHECK_THROW(cudaMemsetAsync(per_primitive_buffers.primitive_info_gradients, 0, sizeof(PrimitiveInfoGradient) * n_primitives, stream));
 
     {
         GS_RANGE_SCOPE(m_blend_backward, C_RED, catK(), n_buckets);
         const int grids = div_round_up(n_buckets, config::blend_bwd_n_warps);
         const int blocks = 32 * config::blend_bwd_n_warps;
+        // kernels::backward::blend_backward_cu<<<grids, blocks, 0, stream>>>(
         kernels::backward::blend_backward_cu2<<<grids, blocks, 0, stream>>>(
             per_tile_buffers.instance_ranges,
             per_tile_buffers.bucket_offsets,
@@ -279,11 +281,10 @@ void tinygs::fast_gs_fp16::backward(
             per_tile_buffers.n_contributions,
             per_bucket_buffers.tile_index,
             per_bucket_buffers.color_transmittance,
-            grad_mean2d_helper,
+            // grad_mean2d_helper,
             absgrad_mean2d_helper,
-            grad_conic_helper,
             grad_opacities_raw,
-            grad_color, // used to store intermediate gradients
+            per_primitive_buffers.primitive_info_gradients,
             n_buckets,
             n_primitives,
             width,
@@ -304,13 +305,13 @@ void tinygs::fast_gs_fp16::backward(
             w2c,
             cam_position,
             per_primitive_buffers.n_touched_tiles,
-            grad_mean2d_helper,
-            grad_conic_helper,
+            // grad_mean2d_helper,
+            per_primitive_buffers.primitive_info_gradients,
             absgrad_mean2d_helper,
             grad_means,
             grad_scales_raw,
             grad_rotations_raw,
-            grad_color,
+            // grad_color,
             grad_sh_coefficients_0,
             grad_sh_coefficients_rest,
             grad_w2c_per_gs,

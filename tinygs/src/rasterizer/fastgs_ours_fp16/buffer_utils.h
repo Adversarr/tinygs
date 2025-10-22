@@ -47,6 +47,7 @@ struct PerPrimitiveBuffers {
   float2* mean2d;
   // Half precision informations
   PrimitiveInfo* primitive_infos;
+  PrimitiveInfoGradient* primitive_info_gradients;
   float3* color;
   uint* n_visible_primitives;
   uint* n_instances;
@@ -68,6 +69,7 @@ struct PerPrimitiveBuffers {
     obtain(blob, buffers.screen_bounds, n_primitives, 128);
     obtain(blob, buffers.mean2d, n_primitives, 128);
     obtain(blob, buffers.primitive_infos, n_primitives, 128);
+    obtain(blob, buffers.primitive_info_gradients, n_primitives, 128);
     obtain(blob, buffers.color, n_primitives, 128);
     cub::DeviceScan::ExclusiveSum(nullptr, buffers.cub_workspace_size, buffers.offset, buffers.offset, n_primitives);
     size_t sorting_workspace_size;

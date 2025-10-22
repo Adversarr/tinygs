@@ -33,8 +33,7 @@ namespace tinygs::fast_gs_fp16::config {
   DEF int tile_width = 16;
   DEF int tile_width_minus_1 = tile_width - 1;
   DEF int tile_width_log2 = 4; // log2(16) = 4
-  DEF int tile_height = 16;
-  DEF int block_size_blend = tile_width * tile_height;   // 256
+  DEF int block_size_blend = tile_width * tile_width;   // 256
   DEF int block_size_blend_mask = block_size_blend - 1;  // 255
   DEF int n_sequential_threshold = 8;
 
@@ -69,17 +68,24 @@ struct alignas(4) PrimitiveInfo {
 #define TINYGS_UNSCALE_HALF __float2half_rn(TINYGS_UNSCALE_FULL)
 #define TINYGS_UNSCALE_HALF2 make_half2(TINYGS_UNSCALE_HALF, TINYGS_UNSCALE_HALF)
 
-struct alignas(4) packed_half2x2 {
+struct alignas(8) packed_half2x2 {
   __half2 xy;
   __half2 zw;
 };
 
+struct alignas(16) PrimitiveInfoGradient {
+  __half2 mean_xy;
+  __half2 conic_ab;
+  __half2 conic_c_color_b;
+  __half2 color_rg;
+};
 
 __device__ __forceinline__ void fast_zero(packed_half2x2& p) {
   reinterpret_cast<uint64_t&>(p) = 0ull;
 }
 
-__device__ __forceinline__ void fast_copy(packed_half2x2& dst, const packed_half2x2& src) {
+__device__ __forceinline__
+void fast_copy(packed_half2x2& dst, const packed_half2x2& src) {
   reinterpret_cast<uint64_t&>(dst) = reinterpret_cast<const uint64_t&>(src);
 }
 
@@ -105,6 +111,29 @@ __device__ __forceinline__ void uchar32float3(float3& f, const uchar3& uc) {
   f.x = static_cast<float>(uc.x) * inv_255;
   f.y = static_cast<float>(uc.y) * inv_255;
   f.z = static_cast<float>(uc.z) * inv_255;
+}
+
+__device__ __forceinline__ uint32_t half2asui32(__half2 h) {
+  return reinterpret_cast<const uint32_t&>(h);
+}
+
+__device__ __forceinline__ __half2 ui32ashalf2(uint32_t u) {
+  return reinterpret_cast<const __half2&>(u);
+}
+
+// Aligned store 2 packed_half2x2 (4 half2)
+__device__ __forceinline__ 
+void store4a(packed_half2x2* dst, __half2 x, __half2 y, __half2 z, __half2 w) {
+  *(reinterpret_cast<uint4*>(dst)) = make_uint4(half2asui32(x), half2asui32(y), half2asui32(z), half2asui32(w));
+}
+
+__device__ __forceinline__
+void load4a(const packed_half2x2* src, __half2& x, __half2& y, __half2& z, __half2& w) {
+  const uint4 u = *(reinterpret_cast<const uint4*>(src));
+  x = ui32ashalf2(u.x);
+  y = ui32ashalf2(u.y);
+  z = ui32ashalf2(u.z);
+  w = ui32ashalf2(u.w);
 }
 
 }

@@ -54,8 +54,8 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
     using namespace gs_nvtx;
     GS_FUNC_RANGE(); // 顶层函数范围（domain=fast_gs）
 
-    const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
-    const dim3 block(config::tile_width, config::tile_height, 1);
+    const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_width), 1);
+    const dim3 block(config::tile_width, config::tile_width, 1);
     const int n_tiles = grid.x * grid.y;
     const int grid_width = grid.x;
 
@@ -264,8 +264,10 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
     PerBucketBuffers per_bucket_buffers = PerBucketBuffers::from_blob(per_bucket_buffers_blob, n_buckets);
 
     {
+        const dim3 block2(config::tile_width / 2, config::tile_width, 1);
         GS_RANGE_SCOPE(m_blend, C_RED, catK(), n_buckets);
-        kernels::forward::blend_cu<<<grid, block, 0, major_stream>>>(
+        // kernels::forward::blend_cu<<<grid, block, 0, major_stream>>>(
+        kernels::forward::blend_cu2<<<grid, block2, 0, major_stream>>>(
             per_tile_buffers.instance_ranges,
             per_tile_buffers.bucket_offsets,
             per_instance_buffers.primitive_indices.Current(),
