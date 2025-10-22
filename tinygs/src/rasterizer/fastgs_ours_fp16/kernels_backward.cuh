@@ -909,7 +909,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     // --- Constants ---
     const __half2 hinv_16 = __float22half2_rn(make_float2(0.0625f, 0.0625f));
     const __half2 h_16_2 = __float22half2_rn(make_float2(16.0f, 16.0f));
-    const __half2 h0_5_2 = make_half2(__float2half_rn(0.5f), __float2half_rn(0.5f));
+    const __half h0_5 = __float2half_rn(0.5f);
+    const __half2 h0_5_2 = make_half2(h0_5, h0_5);
     const __half2 h0_2 = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
     const __half2 h_1_2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
     const __half2 h_two_pixel_offset_x = make_half2(CUDART_ZERO_FP16, __float2half_rn(1.0f/16.0f));
@@ -917,6 +918,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
                                                       __float2half_rn(config::max_fragment_alpha));
     constexpr uint32_t one_u162 = 0x00010001u;
     const __half2 delta1_offset_x{CUDART_ZERO_FP16, __float2half_rn(1.0f / 16.0f)}; // [0, 1/16]
+    const float grad_scaler = 512.0f;
+    const __half2 h_grad_scaler2 = __float22half2_rn(make_float2(grad_scaler, grad_scaler));
 
     // load gaussian data
     uint primitive_idx = 0;
@@ -961,9 +964,11 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     conic_y = __hmul2(conic_y, h_16_2);
     conic_z = __hmul2(conic_z, h_16_2);
 
-    // color_r = __hmul2(color_r, TINYGS_UNSCALE_HALF2);
-    // color_g = __hmul2(color_g, TINYGS_UNSCALE_HALF2);
-    // color_b = __hmul2(color_b, TINYGS_UNSCALE_HALF2);
+    color_r = __hmul2(color_r, TINYGS_UNSCALE_HALF2);
+    color_g = __hmul2(color_g, TINYGS_UNSCALE_HALF2);
+    color_b = __hmul2(color_b, TINYGS_UNSCALE_HALF2);
+
+
 
     //? Gradient accumulation, kept in float, we are operating one GS's gradients
     //? we do not need half since most half precision operations are about pixels
@@ -1033,14 +1038,10 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
                 load2a(local_upper.grad_color_g, grad_image + physical_pixel_idx + channel_stride);
                 load2a(local_upper.grad_color_b, grad_image + physical_pixel_idx + channel_stride * 2);
                 load2a(local_upper.last_contributor, tile_n_contributions + physical_pixel_idx);
-                local_lower.color_after_r = __hneg2(__hfma2(__hneg2(TINYGS_SCALE_HALF2), image_color_r, local_lower.color_after_r));
-                local_lower.color_after_g = __hneg2(__hfma2(__hneg2(TINYGS_SCALE_HALF2), image_color_g, local_lower.color_after_g));
-                local_lower.color_after_b = __hneg2(__hfma2(__hneg2(TINYGS_SCALE_HALF2), image_color_b, local_lower.color_after_b));
-
-                // local_lower.color_after_r = __hfma2(local_lower.color_after_r, __hneg2(TINYGS_UNSCALE_HALF2), image_color_r);
-                // local_lower.color_after_g = __hfma2(local_lower.color_after_g, __hneg2(TINYGS_UNSCALE_HALF2), image_color_g);
-                // local_lower.color_after_b = __hfma2(local_lower.color_after_b, __hneg2(TINYGS_UNSCALE_HALF2), image_color_b);
-                // local_lower.transmittance = __hmul2(local_lower.transmittance, TINYGS_UNSCALE_HALF2);
+                local_lower.color_after_r = __hfma2(local_lower.color_after_r, __hneg2(TINYGS_UNSCALE_HALF2), image_color_r);
+                local_lower.color_after_g = __hfma2(local_lower.color_after_g, __hneg2(TINYGS_UNSCALE_HALF2), image_color_g);
+                local_lower.color_after_b = __hfma2(local_lower.color_after_b, __hneg2(TINYGS_UNSCALE_HALF2), image_color_b);
+                local_lower.transmittance = __hmul2(local_lower.transmittance, TINYGS_UNSCALE_HALF2);
             }
             // Store to shared
             cached_per_pixel_upper[lane_idx] = local_upper;
@@ -1064,15 +1065,21 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const uint2 pixel_coords = {start_pixel_coords.x + dx, start_pixel_coords.y + dy};
             const bool valid_pixel = pixel_coords.x < width && pixel_coords.y < height;
             const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
-            uint enable_mask = (valid_general ? 0xFFFFFFFFu : 0u);
 
             // This pixel information
 
-            const __half2 off_x = make_half2(__uint2half_rn(dx), __uint2half_rn(dx + 1u));
-            const __half2 delta_x = __hfma2(hinv_16, off_x, mean2d_x);
-
+            const __half2 off_x = make_half2(__uint2half_rn(dx), __uint2half_rn(dx + 1));
             const __half2 off_y = make_half2(__uint2half_rn(dy), __uint2half_rn(dy));
-            const __half2 delta_y = __hfma2(hinv_16, off_y, mean2d_y);
+            // const float2 off = make_float2(dx, dy) + 0.5f;
+            // const float2 off_div_16 = off / 16.0f;
+            // const float2 delta0_f = mean2d - off_div_16;
+            // const float2 delta1_f = mean2d - (off + make_float2(1.0f, 0.0f)) / 16.0f;
+            // const __half2 delta_x = make_half2(__float2half_rn(delta0_f.x), __float2half_rn(delta1_f.x));
+            // const __half2 delta_y = make_half2(__float2half_rn(delta0_f.y), __float2half_rn(delta1_f.y));
+
+            const __half2 delta_x = __hfma2(hinv_16, __hneg2(off_x), mean2d_x);
+            const __half2 delta_y = __hfma2(hinv_16, __hneg2(off_y), mean2d_y);
+
             const __half2 conic_x_dx = __hmul2(conic_x, delta_x); // conic.x * delta.x
             const __half2 conic_y_dx = __hmul2(conic_y, delta_x); // conic.y * delta.x
             REGup.grad_color_r = warp.shfl_up(REGup.grad_color_r, 1);
@@ -1086,25 +1093,32 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // const __half2 quad = __hadd2(conic_x_dxx, conic_z_dyy);
             const __half2 quad = __hfma2(delta_x, conic_x_dx, conic_z_dyy);
             REGup.last_contributor_ui32 = warp.shfl_up(REGup.last_contributor_ui32, 1);
+            if (lane_idx == 0)
+                fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
 
             const __half2 sigma_over_2_h = __hmul2(__hfma2_relu(h0_5_2, quad, conic_y_dxy), h_16_2);
-            REGlow.color_after_r = warp.shfl_up(REGlow.color_after_r, 1);
             const __half2 gaussian = h2exp(__hneg2(sigma_over_2_h));
+
             const __half2 dxdx = __hmul2(delta_x, delta_x);
-            REGlow.color_after_g = warp.shfl_up(REGlow.color_after_g, 1);
             const __half2 dxdy = __hmul2(delta_x, delta_y);
-
-            REGlow.color_after_b = warp.shfl_up(REGlow.color_after_b, 1);
-
             const __half2 dydy = __hmul2(delta_y, delta_y);
-            REGlow.transmittance = warp.shfl_up(REGlow.transmittance, 1);
 
-            if (lane_idx == 0) 
-              fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
-            if (lane_idx == 0)
-              fast_copy_16bytes(REGlow, cached_per_pixel_lower[j]);
+            // { // Prepare the upper part of the register
+            //   uint4 &regup = reinterpret_cast<uint4 &>(REGup);
+            //   regup = warp.shfl_up(regup, 1);
+            //   if (lane_idx == 0)
+            //     fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
+            // }
+
+            { // Prepare the lower part of the register
+              uint4 &reglow = reinterpret_cast<uint4 &>(REGlow);
+              reglow = warp.shfl_up(reglow, 1);
+              if (lane_idx == 0)
+                fast_copy_16bytes(REGlow, cached_per_pixel_lower[j]);
+            }
 
             // const bool skip = !valid_general || tile_primitive_idx >= REG.parts.grad_color_pixel_b_last_contributor.y;
+            uint enable_mask = (valid_general ? 0xFFFFFFFFu : 0u);
             enable_mask &= __vcmpltu2(tile_primitive_idx_ui32, REGup.last_contributor_ui32);
 
             __half2 alpha_prepare = __hmul2(opacity, gaussian);
@@ -1117,8 +1131,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             );
             const __half2 alpha = __hmin2(alpha_prepare, h_max_fragment_alpha_2);
 
-            // //! small alpha should be skipped? If we do not skip, seems will not affect the result.
-            // enable_mask &= __hge2_mask(alpha, make_half2(CUDART_MIN_DENORM_FP16, CUDART_MIN_DENORM_FP16));
+            //! small alpha should be skipped
+            enable_mask &= __hge2_mask(alpha, make_half2(CUDART_MIN_DENORM_FP16, CUDART_MIN_DENORM_FP16));
 
             // we have set the maximum transmittance to be about 0.99, and alpha is always larger than half precision.
             const __half2 transmittance = REGlow.transmittance;
@@ -1130,12 +1144,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 dl_dcolor_r = __hmul2(blending_weight, REGup.grad_color_r);
             const __half2 dl_dcolor_g = __hmul2(blending_weight, REGup.grad_color_g);
             const __half2 dl_dcolor_b = __hmul2(blending_weight, REGup.grad_color_b);
-            // dl_dcolor_accum_r = __hfma2(TINYGS_SCALE_HALF2, dl_dcolor_r, dl_dcolor_accum_r);
-            // dl_dcolor_accum_g = __hfma2(TINYGS_SCALE_HALF2, dl_dcolor_g, dl_dcolor_accum_g);
-            // dl_dcolor_accum_b = __hfma2(TINYGS_SCALE_HALF2, dl_dcolor_b, dl_dcolor_accum_b);
-            dl_dcolor_accum_r = __hadd2(dl_dcolor_accum_r, dl_dcolor_r); // already scaled
-            dl_dcolor_accum_g = __hadd2(dl_dcolor_accum_g, dl_dcolor_g); // already scaled
-            dl_dcolor_accum_b = __hadd2(dl_dcolor_accum_b, dl_dcolor_b); // already scaled
+            dl_dcolor_accum_r = __hfma2(h_grad_scaler2, dl_dcolor_r, dl_dcolor_accum_r);
+            dl_dcolor_accum_g = __hfma2(h_grad_scaler2, dl_dcolor_g, dl_dcolor_accum_g);
+            dl_dcolor_accum_b = __hfma2(h_grad_scaler2, dl_dcolor_b, dl_dcolor_accum_b);
 
             // --- update reg ---
             // color_pixel_after -= blending_weight * color;
@@ -1146,7 +1157,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 color_pixel_after_dot_grad_color_pixel = doth3(
                 REGlow.color_after_r, REGlow.color_after_g, REGlow.color_after_b,
                 REGup.grad_color_r, REGup.grad_color_g, REGup.grad_color_b
-            ); // already scaled by TINYGS_SCALE_HALF2 since the color is scaled.
+            );
 
             //! Here is the problem of half, the gradient of conic.x * delta.x is too small if we are using half.
             const __half2 prepare_dl_dmean2d_x = __hadd2(conic_x_dx, conic_y_dy);
@@ -1155,36 +1166,32 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // alpha gradient
             // const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel / one_minus_alpha;
             // const float dL_draw_opacity_partial = alpha * dL_dalpha_from_color;
-            const __half2 dL_dalpha_from_color = __hfma2(transmittance, __hmul2(color_dot_grad_color_pixel, TINYGS_UNSCALE_HALF2),
+            const __half2 dL_dalpha_from_color = __hfma2(transmittance, color_dot_grad_color_pixel,
                                                          __hneg2(__h2div(color_pixel_after_dot_grad_color_pixel, one_minus_alpha)));
             const __half2 dL_draw_opacity_partial = __hmul2(alpha, dL_dalpha_from_color);
 
             // dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
             // dL_draw_opacity_partial_accum += sum_float(dL_draw_opacity_partial);
-            // dl_draw_opacity_partial = __hfma2(TINYGS_SCALE_HALF2, dL_draw_opacity_partial, dl_draw_opacity_partial);
-            dl_draw_opacity_partial = __hadd2(dL_draw_opacity_partial, dl_draw_opacity_partial);
+            dl_draw_opacity_partial = __hfma2(TINYGS_SCALE_HALF2, dL_draw_opacity_partial, dl_draw_opacity_partial);
 
             // conic and mean2d gradient
-            const __half2 dL_draw_opacity_partial_neg128 =
-                __hmul2(dL_draw_opacity_partial, __float22half2_rn(make_float2(-128.f, -128.f)));
+            // const __half2 dL_draw_opacity_partial_neg128 =
+            //     __hmul2(dL_draw_opacity_partial, __float22half2_rn(make_float2(-128.f, -128.f)));
 
-            __half2 dL_dconic_x = __hmul2(dL_draw_opacity_partial_neg128, dxdx);
+            __half2 dL_dconic_x = __hmul2(dL_draw_opacity_partial, dxdx);
             reinterpret_cast<uint32_t&>(dL_dconic_x) &= enable_mask;
-            __half2 dL_dconic_y = __hmul2(dL_draw_opacity_partial_neg128, dxdy);
+            __half2 dL_dconic_y = __hmul2(dL_draw_opacity_partial, dxdy);
             reinterpret_cast<uint32_t&>(dL_dconic_y) &= enable_mask;
-            __half2 dL_dconic_z = __hmul2(dL_draw_opacity_partial_neg128, dydy);
+            __half2 dL_dconic_z = __hmul2(dL_draw_opacity_partial, dydy);
             reinterpret_cast<uint32_t&>(dL_dconic_z) &= enable_mask;
 
             // // dL_dconic_accum += dL_dconic;
             // dL_dconic_accum.x += sum_float(dL_dconic_x);
             // dL_dconic_accum.y += sum_float(dL_dconic_y);
             // dL_dconic_accum.z += sum_float(dL_dconic_z);
-            // dl_dconic_accum_x = __hfma2(TINYGS_SCALE_HALF2, dL_dconic_x, dl_dconic_accum_x);
-            // dl_dconic_accum_y = __hfma2(TINYGS_SCALE_HALF2, dL_dconic_y, dl_dconic_accum_y);
-            // dl_dconic_accum_z = __hfma2(TINYGS_SCALE_HALF2, dL_dconic_z, dl_dconic_accum_z);
-            dl_dconic_accum_x += dL_dconic_x;
-            dl_dconic_accum_y += dL_dconic_y;
-            dl_dconic_accum_z += dL_dconic_z;
+            dl_dconic_accum_x = __hfma2(h_grad_scaler2, dL_dconic_x, dl_dconic_accum_x);
+            dl_dconic_accum_y = __hfma2(h_grad_scaler2, dL_dconic_y, dl_dconic_accum_y);
+            dl_dconic_accum_z = __hfma2(h_grad_scaler2, dL_dconic_z, dl_dconic_accum_z);
 
 
             // const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
@@ -1193,17 +1200,12 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             __half2 dL_dmean2d_y = __hmul2(dL_draw_opacity_partial, prepare_dl_dmean2d_y);
             reinterpret_cast<uint32_t&>(dL_dmean2d_y) &= enable_mask;
 
-            // dl_dmean2d_accum_x = __hfma2(TINYGS_SCALE_HALF2, dL_dmean2d_x, dl_dmean2d_accum_x);
-            // dl_dmean2d_accum_y = __hfma2(TINYGS_SCALE_HALF2, dL_dmean2d_y, dl_dmean2d_accum_y);
-            dl_dmean2d_accum_x += dL_dmean2d_x;
-            dl_dmean2d_accum_y += dL_dmean2d_y;
-
+            dl_dmean2d_accum_x = __hfma2(h_grad_scaler2, dL_dmean2d_x, dl_dmean2d_accum_x);
+            dl_dmean2d_accum_y = __hfma2(h_grad_scaler2, dL_dmean2d_y, dl_dmean2d_accum_y);
             const __half2 abs_dldx = __habs2(dL_dmean2d_x);
+            abs_dl_dmean2d_accum_x = __hfma2(h_grad_scaler2, abs_dldx, abs_dl_dmean2d_accum_x);
             const __half2 abs_dldy = __habs2(dL_dmean2d_y);
-            // abs_dl_dmean2d_accum_x = __hfma2(TINYGS_SCALE_HALF2, abs_dldx, abs_dl_dmean2d_accum_x);
-            // abs_dl_dmean2d_accum_y = __hfma2(TINYGS_SCALE_HALF2, abs_dldy, abs_dl_dmean2d_accum_y);
-            abs_dl_dmean2d_accum_x += abs_dldx;
-            abs_dl_dmean2d_accum_y += abs_dldy;
+            abs_dl_dmean2d_accum_y = __hfma2(h_grad_scaler2, abs_dldy, abs_dl_dmean2d_accum_y);
 
             // transmittance *= one_minus_alpha;
             REGlow.transmittance = __hmul2(REGlow.transmittance, one_minus_alpha);
@@ -1219,17 +1221,17 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         float dL_draw_opacity_partial_accum_f = 0.0f;
         float3 dL_dcolor_accum_f = {0.0f, 0.0f, 0.0f};
 
-        dL_dmean2d_accum_f.x = -sum_float(dl_dmean2d_accum_x) * TINYGS_UNSCALE_FULL;
-        dL_dmean2d_accum_f.y = -sum_float(dl_dmean2d_accum_y) * TINYGS_UNSCALE_FULL;
-        absdL_dmean2d_accum_f.x = sum_float(abs_dl_dmean2d_accum_x) * TINYGS_UNSCALE_FULL;
-        absdL_dmean2d_accum_f.y = sum_float(abs_dl_dmean2d_accum_y) * TINYGS_UNSCALE_FULL;
-        dL_dconic_accum_f.x = sum_float(dl_dconic_accum_x) * TINYGS_UNSCALE_FULL;
-        dL_dconic_accum_f.y = sum_float(dl_dconic_accum_y) * TINYGS_UNSCALE_FULL;
-        dL_dconic_accum_f.z = sum_float(dl_dconic_accum_z) * TINYGS_UNSCALE_FULL;
-        dL_draw_opacity_partial_accum_f = sum_float(dl_draw_opacity_partial) * TINYGS_UNSCALE_FULL;
-        dL_dcolor_accum_f.x = sum_float(dl_dcolor_accum_r) * TINYGS_UNSCALE_FULL;
-        dL_dcolor_accum_f.y = sum_float(dl_dcolor_accum_g) * TINYGS_UNSCALE_FULL;
-        dL_dcolor_accum_f.z = sum_float(dl_dcolor_accum_b) * TINYGS_UNSCALE_FULL;
+        dL_dmean2d_accum_f.x = -sum_float(dl_dmean2d_accum_x) / grad_scaler;
+        dL_dmean2d_accum_f.y = -sum_float(dl_dmean2d_accum_y) / grad_scaler;
+        absdL_dmean2d_accum_f.x = sum_float(abs_dl_dmean2d_accum_x) / grad_scaler;
+        absdL_dmean2d_accum_f.y = sum_float(abs_dl_dmean2d_accum_y) / grad_scaler;
+        dL_dconic_accum_f.x = - 128.0f * sum_float(dl_dconic_accum_x) / grad_scaler;
+        dL_dconic_accum_f.y = - 128.0f * sum_float(dl_dconic_accum_y) / grad_scaler;
+        dL_dconic_accum_f.z = - 128.0f * sum_float(dl_dconic_accum_z) / grad_scaler;
+        dL_draw_opacity_partial_accum_f = sum_float(dl_draw_opacity_partial) /grad_scaler;
+        dL_dcolor_accum_f.x = sum_float(dl_dcolor_accum_r) /grad_scaler;
+        dL_dcolor_accum_f.y = sum_float(dl_dcolor_accum_g) /grad_scaler;
+        dL_dcolor_accum_f.z = sum_float(dl_dcolor_accum_b) /grad_scaler;
 
 
 #ifndef NDEBUG
