@@ -1,7 +1,7 @@
 {
   "dataloader": {
     "type": "async",
-    "data_type": "float16"
+    "data_type": "float32"
   },
   "dataset": {
     "folder_path": "/data/yzr/Final/1747834320424/inputs/images/",
@@ -96,8 +96,8 @@
   },
   "trainer": {
     "accumulate_grad_steps": 1,
-    "train_data_type": "float16",
-    "eval_data_type": "float16",
+    "train_data_type": "float32",
+    "eval_data_type": "float32",
     "checkpoint_interval": 1000,
     "early_stopping_patience": 1000,
     "early_stopping_threshold": 1.0e-6,
