@@ -911,6 +911,10 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     const uint tile_idx = bucket_tile_index[bucket_idx];
     const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
     const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_width};
+    const ushort2 dist_to_boundaries = make_ushort2(
+       (ushort) min((uint) (width - start_pixel_coords.x), (uint) config::tile_width),
+       (ushort) min((uint) (height - start_pixel_coords.y), (uint) config::tile_width)
+    );
     const uint2 tile_instance_range = tile_instance_ranges[tile_idx];
     const int tile_n_primitives = tile_instance_range.y - tile_instance_range.x;
     const uint tile_first_bucket_offset = tile_idx == 0 ? 0 : tile_bucket_offsets[tile_idx - 1];
@@ -1018,7 +1022,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         primitive_idx = instance_primitive_indices[instance_idx];
         auto mean2d_float = primitive_mean2d[primitive_idx] / 16.0f - make_float2(tile_coords);
         auto mean2d = __float22half2_rn(mean2d_float - 1.0 / 32.0f);
-        mean2d_x = make_half2(mean2d.x, mean2d.x);
+        mean2d_x = make_half2(mean2d.x, __hsub(mean2d.x, __float2half_rn(1.0f / 16.0f)));
         mean2d_y = make_half2(mean2d.y, mean2d.y);
 
         const PrimitiveInfo info = primitive_info[primitive_idx];
@@ -1117,7 +1121,6 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
         // --- async copy from gmem for next tile ---
         if (ii + warp_size_2 < config::block_size_blend) {
-
             const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
             const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
             const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
@@ -1167,12 +1170,11 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
         // --- do actural computation ---
         // although the upper bound of j is 32, but deal with 2 pixel per thread/iteration.
-        // #pragma unroll 32
+        #pragma unroll 8
         for (uint j = 0; j < warp_size; ++j) {
-            const uint i = ii + j * 2;
             // which pixel index should this thread deal with?
             // overflow is ok, will much greater than the block size, and mark invalid
-            const uint idx = i - 2 * lane_idx_uint;
+            const uint idx = ii + j * 2 - 2 * lane_idx_uint;
             const uint local_tile = idx >> (2 * tinygs::kImageTileLog2); // 0..3
             const uint intile = idx % (tinygs::kImageTile * tinygs::kImageTile); // 0..63
             const uint dx = (intile % tinygs::kImageTile) + (local_tile % 2) * tinygs::kImageTile; // 0..16
@@ -1180,7 +1182,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const uint pixel_coords_x = start_pixel_coords.x + dx;
             const uint pixel_coords_y = start_pixel_coords.y + dy;
             // Issue 4 float conversions
-            const __half2 off_x = make_half2(__uint2half_rn(dx), __uint2half_rn(dx + 1));
+            const __half2 off_x = make_half2(__uint2half_rn(dx), __uint2half_rn(dx));
             const __half2 off_y = make_half2(__uint2half_rn(dy), __uint2half_rn(dy));
             const bool valid_pixel = pixel_coords_x < width && pixel_coords_y < height;
             const bool valid_general = valid_primitive && valid_pixel && idx < config::block_size_blend;
@@ -1193,23 +1195,19 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 conic_z_dy = __hmul2(conic_z, delta_y); // conic.z * delta.y
             const __half2 conic_y_dy = __hmul2(conic_y, delta_y); // conic.y * delta.y
             REGup.grad_color_g = warp.shfl_up(REGup.grad_color_g, 1);
-            // const __half2 conic_x_dxx = __hmul2(delta_x, conic_x_dx);
             const __half2 conic_z_dyy = __hmul2(delta_y, conic_z_dy);
             REGup.grad_color_b = warp.shfl_up(REGup.grad_color_b, 1);
             const __half2 conic_y_dxy = __hmul2(delta_x, conic_y_dy);
-            // const __half2 quad = __hadd2(conic_x_dxx, conic_z_dyy);
             const __half2 quad = __hfma2(delta_x, conic_x_dx, conic_z_dyy);
             REGup.last_contributor_ui32 = warp.shfl_up(REGup.last_contributor_ui32, 1);
-            if (lane_idx == 0) fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
+
+            if (lane_idx == 0) {
+              fast_copy_16bytes(REGlow, cached_per_pixel_lower[j]);
+              fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
+            }
 
             const __half2 sigma_over_2_h = __hmul2(__hfma2_relu(h0_5_2, quad, conic_y_dxy), h_16_2);
             const __half2 gaussian = h2exp(__hneg2(sigma_over_2_h));
-
-            REGlow.color_after_r = warp.shfl_up(REGlow.color_after_r, 1);
-            REGlow.color_after_g = warp.shfl_up(REGlow.color_after_g, 1);
-            REGlow.color_after_b = warp.shfl_up(REGlow.color_after_b, 1);
-            REGlow.transmittance = warp.shfl_up(REGlow.transmittance, 1);
-            if (lane_idx == 0) fast_copy_16bytes(REGlow, cached_per_pixel_lower[j]);
 
             // const bool skip = !valid_general || tile_primitive_idx >= REG.parts.grad_color_pixel_b_last_contributor.y;
             uint enable_mask = (valid_general ? 0xFFFFFFFFu : 0u);
@@ -1234,13 +1232,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 one_minus_alpha = __hsub2(h_1_2, alpha);
 
             // --- color gradient ---
-            // const float3 dL_dcolor = blending_weight * grad_color_pixel;
-            const __half2 dl_dcolor_r = __hmul2(blending_weight, REGup.grad_color_r);
-            const __half2 dl_dcolor_g = __hmul2(blending_weight, REGup.grad_color_g);
-            const __half2 dl_dcolor_b = __hmul2(blending_weight, REGup.grad_color_b);
-            dl_dcolor_accum_r = __hadd2(dl_dcolor_r, dl_dcolor_accum_r);
-            dl_dcolor_accum_g = __hadd2(dl_dcolor_g, dl_dcolor_accum_g);
-            dl_dcolor_accum_b = __hadd2(dl_dcolor_b, dl_dcolor_accum_b);
+            dl_dcolor_accum_r = __hfma2(blending_weight, REGup.grad_color_r, dl_dcolor_accum_r);
+            dl_dcolor_accum_g = __hfma2(blending_weight, REGup.grad_color_g, dl_dcolor_accum_g);
+            dl_dcolor_accum_b = __hfma2(blending_weight, REGup.grad_color_b, dl_dcolor_accum_b);
 
             // --- update reg ---
             // color_pixel_after -= blending_weight * color;
@@ -1303,6 +1297,10 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
             // transmittance *= one_minus_alpha;
             REGlow.transmittance = __hmul2(REGlow.transmittance, one_minus_alpha);
+            REGlow.color_after_r = warp.shfl_up(REGlow.color_after_r, 1);
+            REGlow.color_after_g = warp.shfl_up(REGlow.color_after_g, 1);
+            REGlow.color_after_b = warp.shfl_up(REGlow.color_after_b, 1);
+            REGlow.transmittance = warp.shfl_up(REGlow.transmittance, 1);
         }
     }
 
