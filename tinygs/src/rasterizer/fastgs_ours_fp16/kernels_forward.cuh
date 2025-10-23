@@ -331,9 +331,10 @@ __global__ void preprocess_cu(
     const __half raw_opacity = __float2half_rn(shm_opacities[block.thread_rank()]);
     pipeline.consumer_release();
 
-    const float opacity = tinygs::activate_opacity(__half2float(raw_opacity));
-    if (opacity < config::min_alpha_threshold)
+    const float f_opacity = tinygs::activate_opacity(__half2float(raw_opacity));
+    if (f_opacity < config::min_alpha_threshold)
         active = false;
+    const __half opacity = __float2half_rn(f_opacity);
 
     // compute 3d covariance from raw scale and rotation
     pipeline.consumer_wait();
@@ -440,7 +441,7 @@ __global__ void preprocess_cu(
         y * fy + cy);
 
     // compute bounds
-    const float power_threshold = logf(opacity * config::min_alpha_threshold_rcp);
+    const float power_threshold = logf(f_opacity * config::min_alpha_threshold_rcp);
     const float power_threshold_factor = sqrtf(2.0f * power_threshold);
     float extent_x = fmaxf(power_threshold_factor * sqrtf(cov2d.x) - 0.5f, 0.0f);
     float extent_y = fmaxf(power_threshold_factor * sqrtf(cov2d.z) - 0.5f, 0.0f);
