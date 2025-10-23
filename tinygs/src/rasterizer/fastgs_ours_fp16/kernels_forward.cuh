@@ -440,8 +440,12 @@ __global__ void preprocess_cu(
         x * fx + cx,
         y * fy + cy);
 
+    //! Handle half precision modifications
+    PrimitiveInfo info;
+    info.conic_xy = __float22half2_rn(make_float2(conic.x, conic.y));
+    info.conic_z_opacity = make_half2(__float2half(conic.z), opacity);
     // compute bounds
-    const float power_threshold = logf(f_opacity * config::min_alpha_threshold_rcp);
+    const float power_threshold = logf(__half2float(__ushort_as_half(info.conic_z_opacity.y)) * config::min_alpha_threshold_rcp);
     const float power_threshold_factor = sqrtf(2.0f * power_threshold);
     float extent_x = fmaxf(power_threshold_factor * sqrtf(cov2d.x) - 0.5f, 0.0f);
     float extent_y = fmaxf(power_threshold_factor * sqrtf(cov2d.z) - 0.5f, 0.0f);
@@ -459,7 +463,8 @@ __global__ void preprocess_cu(
     if (__ballot_sync(0xffffffffu, active) == 0)
         return;
 
-    ConicOpacity conic_opacity = make_conic_opacity(conic, __half2float(raw_opacity));
+    // ConicOpacity conic_opacity = make_conic_opacity(conic, __half2float(raw_opacity));
+    ConicOpacity conic_opacity{info.conic_xy, info.conic_z_opacity};
     // compute exact number of tiles the primitive overlaps
     const uint n_touched_tiles = compute_exact_n_touched_tiles(
         mean2d, conic_opacity, screen_bounds,
@@ -485,10 +490,11 @@ __global__ void preprocess_cu(
         static_cast<ushort>(screen_bounds.z),
         static_cast<ushort>(screen_bounds.w));
     primitive_mean2d[primitive_idx] = mean2d;
-    primitive_color[primitive_idx] = convert_sh_to_color(
+    auto color = convert_sh_to_color(
         sh_coefficients_0, sh_coefficients_rest,
         mean3d, cam_position[0],
         primitive_idx, active_sh_bases, total_bases_sh_rest);
+    primitive_color[primitive_idx] = color;
 
     const uint offset = atomicAdd(n_visible_primitives, 1);
     const uint depth_key = __float_as_uint(depth);
@@ -496,11 +502,7 @@ __global__ void preprocess_cu(
     primitive_indices[offset] = primitive_idx;
     atomicAdd(n_instances, n_touched_tiles);
 
-    //! Handle half precision modifications
-    PrimitiveInfo info;
-    info.conic_xy = __float22half2_rn(make_float2(conic.x, conic.y));
-    info.conic_z_raw_opacity = make_half2(__float2half(conic.z), raw_opacity);
-    float32uchar3(info.rgb, primitive_color[primitive_idx]);
+    float32uchar3(info.rgb, color);
     fast_copy(primitive_infos[primitive_idx], info);
 }
 
@@ -555,7 +557,7 @@ __global__ void create_instances_cu(
     {
       const PrimitiveInfo info = primitive_infos[primitive_idx];
       collected_conic_xy[block.thread_rank()] = info.conic_xy;
-      collected_conic_z_raw_opacity[block.thread_rank()] = info.conic_z_raw_opacity;
+      collected_conic_z_raw_opacity[block.thread_rank()] = info.conic_z_opacity;
     }
 
     block.sync();
@@ -568,7 +570,7 @@ __global__ void create_instances_cu(
             collected_conic_xy[block.thread_rank()],
             collected_conic_z_raw_opacity[block.thread_rank()]);
         // const float3 conic = make_float3(conic_opacity);
-        const float power_threshold = logf(activate_opacity(__half2float(conic.zw.y)) * config::min_alpha_threshold_rcp);
+        const float power_threshold = logf(__half2float(conic.zw.y) * config::min_alpha_threshold_rcp);
 
         for (uint instance_idx = 0; instance_idx < tile_count && instance_idx < config::n_sequential_threshold; instance_idx++) {
             const uint tile_y = screen_bounds.z + (instance_idx / screen_bounds_width);
@@ -606,7 +608,7 @@ __global__ void create_instances_cu(
             (collected_conic_z_raw_opacity[warp.meta_group_rank() * 32 + current_lane]));
 
         const float power_threshold_coop =
-            logf(activate_opacity(__half2float(conic_opacity_coop.zw.y)) *
+            logf(__half2float(conic_opacity_coop.zw.y) *
                  config::min_alpha_threshold_rcp);
 
         const uint remaining_tile_count = tile_count_coop - config::n_sequential_threshold;
@@ -738,7 +740,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     __shared__ __half2 collected_mean2d[config::block_size_blend];
     // bank conflict free storage
     __shared__ __half2 collected_conic_xy[config::block_size_blend];
-    __shared__ __half2 collected_conic_z_raw_opacity[config::block_size_blend];
+    __shared__ __half2 collected_conic_z_opacity[config::block_size_blend];
     struct alignas(4) ColorSimd {
         uchar3 rgb;
         char padding_donotuse;
@@ -767,7 +769,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             collected_mean2d[thread_rank] = __float22half2_rn(primitive_mean2d[primitive_idx] / 16.0f - anchor);
             const auto& info = primitive_infos[primitive_idx];
             collected_conic_xy[thread_rank] = info.conic_xy;
-            collected_conic_z_raw_opacity[thread_rank] = info.conic_z_raw_opacity;
+            collected_conic_z_opacity[thread_rank] = info.conic_z_opacity;
             collected_color[thread_rank] = ColorSimd{info.rgb, char(0)};
         }
         block.sync();
@@ -783,8 +785,8 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             // Convert parameters and computations to half precision
             const __half conic_x = collected_conic_xy[j].x;
             const __half conic_y = collected_conic_xy[j].y;
-            const __half conic_z = collected_conic_z_raw_opacity[j].x;
-            const __half opacity_h = __float2half_rn(activate_opacity(__half2float(collected_conic_z_raw_opacity[j].y)));
+            const __half conic_z = collected_conic_z_opacity[j].x;
+            const __half opacity_h = collected_conic_z_opacity[j].y;
 
             const __half2 delta_h2 = collected_mean2d[j] - intile_offset;
             const __half h16 = __float2half_rn(16.0f);
@@ -870,13 +872,6 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     }
 }
 
-__device__ inline __half2 activate_opacity_half2(const __half2 & val) noexcept {
-    // sigmoid's half precision implementation.
-    // 1 / (1 + exp(-x))
-    __half2 exp_val = h2exp(__hneg2(val));
-    __half2 one_h2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
-    return __h2div(one_h2, __hadd2(one_h2, exp_val));
-}
 
 // launch as 128, get 256 throughput, 2 pixel per thread.
 __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
@@ -1012,7 +1007,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
             collected_mean2d[thread_rank] = __float22half2_rn(primitive_mean2d[primitive_idx] / 16.0f - anchor);
             const auto& info = primitive_infos[primitive_idx];
             collected_conic_xy[thread_rank] = info.conic_xy;
-            collected_conic_z_raw_opacity[thread_rank] = info.conic_z_raw_opacity;
+            collected_conic_z_raw_opacity[thread_rank] = info.conic_z_opacity;
             collected_color[thread_rank] = ColorSimd{info.rgb, char(0)};
         }
         block.sync();
@@ -1039,7 +1034,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
             const __half2 conic_x = make_half2(collected_conic_xy[j].x, collected_conic_xy[j].x);
             const __half2 conic_y = make_half2(collected_conic_xy[j].y, collected_conic_xy[j].y);
             const __half2 conic_z = make_half2(collected_conic_z_raw_opacity[j].x, collected_conic_z_raw_opacity[j].x);
-            const __half2 opacity_h = activate_opacity_half2(make_half2(collected_conic_z_raw_opacity[j].y, collected_conic_z_raw_opacity[j].y));
+            const __half2 opacity_h = make_half2(collected_conic_z_raw_opacity[j].y, collected_conic_z_raw_opacity[j].y);
             const __half2 collected_mean2d_x = make_half2(collected_mean2d[j].x, collected_mean2d[j].x);
             const __half2 collected_mean2d_y = make_half2(collected_mean2d[j].y, collected_mean2d[j].y);
             const __half2 dx = __hsub2(collected_mean2d_x, offset_x);

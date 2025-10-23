@@ -52,7 +52,7 @@ namespace tinygs::fast_gs_fp16 {
 // 12B = 3bank, really good alignment for shared memory
 struct alignas(4) PrimitiveInfo {
   __half2_raw conic_xy;             // 4B
-  __half2_raw conic_z_raw_opacity;  // 4B
+  __half2_raw conic_z_opacity;  // 4B
   uchar3 rgb;                   // 3B, typically in [0, 255)
 };
 

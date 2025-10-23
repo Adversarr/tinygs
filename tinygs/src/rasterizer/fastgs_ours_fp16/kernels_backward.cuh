@@ -486,8 +486,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         conic = make_float3(
             __half2float(__ushort_as_half(info.conic_xy.x)),
             __half2float(__ushort_as_half(info.conic_xy.y)),
-            __half2float(__ushort_as_half(info.conic_z_raw_opacity.x)));
-        opacity = activate_opacity(__half2float(__ushort_as_half(info.conic_z_raw_opacity.y)));
+            __half2float(__ushort_as_half(info.conic_z_opacity.x)));
+        opacity = activate_opacity(__half2float(__ushort_as_half(info.conic_z_opacity.y)));
         color.xy = __hmul2(make_half2(__ushort2half_rn(info.rgb.x), __ushort2half_rn(info.rgb.y)),
                            TINYGS_UNSCALE_HALF2);
         color.zw.x = __hmul(__ushort2half_rn(info.rgb.z), TINYGS_UNSCALE_HALF);
@@ -1017,9 +1017,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         const PrimitiveInfo info = primitive_info[primitive_idx];
         conic_x = make_half2(__ushort_as_half(info.conic_xy.x), __ushort_as_half(info.conic_xy.x));
         conic_y = make_half2(__ushort_as_half(info.conic_xy.y), __ushort_as_half(info.conic_xy.y));
-        conic_z = make_half2(__ushort_as_half(info.conic_z_raw_opacity.x), __ushort_as_half(info.conic_z_raw_opacity.x));
-        const float f_opacity = activate_opacity(__half2float(__ushort_as_half(info.conic_z_raw_opacity.y)));
-        opacity = make_half2(__float2half_rn(f_opacity), __float2half_rn(f_opacity));
+        conic_z = make_half2(__ushort_as_half(info.conic_z_opacity.x), __ushort_as_half(info.conic_z_opacity.x));
+        opacity = make_half2(__ushort_as_half(info.conic_z_opacity.y), __ushort_as_half(info.conic_z_opacity.y));
         color_r = make_half2(__ushort2half_rn(info.rgb.x), __ushort2half_rn(info.rgb.x));
         color_g = make_half2(__ushort2half_rn(info.rgb.y), __ushort2half_rn(info.rgb.y));
         color_b = make_half2(__ushort2half_rn(info.rgb.z), __ushort2half_rn(info.rgb.z));
