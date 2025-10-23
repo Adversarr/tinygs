@@ -16,6 +16,7 @@
 #include <cooperative_groups.h>
 #include <cstdint>
 
+#include <cuda/pipeline>
 #include <cuda_bf16.h>
 
 namespace cg = cooperative_groups;
@@ -823,6 +824,12 @@ __device__ __forceinline__ void load4a_gmem(PackedPixels_Lower& dst, const packe
     reinterpret_cast<uint4&>(dst) = *(reinterpret_cast<const uint4*>(src));
 }
 
+// Load from aligned global memory, 4x4Bytes
+__device__ __forceinline__ void load4a_gmem(PackedPixels_Lower& dst, const uint4* src) {
+    // TODO: If nvcc cannot generate proper version, consider use asm. 
+    reinterpret_cast<uint4&>(dst) = *src;
+}
+
 
 #ifndef NDEBUG
 #define CHECK_FINITE_HALF(v)                                                   \
@@ -844,9 +851,8 @@ __device__ __forceinline__ void load4a_gmem(PackedPixels_Lower& dst, const packe
 
 #endif
 
-
 /* -------------------- half version -------------------- */
-// 2 pixel X 1 GS per thread
+// 2 pixel X 1 GS per thread, cuda driver claim this block size could maximize the occupancy already
 __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward_cu2(
     const uint2* __restrict__ tile_instance_ranges,
     const uint* __restrict__ tile_bucket_offsets,
@@ -870,24 +876,50 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     const uint width,
     const uint height,
     const uint grid_width) {
-    auto block = cg::this_thread_block();
-    auto warp = cg::tiled_partition<32>(block);
+    constexpr int warp_size = 32;
+    constexpr int warp_size_2 = warp_size * 2;
+    auto group = cg::this_thread_block();
+    auto warp = cg::tiled_partition<warp_size>(group);
     const uint lane_idx = warp.thread_rank();
-    const uint warp_idx = block.thread_rank() / 32;
-
+    const uint warp_idx = group.thread_rank() / warp_size;
     assert(warp_idx < config::blend_bwd_n_warps);
-    const uint bucket_idx = (block.group_index().x * config::blend_bwd_n_warps) + warp_idx;
 
-    if (bucket_idx >= n_buckets)
-        return;
+    // -- memcpy async ---
+    constexpr uint stages_count = 1;
+    __shared__ cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, stages_count> shared_state;
+    auto pipeline = cuda::make_pipeline(group, &shared_state);
 
+    __shared__ __half2 next_image_r[config::blend_bwd_n_warps][warp_size];
+    __shared__ __half2 next_image_g[config::blend_bwd_n_warps][warp_size];
+    __shared__ __half2 next_image_b[config::blend_bwd_n_warps][warp_size];
+    __shared__ __half2 next_grad_r[config::blend_bwd_n_warps][warp_size];
+    __shared__ __half2 next_grad_g[config::blend_bwd_n_warps][warp_size];
+    __shared__ __half2 next_grad_b[config::blend_bwd_n_warps][warp_size];
+    __shared__ ushort2 next_last_contributor[config::blend_bwd_n_warps][warp_size];
+    __shared__ uint4 next_color_transmittance[config::blend_bwd_n_warps][warp_size]; // 16B x 32 = 512 Bytes
+
+    bool is_valid_warp = true;
+    uint bucket_idx = (group.group_index().x * config::blend_bwd_n_warps) + warp_idx;
+    if (bucket_idx >= n_buckets) {
+        is_valid_warp = false;
+        // The first warp in each bucket is always valid to read.
+        bucket_idx = group.group_index().x * config::blend_bwd_n_warps;
+    }
+    bucket_color_transmittance_scaled += bucket_idx * config::block_size_blend;
+
+    // tile metadata
     const uint tile_idx = bucket_tile_index[bucket_idx];
+    const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
+    const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_width};
     const uint2 tile_instance_range = tile_instance_ranges[tile_idx];
     const int tile_n_primitives = tile_instance_range.y - tile_instance_range.x;
     const uint tile_first_bucket_offset = tile_idx == 0 ? 0 : tile_bucket_offsets[tile_idx - 1];
     const int tile_bucket_idx = bucket_idx - tile_first_bucket_offset;
-    if (tile_bucket_idx * 32 >= tile_max_n_contributions[tile_idx])
-        return;
+    if (tile_bucket_idx * 32 >= tile_max_n_contributions[tile_idx]){
+      is_valid_warp = false;
+      // since we already set bucket_idx to a valid bucket, the tile_bucket_idx is
+      // always valid to read.
+    }
 
     // corresponds to n_contributions
     ushort tile_primitive_idx;
@@ -896,15 +928,65 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         tile_primitive_idx_int32 > config::max_contributions) {
       static_assert(((uint)config::max_contributions + 1u) % 32 == 0,
                     "max_contributions + 1 must be divisible by 32 (warp size).");
-      return;
+      is_valid_warp = false;
+      // do not return, we need this warp to continue to enable async copies.
     } else {
       // in range => set the variable and continue.
       tile_primitive_idx = (ushort)tile_primitive_idx_int32;
       tile_primitive_idx_ui32 = (uint32_t)tile_primitive_idx | ((uint32_t)tile_primitive_idx << 16);
     }
+    const uint lane_idx_uint = static_cast<uint>(lane_idx); // thread_idx in the warp, 0 <= lane_idx_uint < 32
+
+    // --- first async copy from gmem ---
+    {
+        pipeline.producer_acquire();
+        const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+        const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+        const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
+
+        // 0 <= i < 256, since ii < total_pixel_padded < 256 and ii % 64 == 0
+        const uint i = lane_idx_uint * 2;
+        const uint local_tile = i >> (2 * tinygs::kImageTileLog2);                              // 0..3
+        const uint intile = i % (tinygs::kImageTile * tinygs::kImageTile);                      // 0..63
+        const uint dx = (intile % tinygs::kImageTile) + (local_tile % 2) * tinygs::kImageTile;  // 0..16
+        const uint dy = (intile / tinygs::kImageTile) + (local_tile / 2) * tinygs::kImageTile;  // 0..16
+        const uint2 pixel_coords = {start_pixel_coords.x + dx, start_pixel_coords.y + dy};
+        const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
+            /* row */ pixel_coords.y, /* col */ pixel_coords.x, width_in_tile);
+        const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
+        // launch all the copies, __half2 = 4B, wapr_size = 32 => 128Byte aligned, we cast to 16B is safe
+        cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_image_r[warp_idx] + lane_idx_uint),
+                            reinterpret_cast<const uint32_t*>(image + physical_pixel_idx),
+                            cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+        cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_image_g[warp_idx] + lane_idx_uint), 
+                            reinterpret_cast<const uint32_t*>(image + physical_pixel_idx + channel_stride),
+                            cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+        cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_image_b[warp_idx] + lane_idx_uint), 
+                            reinterpret_cast<const uint32_t*>(image + physical_pixel_idx + 2 * channel_stride),
+                            cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+
+        cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_grad_r[warp_idx] + lane_idx_uint), 
+                            reinterpret_cast<const uint32_t*>(grad_image + physical_pixel_idx),
+                            cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+        cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_grad_g[warp_idx] + lane_idx_uint), 
+                            reinterpret_cast<const uint32_t*>(grad_image + physical_pixel_idx + channel_stride),
+                            cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+        cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_grad_b[warp_idx] + lane_idx_uint), 
+                            reinterpret_cast<const uint32_t*>(grad_image + physical_pixel_idx + 2 * channel_stride),
+                            cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+
+        cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_last_contributor[warp_idx] + lane_idx_uint),
+                            reinterpret_cast<const uint32_t*>(tile_n_contributions + physical_pixel_idx),
+                            cuda::aligned_size_t<4>(sizeof(ushort2)), pipeline);
+
+        cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_color_transmittance[warp_idx] + lane_idx_uint),
+                            reinterpret_cast<const uint32_t*>(bucket_color_transmittance_scaled + i),
+                            cuda::aligned_size_t<16>(sizeof(uint4)), pipeline);
+        pipeline.producer_commit();
+    }
 
     const int instance_idx = tile_instance_range.x + tile_primitive_idx;
-    const bool valid_primitive = tile_primitive_idx < tile_n_primitives;
+    const bool valid_primitive = tile_primitive_idx < tile_n_primitives && is_valid_warp;
 
     // --- Constants ---
     const __half2 hinv_16 = __float22half2_rn(make_float2(0.0625f, 0.0625f));
@@ -921,22 +1003,16 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
     // load gaussian data
     uint primitive_idx = 0;
-    __half2 mean2d_x{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    __half2 mean2d_y{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
+    __half2 mean2d_x{CUDART_ZERO_FP16, CUDART_ZERO_FP16}; // Inf-free
+    __half2 mean2d_y{CUDART_ZERO_FP16, CUDART_ZERO_FP16}; // Inf-free
+    __half2 conic_x{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
+    __half2 conic_y{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
+    __half2 conic_z{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
+    __half2 opacity{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
+    __half2 color_r{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
+    __half2 color_g{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
+    __half2 color_b{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
 
-    __half2 conic_x{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    __half2 conic_y{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    __half2 conic_z{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    __half2 opacity{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    __half2 color_r{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    __half2 color_g{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    __half2 color_b{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
-    ushort2 tile_primitive_idx2 = {0xFFFF, 0xFFFF};
-    // tile metadata
-    const uint2 tile_coords = {tile_idx % grid_width, tile_idx / grid_width};
-    const uint2 start_pixel_coords = {tile_coords.x * config::tile_width, tile_coords.y * config::tile_width};
-
-    bucket_color_transmittance_scaled += bucket_idx * config::block_size_blend;
 
     if (valid_primitive) {
         primitive_idx = instance_primitive_indices[instance_idx];
@@ -954,18 +1030,11 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         color_r = make_half2(__ushort2half_rn(info.rgb.x), __ushort2half_rn(info.rgb.x));
         color_g = make_half2(__ushort2half_rn(info.rgb.y), __ushort2half_rn(info.rgb.y));
         color_b = make_half2(__ushort2half_rn(info.rgb.z), __ushort2half_rn(info.rgb.z));
-        tile_primitive_idx2 = {tile_primitive_idx, tile_primitive_idx};
     }
 
     conic_x = __hmul2(conic_x, h_16_2);
     conic_y = __hmul2(conic_y, h_16_2);
     conic_z = __hmul2(conic_z, h_16_2);
-
-    // color_r = __hmul2(color_r, TINYGS_UNSCALE_HALF2);
-    // color_g = __hmul2(color_g, TINYGS_UNSCALE_HALF2);
-    // color_b = __hmul2(color_b, TINYGS_UNSCALE_HALF2);
-
-
 
     //? Gradient accumulation, kept in float, we are operating one GS's gradients
     //? we do not need half since most half precision operations are about pixels
@@ -985,14 +1054,12 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     alignas(16) PackedPixels_Upper REGup;   fast_zero_aligned_8b(REGup);
     alignas(16) PackedPixels_Lower REGlow;  fast_zero_aligned_8b(REGlow);
 
-    constexpr int warp_size = 32;
-    constexpr int warp_size_2 = warp_size * 2;
     // One warp is capable of processing 64 pixels at a time in this half version.
     __shared__ PackedPixels_Upper cached_per_pixel_all_upper[config::blend_bwd_n_warps][warp_size];
     __shared__ PackedPixels_Lower cached_per_pixel_all_lower[config::blend_bwd_n_warps][warp_size];
+
     auto& cached_per_pixel_lower = cached_per_pixel_all_lower[warp_idx];
     auto& cached_per_pixel_upper = cached_per_pixel_all_upper[warp_idx];
-    const uint lane_idx_uint = static_cast<uint>(lane_idx); // thread_idx in the warp, 0 <= lane_idx_uint < 32
 
     // iterate over all pixels in the tile
     constexpr int total_pixel_padded = config::tile_width * config::tile_width + warp_size_2 - 1;
@@ -1011,43 +1078,92 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const uint2 pixel_coords = {start_pixel_coords.x + dx, start_pixel_coords.y + dy};
             const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
                 /* row */ pixel_coords.y, /* col */ pixel_coords.x, width_in_tile);
-            const bool is_valid = pixel_coords.x < width && pixel_coords.y < height &&
-                dx < config::tile_width && dy < config::tile_width;
+            const uint physical_pixel_idx_in_tile = (physical_pixel_idx % 64) / 2;
+            const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
 
             PackedPixels_Lower local_lower;
             fast_zero_aligned_8b(local_lower);
 
             PackedPixels_Upper local_upper;
             fast_zero_aligned_8b(local_upper);
+            pipeline.consumer_wait();
 
             // Assumes i valid indicates i+1 valid, this is true if the width % 2 == 0, 
             // which is always the case in our application.
             if (is_valid) {
                 // 1. Load Global Memory
-                load4a_gmem(local_lower, bucket_color_transmittance_scaled + i);
+                local_upper.grad_color_r = next_grad_r[warp_idx][lane_idx_uint];
+                local_upper.grad_color_g = next_grad_g[warp_idx][lane_idx_uint];
+                local_upper.grad_color_b = next_grad_b[warp_idx][lane_idx_uint];
+                local_upper.last_contributor = next_last_contributor[warp_idx][lane_idx_uint];
+                reinterpret_cast<uint4&>(local_lower) = next_color_transmittance[warp_idx][lane_idx_uint];
 
-                __half2 image_color_r; load2a(image_color_r, image + physical_pixel_idx);
-                __half2 image_color_g; load2a(image_color_g, image + physical_pixel_idx + channel_stride);
-                __half2 image_color_b; load2a(image_color_b, image + physical_pixel_idx + channel_stride * 2);
+                __half2 image_color_r = next_image_r[warp_idx][lane_idx_uint];
+                __half2 image_color_g = next_image_g[warp_idx][lane_idx_uint];
+                __half2 image_color_b = next_image_b[warp_idx][lane_idx_uint];
 
                 // Compose the results
-                load2a(local_upper.grad_color_r, grad_image + physical_pixel_idx);
-                load2a(local_upper.grad_color_g, grad_image + physical_pixel_idx + channel_stride);
-                load2a(local_upper.grad_color_b, grad_image + physical_pixel_idx + channel_stride * 2);
-                load2a(local_upper.last_contributor, tile_n_contributions + physical_pixel_idx);
-                local_lower.color_after_r = __hfma2(local_lower.color_after_r, __hneg2(TINYGS_UNSCALE_HALF2), image_color_r);
-                local_lower.color_after_g = __hfma2(local_lower.color_after_g, __hneg2(TINYGS_UNSCALE_HALF2), image_color_g);
-                local_lower.color_after_b = __hfma2(local_lower.color_after_b, __hneg2(TINYGS_UNSCALE_HALF2), image_color_b);
-                local_lower.color_after_r = __hmul2(TINYGS_SCALE_HALF2, local_lower.color_after_r); // scale back
-                local_lower.color_after_g = __hmul2(TINYGS_SCALE_HALF2, local_lower.color_after_g); // scale back
-                local_lower.color_after_b = __hmul2(TINYGS_SCALE_HALF2, local_lower.color_after_b); // scale back
+                local_lower.color_after_r = __hfma2(image_color_r, TINYGS_SCALE_HALF2, __hneg2(local_lower.color_after_r));
+                local_lower.color_after_g = __hfma2(image_color_g, TINYGS_SCALE_HALF2, __hneg2(local_lower.color_after_g));
+                local_lower.color_after_b = __hfma2(image_color_b, TINYGS_SCALE_HALF2, __hneg2(local_lower.color_after_b));
                 local_lower.transmittance = __hmul2(local_lower.transmittance, TINYGS_UNSCALE_HALF2);
             }
+            pipeline.consumer_release();
+
             // Store to shared
             cached_per_pixel_upper[lane_idx] = local_upper;
             cached_per_pixel_lower[lane_idx] = local_lower;
-            __syncwarp(); // Synchronize after writing to shared memory
         }
+
+        // --- async copy from gmem for next tile ---
+        if (ii + warp_size_2 < config::block_size_blend) {
+
+            const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+            const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+            const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
+            // 0 <= i < 256, since ii < total_pixel_padded < 256 and ii % 64 == 0
+            const uint i = (ii + warp_size_2) + lane_idx_uint * 2;
+            const uint local_tile = i >> (2 * tinygs::kImageTileLog2);                              // 0..3
+            const uint intile = i % (tinygs::kImageTile * tinygs::kImageTile);                      // 0..63
+            const uint dx = (intile % tinygs::kImageTile) + (local_tile % 2) * tinygs::kImageTile;  // 0..16
+            const uint dy = (intile / tinygs::kImageTile) + (local_tile / 2) * tinygs::kImageTile;  // 0..16
+            const uint2 pixel_coords = {start_pixel_coords.x + dx, start_pixel_coords.y + dy};
+            const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
+                /* row */ pixel_coords.y, /* col */ pixel_coords.x, width_in_tile);
+            const bool is_valid = pixel_coords.x < width && pixel_coords.y < height;
+            pipeline.producer_acquire();
+            // launch all the copies, __half2 = 4B, wapr_size = 32 => 128Byte aligned, we cast to 16B is safe
+            cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_image_r[warp_idx] + lane_idx_uint),
+                                reinterpret_cast<const uint32_t*>(image + physical_pixel_idx),
+                                cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+            cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_image_g[warp_idx] + lane_idx_uint), 
+                                reinterpret_cast<const uint32_t*>(image + physical_pixel_idx + channel_stride),
+                                cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+            cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_image_b[warp_idx] + lane_idx_uint), 
+                                reinterpret_cast<const uint32_t*>(image + physical_pixel_idx + 2 * channel_stride),
+                                cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+
+            cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_grad_r[warp_idx] + lane_idx_uint), 
+                                reinterpret_cast<const uint32_t*>(grad_image + physical_pixel_idx),
+                                cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+            cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_grad_g[warp_idx] + lane_idx_uint), 
+                                reinterpret_cast<const uint32_t*>(grad_image + physical_pixel_idx + channel_stride),
+                                cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+            cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_grad_b[warp_idx] + lane_idx_uint), 
+                                reinterpret_cast<const uint32_t*>(grad_image + physical_pixel_idx + 2 * channel_stride),
+                                cuda::aligned_size_t<4>(sizeof(__half2)), pipeline);
+
+            cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_last_contributor[warp_idx] + lane_idx_uint),
+                                reinterpret_cast<const uint32_t*>(tile_n_contributions + physical_pixel_idx),
+                                cuda::aligned_size_t<4>(sizeof(ushort2)), pipeline);
+
+            cuda::memcpy_async(reinterpret_cast<uint32_t*>(next_color_transmittance[warp_idx] + lane_idx_uint),
+                                reinterpret_cast<const uint32_t*>(bucket_color_transmittance_scaled + i),
+                                cuda::aligned_size_t<16>(sizeof(uint4)), pipeline);
+            pipeline.producer_commit();
+        }
+
+        __syncwarp(); // Synchronize after writing to shared memory
 
         // --- do actural computation ---
         // although the upper bound of j is 32, but deal with 2 pixel per thread/iteration.
@@ -1084,18 +1200,16 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // const __half2 quad = __hadd2(conic_x_dxx, conic_z_dyy);
             const __half2 quad = __hfma2(delta_x, conic_x_dx, conic_z_dyy);
             REGup.last_contributor_ui32 = warp.shfl_up(REGup.last_contributor_ui32, 1);
-            if (lane_idx == 0)
-                fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
+            if (lane_idx == 0) fast_copy_16bytes(REGup, cached_per_pixel_upper[j]);
 
             const __half2 sigma_over_2_h = __hmul2(__hfma2_relu(h0_5_2, quad, conic_y_dxy), h_16_2);
             const __half2 gaussian = h2exp(__hneg2(sigma_over_2_h));
 
-            { // Prepare the lower part of the register
-              uint4 &reglow = reinterpret_cast<uint4 &>(REGlow);
-              reglow = warp.shfl_up(reglow, 1);
-              if (lane_idx == 0)
-                fast_copy_16bytes(REGlow, cached_per_pixel_lower[j]);
-            }
+            REGlow.color_after_r = warp.shfl_up(REGlow.color_after_r, 1);
+            REGlow.color_after_g = warp.shfl_up(REGlow.color_after_g, 1);
+            REGlow.color_after_b = warp.shfl_up(REGlow.color_after_b, 1);
+            REGlow.transmittance = warp.shfl_up(REGlow.transmittance, 1);
+            if (lane_idx == 0) fast_copy_16bytes(REGlow, cached_per_pixel_lower[j]);
 
             // const bool skip = !valid_general || tile_primitive_idx >= REG.parts.grad_color_pixel_b_last_contributor.y;
             uint enable_mask = (valid_general ? 0xFFFFFFFFu : 0u);
@@ -1157,24 +1271,20 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // const __half2 dL_draw_opacity_partial_neg128 =
             //     __hmul2(dL_draw_opacity_partial, __float22half2_rn(make_float2(-128.f, -128.f)));
 
+            // dL_dconic_accum += dL_dconic;
             const __half2 dxdx = __hmul2(delta_x, delta_x);
             __half2 dL_dconic_x = __hmul2(dL_draw_opacity_partial, dxdx);
             reinterpret_cast<uint32_t&>(dL_dconic_x) &= enable_mask;
+            dl_dconic_accum_x = __hadd2(dL_dconic_x, dl_dconic_accum_x);
 
             const __half2 dxdy = __hmul2(delta_x, delta_y);
             __half2 dL_dconic_y = __hmul2(dL_draw_opacity_partial, dxdy);
             reinterpret_cast<uint32_t&>(dL_dconic_y) &= enable_mask;
+            dl_dconic_accum_y = __hadd2(dL_dconic_y, dl_dconic_accum_y);
 
             const __half2 dydy = __hmul2(delta_y, delta_y);
             __half2 dL_dconic_z = __hmul2(dL_draw_opacity_partial, dydy);
             reinterpret_cast<uint32_t&>(dL_dconic_z) &= enable_mask;
-
-            // // dL_dconic_accum += dL_dconic;
-            // dL_dconic_accum.x += sum_float(dL_dconic_x);
-            // dL_dconic_accum.y += sum_float(dL_dconic_y);
-            // dL_dconic_accum.z += sum_float(dL_dconic_z);
-            dl_dconic_accum_x = __hadd2(dL_dconic_x, dl_dconic_accum_x);
-            dl_dconic_accum_y = __hadd2(dL_dconic_y, dl_dconic_accum_y);
             dl_dconic_accum_z = __hadd2(dL_dconic_z, dl_dconic_accum_z);
 
 
