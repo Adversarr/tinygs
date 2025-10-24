@@ -978,11 +978,6 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     __shared__ ColorSimd collected_color[block_size_launch];
 
     // initialize local storage
-    // packed_half2x2 color_transmittance_scaled;
-    // fast_zero(color_transmittance_scaled);
-    // color_transmittance_scaled.zw.y = TINYGS_SCALE_HALF;
-    // uint n_possible_contributions = 0;
-    // uint n_contributions = 0;
     __half2 color_r = h0_2;
     __half2 color_g = h0_2;
     __half2 color_b = h0_2;
@@ -1141,5 +1136,249 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     }
 }
 
+
+// launch as 128, get 256 throughput, 2 pixel per thread.
+__global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu3(
+    const uint2* tile_instance_ranges,
+    const uint* tile_bucket_offsets,
+    const uint* instance_primitive_indices,
+    const float2* primitive_mean2d,
+    const PrimitiveInfo* primitive_infos,
+    float16_t* image,
+    float16_t* alpha_map,
+    ushort* tile_max_n_contributions,
+    ushort* tile_n_contributions,
+    uint* bucket_tile_index,
+    ColorTransmittance* bucket_color_transmittance_scaled,
+    const uint width,
+    const uint height,
+    const uint grid_width,
+    const uint n_tiles) {
+    constexpr int block_size_total = config::tile_width * config::tile_width; // 256
+    constexpr int block_size_launch = config::block_size_blend / 2; // 128
+
+    // SIMD acceleration for ushort2.
+    union simd32i {
+        ushort2 data; // .x .y correspondingly.
+        uint32_t data_u32;
+        int32_t data_i32;
+    };
+
+    // --- Thread and block info ---
+    auto block = cg::this_thread_block();
+    const dim3 group_index = block.group_index();
+    const dim3 thread_index = block.thread_index();
+    const uint thread_rank = block.thread_rank();
+    // -- memcpy async ---
+    // 1. gmem -> primitive_idx
+    // 2. mean2d[primitive_idx], primitive_infos[primitive_idx]
+    constexpr uint stages_count = 3;
+    __shared__ cuda::pipeline_shared_state<cuda::thread_scope::thread_scope_block, stages_count> shared_state;
+    auto pipeline = cuda::make_pipeline(block, &shared_state);
+
+    // --- Constants ---
+    const __half2 hinv_16 = __float22half2_rn(make_float2(0.0625f, 0.0625f));
+    const __half2 h_16_2 = __float22half2_rn(make_float2(16.0f, 16.0f));
+    const __half h0_5 = __float2half_rn(0.5f);
+    const __half2 h0_5_2 = make_half2(h0_5, h0_5);
+    const __half2 h0_2 = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
+    const float2 anchor = make_float2(group_index.x, group_index.y);
+    constexpr uint32_t one_u162 = 0x00010001u;
+    const __half2 one_h2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
+    const __half2 least_acceptable_transmittance_h2 = 
+            make_half2(__float2half_rd(config::transmittance_threshold * TINYGS_SCALE_FULL),
+                       __float2half_rd(config::transmittance_threshold * TINYGS_SCALE_FULL));
+
+    // each thread is responsible for 2 pixel in the tile. (2x, y) and (2x+1, y)
+    const uint2 intile = make_uint2(thread_index.x * 2, thread_index.y);
+    const uint2 pixel_coords = make_uint2(group_index.x * config::tile_width + intile.x,
+                                          group_index.y * config::tile_width + intile.y);
+    const simd32i inside = simd32i(ushort2(
+        static_cast<ushort>((pixel_coords.x < width && pixel_coords.y < height) ? 1u : 0u),
+        static_cast<ushort>((pixel_coords.x + 1 < width && pixel_coords.y < height) ? 1u : 0u)));
+
+        // in tiled coordinates
+    __half2 offset_x, offset_y;
+    {
+        const __half2 offset0 = __hfma2(hinv_16,
+            make_half2(__uint2half_rn(intile.x), __uint2half_rn(intile.y)),
+            make_half2(__float2half(1.0f/32.0f), __float2half(1.0f/32.0f)));
+        offset_x = make_half2(offset0.x, __hadd(hinv_16.x, offset0.x));
+        offset_y = make_half2(offset0.y, offset0.y);
+    }
+
+    const uint width_in_tile = (width + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+    const uint height_in_tile = (height + tinygs::kImageTileMask) >> tinygs::kImageTileLog2;
+    const uint channel_stride = width_in_tile * height_in_tile << (2 * tinygs::kImageTileLog2);
+    const uint tile_idx = group_index.y * grid_width + group_index.x;
+
+    // Early return if tile is out of bounds
+    if (tile_idx >= n_tiles) {
+        return;
+    }
+
+    const uint2 tile_range = tile_instance_ranges[tile_idx];
+    const int n_points_total = tile_range.y - tile_range.x;
+
+    // Write the bucket information.
+    uint bucket_offset = tile_idx == 0 ? 0 : tile_bucket_offsets[tile_idx - 1];
+    const int n_buckets = div_round_up(n_points_total, 32);
+    for (int n_buckets_remaining = n_buckets, current_bucket_idx = thread_rank;
+         n_buckets_remaining > 0;
+         n_buckets_remaining -= block_size_launch, current_bucket_idx += block_size_launch) {
+      if (current_bucket_idx < n_buckets)
+        bucket_tile_index[bucket_offset + current_bucket_idx] = tile_idx;
+    }
+
+    // ===== shared memory =====
+    // Relative to block anchor
+    __shared__ __half2 collected_mean2d[block_size_launch];
+    __shared__ __half2 collected_conic_xy[block_size_launch];
+    __shared__ __half2 collected_conic_z_raw_opacity[block_size_launch];
+    using ColorSimd = uchar4;
+    __shared__ ColorSimd collected_color[block_size_launch];
+
+    // initialize local storage
+    __half2 color_r = h0_2;
+    __half2 color_g = h0_2;
+    __half2 color_b = h0_2;
+    __half2 transmittance = TINYGS_SCALE_HALF2;
+
+    simd32i n_possible_contributions;
+    n_possible_contributions.data_i32 = 0;
+    simd32i n_contributions;
+    n_contributions.data_i32 = 0;
+    simd32i unfinished; // 1 => unfinished, 0 => finished
+    unfinished.data_u32 = inside.data_u32;
+
+    // collaborative loading and processing
+    for (int n_points_remaining = n_points_total, current_fetch_idx = tile_range.x + thread_rank;
+         n_points_remaining > 0;
+         n_points_remaining -= block_size_launch, current_fetch_idx += block_size_launch) {
+        if (__syncthreads_count(unfinished.data_i32) == 0)
+            break;
+        // load gaussian parameters.
+        if (current_fetch_idx < tile_range.y) {
+            const uint primitive_idx = instance_primitive_indices[current_fetch_idx];
+            collected_mean2d[thread_rank] = __float22half2_rn(primitive_mean2d[primitive_idx] / 16.0f - anchor);
+            const auto& info = primitive_infos[primitive_idx];
+            collected_conic_xy[thread_rank] = info.conic_xy;
+            collected_conic_z_raw_opacity[thread_rank] = info.conic_z_opacity;
+            collected_color[thread_rank] = ColorSimd{info.rgb.x, info.rgb.y, info.rgb.z, char(0)};
+        }
+        block.sync();
+        const int current_batch_size = min(block_size_launch, n_points_remaining);
+        int j;
+        for (j = 0; /* !done */ unfinished.data_u32 && j < current_batch_size; ++j) {
+            if (j % 32 == 0) {
+                const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
+                store4a(bucket_color_transmittance_scaled + bucket_offset * config::block_size_blend + off,
+                    color_r, color_g, color_b, transmittance);
+                bucket_offset++;
+            }
+            n_possible_contributions.data_u32 = __vadd2(n_possible_contributions.data_u32, unfinished.data_u32);
+
+            // Convert parameters and computations to half precision (SIMD version)
+            const __half2 conic_x = make_half2(collected_conic_xy[j].x, collected_conic_xy[j].x);
+            const __half2 conic_y = make_half2(collected_conic_xy[j].y, collected_conic_xy[j].y);
+            const __half2 conic_z = make_half2(collected_conic_z_raw_opacity[j].x, collected_conic_z_raw_opacity[j].x);
+            const __half2 opacity_h = make_half2(collected_conic_z_raw_opacity[j].y, collected_conic_z_raw_opacity[j].y);
+            const __half2 collected_mean2d_x = make_half2(collected_mean2d[j].x, collected_mean2d[j].x);
+            const __half2 collected_mean2d_y = make_half2(collected_mean2d[j].y, collected_mean2d[j].y);
+            const __half2 dx = __hsub2(collected_mean2d_x, offset_x);
+            const __half2 dy = __hsub2(collected_mean2d_y, offset_y);
+            const __half2 conic_x_dxx = __hmul2(dx, __hmul2(__hmul2(conic_x, dx), h_16_2));
+            const __half2 conic_z_dyy = __hmul2(dy, __hmul2(__hmul2(conic_z, dy), h_16_2));
+            const __half2 conic_y_dxy = __hmul2(dx, __hmul2(__hmul2(conic_y, dy), h_16_2));
+            const __half2 quad = __hadd2(conic_x_dxx, conic_z_dyy);
+            const __half2 sigma_over_2_h = __hmul2(__hfma2(h0_5_2, quad, conic_y_dxy), h_16_2);
+            // no continue is triggered in original code.
+            uint32_t enable_this_mask = __hge2_mask(sigma_over_2_h, h0_2) & __vcmpeq2(unfinished.data_u32, one_u162);
+
+            // on my machine, it will cast to f32 and compute, no precision loss is here.
+            const __half2 gaussian_h = h2exp(__hneg2(sigma_over_2_h));
+            const __half2 alpha_raw_h = __hmul2(opacity_h, gaussian_h);
+            const __half2 alpha_h = __hmin2(alpha_raw_h,
+                make_half2(__float2half_ru(config::max_fragment_alpha),
+                           __float2half_ru(config::max_fragment_alpha)));
+            enable_this_mask &= __hge2_mask(alpha_h, make_half2(__float2half_rd(config::min_alpha_threshold),
+                                                                __float2half_rd(config::min_alpha_threshold)));
+
+            // next_transmittance = transmittance * (1 - alpha)
+            __half2 next_transmittance_h = __hmul2(transmittance, __hsub2(one_h2, alpha_h));
+            // next_transmittance > THRESHOLD => mask = 0xFFFF
+            const uint32_t next_transmittance_acceptable_mask = __hge2_mask(
+                next_transmittance_h, least_acceptable_transmittance_h2);
+            // if next_transmittance_h < least_acceptable_transmittance_h2, then set unfinished to false
+            unfinished.data_u32 &= next_transmittance_acceptable_mask;
+            enable_this_mask &= next_transmittance_acceptable_mask;
+
+            // 颜色累加统一半精度
+            __half2 tah2 = __hmul2(__hmul2(transmittance, alpha_h), TINYGS_UNSCALE_HALF2);
+            reinterpret_cast<uint32_t&>(tah2) &= enable_this_mask;
+
+            ColorSimd rgb = collected_color[j];
+            color_r = __hfma2(make_half2(__ushort2half_rn(rgb.x), __ushort2half_rn(rgb.x)),
+                tah2, color_r);
+            color_g = __hfma2(make_half2(__ushort2half_rn(rgb.y), __ushort2half_rn(rgb.y)),
+                tah2, color_g);
+            color_b = __hfma2(make_half2(__ushort2half_rn(rgb.z), __ushort2half_rn(rgb.z)),
+                tah2, color_b);
+            reinterpret_cast<uint32_t&>(transmittance) = 
+                (~enable_this_mask & reinterpret_cast<const uint32_t&>(transmittance)) |
+                ( enable_this_mask & reinterpret_cast<const uint32_t&>(next_transmittance_h));
+
+            //? we set max_contributions to 0xFFFF (for each ushort). We increase the value by 1 everytime
+            //? Therefore, no overflow will be caused.
+            n_contributions.data_u32 = (n_possible_contributions.data_u32 &  enable_this_mask) |
+                                       (n_contributions.data_u32          & ~enable_this_mask);
+            // If n_contributions == 0xFFFF => set unfinished to false.
+            unfinished.data_u32 &= __vcmpltu2(n_contributions.data_u32, 0xFFFF'FFFFu);
+        }
+
+        j = ((j + 31) / 32) * 32; // round up to next warp
+        for (; j < current_batch_size; j += 32) {
+            const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
+            store4a(bucket_color_transmittance_scaled + bucket_offset * config::block_size_blend + off,
+                color_r, color_g, color_b, transmittance);
+            bucket_offset++;
+        }
+    }
+
+    const int pixel_idx = width * pixel_coords.y + pixel_coords.x; // logical.
+    const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
+        /* row */ pixel_coords.y,
+        /* col */ pixel_coords.x,
+        width_in_tile);
+    // Write the buffers, the image is in [0, 1] range.
+    color_r = __hmul2(color_r, TINYGS_UNSCALE_HALF2);
+    color_g = __hmul2(color_g, TINYGS_UNSCALE_HALF2);
+    color_b = __hmul2(color_b, TINYGS_UNSCALE_HALF2);
+    transmittance = __hmul2(transmittance, TINYGS_UNSCALE_HALF2);
+    if (inside.data_u32 != 0) {
+        // Our allocation ensures the image physical width is a multiple of 8.
+        *(reinterpret_cast<__half2*>(image + physical_pixel_idx)) = color_r;
+        *(reinterpret_cast<__half2*>(image + physical_pixel_idx + channel_stride)) = color_g;
+        *(reinterpret_cast<__half2*>(image + physical_pixel_idx + 2 * channel_stride)) = color_b;
+        *(reinterpret_cast<__half2*>(alpha_map + physical_pixel_idx)) = __hsub2(one_h2, transmittance);
+        tile_n_contributions[physical_pixel_idx] = n_contributions.data.x;
+        tile_n_contributions[physical_pixel_idx + 1] = n_contributions.data.y;
+    }
+
+    // max reduce the number of contributions
+    using BlockReduce = cub::BlockReduce<ushort, config::tile_width / 2, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_width>;
+    __shared__ typename BlockReduce::TempStorage temp_storage;
+    ushort max_xy = n_contributions.data.x > n_contributions.data.y ? n_contributions.data.x : n_contributions.data.y;
+    max_xy = BlockReduce(temp_storage).Reduce(max_xy, cub::Max());
+
+    if (thread_rank == 0) {
+#ifndef NDEBUG
+        // Boundary check for tile arrays
+        assert(tile_idx >= 0 && tile_idx < n_tiles);
+#endif
+        // tile_max_n_contributions[tile_idx] = static_cast<ushort>(n_contributions);
+        tile_max_n_contributions[tile_idx] = max_xy;
+    }
+}
 
 } // namespace tinygs::fast_gs_fp16::kernels::forward

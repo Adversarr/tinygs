@@ -49,8 +49,7 @@ namespace config = tinygs::fast_gs_fp16::config;
 
 namespace tinygs::fast_gs_fp16 {
 
-// 12B = 3bank, really good alignment for shared memory
-struct alignas(4) PrimitiveInfo {
+struct alignas(16) PrimitiveInfo {
   __half2_raw conic_xy;             // 4B
   __half2_raw conic_z_opacity;  // 4B
   uchar3 rgb;                   // 3B, typically in [0, 255)
@@ -134,6 +133,14 @@ void load4a(const packed_half2x2* src, __half2& x, __half2& y, __half2& z, __hal
   y = ui32ashalf2(u.y);
   z = ui32ashalf2(u.z);
   w = ui32ashalf2(u.w);
+}
+
+__device__ __forceinline__ uint2 tile_linear_to_xy(uint linear, ushort2 wh) {
+  return make_uint2(linear % wh.x, linear / wh.x);
+}
+
+__device__ __forceinline__ uint tile_xy_to_linear(uint2 wh, uint2 xy) {
+  return wh.x * xy.y + xy.x;
 }
 
 }
