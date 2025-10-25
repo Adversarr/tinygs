@@ -1043,7 +1043,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
             uint32_t enable_this_mask = __hge2_mask(sigma_over_2_h, h0_2) & __vcmpeq2(unfinished.data_u32, one_u162);
 
             // on my machine, it will cast to f32 and compute, no precision loss is here.
-            const __half2 gaussian_h = h2exp(__hneg2(sigma_over_2_h));
+            const __half2 gaussian_h = fast_exp_approx(__hneg2(sigma_over_2_h));
             const __half2 alpha_raw_h = __hmul2(opacity_h, gaussian_h);
             const __half2 alpha_h = __hmin2(alpha_raw_h,
                 make_half2(__float2half_ru(config::max_fragment_alpha),

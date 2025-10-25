@@ -144,6 +144,16 @@ __device__ __forceinline__ uint tile_xy_to_linear(uint2 wh, uint2 xy) {
   return wh.x * xy.y + xy.x;
 }
 
+#define TINYGS_HALF2_TO_UI(var) *(reinterpret_cast<unsigned int *>(&(var)))
+#define TINYGS_HALF2_TO_CUI(var) *(reinterpret_cast<const unsigned int *>(&(var)))
+__forceinline__ __device__ __half2 fast_exp_approx(__half2 input) {
+    __half2 output;
+    const __half2 log2_e = __float22half2_rn({1.4426950409f, 1.4426950409f});
+    __half2 scaled_input = __hmul2(input, log2_e);
+    asm("ex2.approx.f16x2 %0, %1;" : "=r"(TINYGS_HALF2_TO_UI(output)) : "r"(TINYGS_HALF2_TO_CUI(scaled_input)));
+    return output;
+}
+
 }
 
 #undef DEF

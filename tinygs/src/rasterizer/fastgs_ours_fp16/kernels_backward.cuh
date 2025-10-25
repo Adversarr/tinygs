@@ -1209,7 +1209,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             }
             const __half2 sigma_over_2_h = __hmul2(__hfma2_relu(h0_5_2, quad, conic_y_dxy), h_16_2);
             const __half2 prepare_dl_dmean2d_x = __hadd2(conic_x_dx, conic_y_dy);
-            const __half2 gaussian = h2exp(__hneg2(sigma_over_2_h));
+            const __half2 gaussian = fast_exp_approx(__hneg2(sigma_over_2_h));
             const __half2 prepare_dl_dmean2d_y = __hadd2(conic_y_dx, conic_z_dy);
 
             // const bool skip = !valid_general || tile_primitive_idx >= REG.parts.grad_color_pixel_b_last_contributor.y;
