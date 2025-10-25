@@ -834,6 +834,26 @@ __device__ __forceinline__ void load4a_gmem(PackedPixels_Lower& dst, const uint4
 #define CHECK_FINITE_HALF2(x) ((void) x)
 
 #endif
+
+
+inline __device__ void atomic_add_gmem_float(float* addr, float in) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+	int in_int = *((int*)&in);
+	asm ("red.relaxed.gpu.global.add.f32 [%0], %1;" :: "l"(addr), "r"(in_int));
+#else
+	atomicAdd(addr, in);
+#endif
+}
+
+inline __device__ void atomic_add_gmem_h2(half2* addr, half2 in) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+	int in_int = *((int*)&in);
+	asm ("red.relaxed.gpu.global.add.noftz.f16x2 [%0], %1;" :: "l"(addr), "r"(in_int));
+#else
+	atomicAdd(addr, in);
+#endif
+}
+
 /* -------------------- half version -------------------- */
 // 2 pixel X 1 GS per thread, cuda driver claim this block size could maximize the occupancy already
 __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward_cu2(
@@ -1184,8 +1204,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
             // 1. if idx >= config::block_size_blend, dx_dy will be out of bound, and we will not use it
             // 2. if idx > block_size_blend acturally, we have already set the values to zero to make zero results
-            // const bool valid_pixel = dx_dy.x < dist_to_boundaries.x && dx_dy.y < dist_to_boundaries.y;
+#ifdef TINYGS_SAFE_MATH
             const uint32_t valid_pixel = __hlt2_mask(off_xy, dist_to_boundaries);
+#endif
             __half2 delta_x = __hfma2(hinv_16, __hneg2(off_x), mean2d_x);
             __half2 delta_y = __hfma2(hinv_16, __hneg2(off_y), mean2d_y);
             REGup.grad_color_r = warp.shfl_up(REGup.grad_color_r, 1);
@@ -1196,10 +1217,14 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 conic_z_dy = __hmul2(conic_z, delta_y); // conic.z * delta.y
             const __half2 conic_y_dy = __hmul2(conic_y, delta_y); // conic.y * delta.y
             REGup.grad_color_b = warp.shfl_up(REGup.grad_color_b, 1);
+#ifdef TINYGS_SAFE_MATH
             uint32_t enable_mask = valid_primitive & valid_pixel;
+#endif
             const __half2 conic_z_dyy = __hmul2(delta_y, conic_z_dy);
             const __half2 conic_y_dxy = __hmul2(delta_x, conic_y_dy);
+#ifdef TINYGS_SAFE_MATH
             enable_mask &= __brev(valid_pixel);
+#endif
             REGup.last_contributor_ui32 = warp.shfl_up(REGup.last_contributor_ui32, 1);
 
             const __half2 quad = __hfma2(delta_x, conic_x_dx, conic_z_dyy);
@@ -1213,12 +1238,16 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 prepare_dl_dmean2d_y = __hadd2(conic_y_dx, conic_z_dy);
 
             // const bool skip = !valid_general || tile_primitive_idx >= REG.parts.grad_color_pixel_b_last_contributor.y;
+#ifdef TINYGS_SAFE_MATH
             enable_mask &= __vcmpltu2(tile_primitive_idx_ui32, REGup.last_contributor_ui32); // last update point of enable_mask
+#endif
 
             __half2 alpha_prepare = __hmul2(opacity, gaussian);
             // alpha is set to zero if not enabled.
             // const float color_dot_grad_color_pixel = __half2float(dot3(color, reinterpret_cast<const packed_half2x2&>(REG)));
+#ifdef TINYGS_SAFE_MATH
             reinterpret_cast<uint32_t&>(alpha_prepare) &= enable_mask;
+#endif
             const __half2 color_dot_grad_color_pixel = doth3(  // scaled by SCALE
                 color_r, color_g, color_b,
                 REGup.grad_color_r, REGup.grad_color_g, REGup.grad_color_b);
@@ -1342,17 +1371,17 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         // Boundary check for gradient arrays
         assert(primitive_idx >= 0 && primitive_idx < n_primitives);
 #endif
-        atomicAdd(&primitive_info_gradients[primitive_idx].mean_xy,
+        atomic_add_gmem_h2(&primitive_info_gradients[primitive_idx].mean_xy,
                   __float22half2_rn(make_float2(dL_dmean2d_accum_f.x, dL_dmean2d_accum_f.y)));
-        atomicAdd(&primitive_info_gradients[primitive_idx].absmean_xy,
+        atomic_add_gmem_h2(&primitive_info_gradients[primitive_idx].absmean_xy,
                   __float22half2_rn(make_float2(absdL_dmean2d_accum_f.x, absdL_dmean2d_accum_f.y)));
         const float dL_draw_opacity = dL_draw_opacity_partial_accum_f * (1.0f - __half2float(opacity.x));
-        atomicAdd(&grad_raw_opacity[primitive_idx], dL_draw_opacity);
-        atomicAdd(&primitive_info_gradients[primitive_idx].conic_ab,
+        atomic_add_gmem_float(&grad_raw_opacity[primitive_idx], dL_draw_opacity);
+        atomic_add_gmem_h2(&primitive_info_gradients[primitive_idx].conic_ab,
                   __float22half2_rn(make_float2(dL_dconic_accum_f.x, dL_dconic_accum_f.y)));
-        atomicAdd(&primitive_info_gradients[primitive_idx].color_rg,
+        atomic_add_gmem_h2(&primitive_info_gradients[primitive_idx].color_rg,
                   __float22half2_rn(make_float2(dL_dcolor_accum_f.x, dL_dcolor_accum_f.y)));
-        atomicAdd(&primitive_info_gradients[primitive_idx].conic_c_color_b,
+        atomic_add_gmem_h2(&primitive_info_gradients[primitive_idx].conic_c_color_b,
                   __float22half2_rn(make_float2(dL_dconic_accum_f.z, dL_dcolor_accum_f.z)));
     }
 }

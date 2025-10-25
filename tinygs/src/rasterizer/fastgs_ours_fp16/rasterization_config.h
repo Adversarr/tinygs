@@ -89,6 +89,9 @@ void fast_copy(packed_half2x2& dst, const packed_half2x2& src) {
   reinterpret_cast<uint64_t&>(dst) = reinterpret_cast<const uint64_t&>(src);
 }
 
+#define TINYGS_HALF2_TO_UI(var) *(reinterpret_cast<unsigned int *>(&(var)))
+#define TINYGS_HALF2_TO_CUI(var) *(reinterpret_cast<const unsigned int *>(&(var)))
+
 using ColorTransmittance = packed_half2x2;
 
 static_assert(std::is_trivially_copyable_v<PrimitiveInfo>, "PrimitiveInfo must be trivially copyable");
@@ -124,7 +127,14 @@ __device__ __forceinline__ __half2 ui32ashalf2(uint32_t u) {
 // Aligned store 2 packed_half2x2 (4 half2)
 __device__ __forceinline__ 
 void store4a(packed_half2x2* dst, __half2 x, __half2 y, __half2 z, __half2 w) {
-  *(reinterpret_cast<uint4*>(dst)) = make_uint4(half2asui32(x), half2asui32(y), half2asui32(z), half2asui32(w));
+  asm("st.global.v4.u32 [%0], {%1, %2, %3, %4};" 
+      :
+      : "l"(dst),
+        "r"(TINYGS_HALF2_TO_CUI(x)),
+        "r"(TINYGS_HALF2_TO_CUI(y)),
+        "r"(TINYGS_HALF2_TO_CUI(z)),
+        "r"(TINYGS_HALF2_TO_CUI(w))
+      : "memory");
 }
 
 __device__ __forceinline__
@@ -144,14 +154,17 @@ __device__ __forceinline__ uint tile_xy_to_linear(uint2 wh, uint2 xy) {
   return wh.x * xy.y + xy.x;
 }
 
-#define TINYGS_HALF2_TO_UI(var) *(reinterpret_cast<unsigned int *>(&(var)))
-#define TINYGS_HALF2_TO_CUI(var) *(reinterpret_cast<const unsigned int *>(&(var)))
-__forceinline__ __device__ __half2 fast_exp_approx(__half2 input) {
+__device__ __forceinline__ __half2 fast_exp_approx(__half2 input) {
     __half2 output;
     const __half2 log2_e = __float22half2_rn({1.4426950409f, 1.4426950409f});
     __half2 scaled_input = __hmul2(input, log2_e);
     asm("ex2.approx.f16x2 %0, %1;" : "=r"(TINYGS_HALF2_TO_UI(output)) : "r"(TINYGS_HALF2_TO_CUI(scaled_input)));
     return output;
+}
+
+// If both x, y are positive(including inf), we can safely use the integer comparison.
+__device__ __forceinline__ uint32_t hge2_positive(__half2 x, __half2 y) {
+    return __vsetgeu2(TINYGS_HALF2_TO_CUI(x), TINYGS_HALF2_TO_CUI(y));
 }
 
 }
