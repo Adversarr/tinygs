@@ -72,11 +72,12 @@ struct alignas(8) packed_half2x2 {
   __half2 zw;
 };
 
-struct alignas(16) PrimitiveInfoGradient {
+struct alignas(4) PrimitiveInfoGradient {
   __half2 mean_xy;
   __half2 conic_ab;
   __half2 conic_c_color_b;
   __half2 color_rg;
+  __half2 absmean_xy;
 };
 
 __device__ __forceinline__ void fast_zero(packed_half2x2& p) {

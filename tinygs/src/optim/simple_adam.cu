@@ -15,6 +15,7 @@ namespace cg = cooperative_groups;
 
 // constexpr float kShRestScale = 1;
 constexpr float kShRestScale = 0.05f;
+constexpr int block_size = 512; // make occupancy higher
 
 namespace tinygs {
 
@@ -402,7 +403,6 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
 void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
   NVTX3_FUNC_RANGE();
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
-  constexpr int block_size = 256;
 
   if (!m_gaussians || !m_gaussians_grad) {
     throw std::runtime_error("SimpleAdam::step: gaussians or gaussians_grad is null");
@@ -681,8 +681,8 @@ void SimpleAdam::remove(char* kept_flag, int num_kept) {
   thrust::device_vector<vec3> sh_coefficients_rest_first(num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
   thrust::device_vector<vec3> sh_coefficients_rest_second(num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
 
-  const int grid = (num_kept + 255) / 256;
-  copy_optimizer_state<<<grid, 256>>>(
+  const int grid = (num_kept + block_size - 1) / block_size;
+  copy_optimizer_state<<<grid, block_size>>>(
       thrust::raw_pointer_cast(m_means_first.data()),
       thrust::raw_pointer_cast(m_means_second.data()),
       thrust::raw_pointer_cast(means_first.data()),
@@ -871,8 +871,8 @@ void SimpleAdam::reorder(uint* indices) {
   thrust::device_vector<vec3> sh_coefficients_rest_first(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
   thrust::device_vector<vec3> sh_coefficients_rest_second(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
 
-  const int grid = (num_gaussians + 255) / 256;
-  copy_optimizer_state<<<grid, 256>>>(
+  const int grid = (num_gaussians + block_size - 1) / block_size;
+  copy_optimizer_state<<<grid, block_size>>>(
       thrust::raw_pointer_cast(m_means_first.data()),
       thrust::raw_pointer_cast(m_means_second.data()),
       thrust::raw_pointer_cast(means_first.data()),

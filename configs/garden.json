@@ -108,7 +108,7 @@
     "max_sh_degree": 3,
     "max_steps": 30000,
     "near_plane": 0.01,
-    "sh_degree_interval": 100,
+    "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 1000,
     "enable_progressive_resolution": false,
