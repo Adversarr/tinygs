@@ -946,7 +946,6 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     union simd32i {
         ushort2 data; // .x .y correspondingly.
         uint32_t data_u32;
-        int32_t data_i32;
     };
 
     // --- Thread and block info ---
@@ -1026,10 +1025,10 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     __half2 color_b = h0_2;
     __half2 transmittance = TINYGS_SCALE_HALF2;
 
-    simd32i n_possible_contributions;
-    n_possible_contributions.data_i32 = 0;
+    // simd32i n_possible_contributions;
+    // n_possible_contributions.data_u32 = 0;
     simd32i n_contributions;
-    n_contributions.data_i32 = 0;
+    n_contributions.data_u32 = 0;
     simd32i unfinished; // 1 => unfinished, 0 => finished
     unfinished.data_u32 = inside.data_u32;
     const uint off = tinygs::get_linear_index_tiled(intile.y, intile.x, 2);
@@ -1055,7 +1054,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
          current_fetch_idx = tile_range.x + thread_rank;
          n_points_remaining > 0; n_points_remaining -= block_size_launch,
                                  current_fetch_idx += block_size_launch) {
-      if (__syncthreads_count(unfinished.data_i32) == 0)
+      if (__syncthreads_count(unfinished.data_u32) == 0)
         break;
       // load gaussian parameters.
       if (current_fetch_idx < tile_range.y) {
@@ -1064,7 +1063,8 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
         float2 xy = primitive_mean2d[primitive_idx] / 16.0f - anchor;
         collected_mean2d_x[thread_rank] = make_half2(__float2half_rn(xy.x), __float2half_rn(xy.x));
         collected_mean2d_y[thread_rank] = make_half2(__float2half_rn(xy.y), __float2half_rn(xy.y));
-        auto info = primitive_infos[primitive_idx];
+        PrimitiveInfo info;
+        reinterpret_cast<uint4&>(info) = reinterpret_cast<const uint4&>(primitive_infos[primitive_idx]);
         info.conic_xy = __hmul2(info.conic_xy, h_16_2);
         info.conic_z_opacity = __hmul2(info.conic_z_opacity, h_16_1_2);
         collected_conic_x[thread_rank] = make_half2(__ushort_as_half(info.conic_xy.x), __ushort_as_half(info.conic_xy.x));
@@ -1082,11 +1082,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
       while (/* !done */ unfinished.data_u32 && i < current_batch_size) {
         store_bucket();
         const int j_end = min(i + warp_size, current_batch_size);
-        for (int j = i; j < j_end; ++j) {
-          n_possible_contributions.data_u32 =
-              __vadd2(n_possible_contributions.data_u32, unfinished.data_u32);
-          // Convert parameters and computations to half precision (SIMD
-          // version)
+        for (int j = i; j < j_end && unfinished.data_u32; ++j) {
           const __half2 conic_x = collected_conic_x[j];
           const __half2 conic_y = collected_conic_y[j];
           const __half2 conic_z = collected_conic_z[j];
@@ -1102,46 +1098,40 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
           const __half2 sigma_over_2_h =
               __hmul2(__hfma2(h0_5_2, quad, conic_y_dxy), h_16_2);
           // no continue is triggered in original code.
-          uint32_t enable_this_mask = hge2_positive(sigma_over_2_h, h0_2) &
-                                      __vseteq2(unfinished.data_u32, one_u162);
-
           // on my machine, it will cast to f32 and compute, no precision loss
           // is here.
           const __half2 gaussian_h = fast_exp_approx(__hneg2(sigma_over_2_h));
           const __half2 alpha_raw_h = __hmul2(opacity_h, gaussian_h);
           const __half2 alpha_h = __hmin2(alpha_raw_h, h_max_frag_alpha);
-          enable_this_mask &= hge2_positive(alpha_h, h_min_alpha_threshold);
 
-          // next_transmittance = transmittance * (1 - alpha)
-          __half2 next_transmittance_h =
-              __hmul2(transmittance, __hsub2(one_h2, alpha_h));
+          // next_transmittance = transmittance * (1 - alpha) = transmittance - transmittance * alpha
+          // __half2 next_transmittance_h = __hmul2(transmittance, __hsub2(one_h2, alpha_h));
+          const __half2 next_transmittance_h = __hfma2(__hneg2(alpha_h), transmittance, transmittance);
+
           // next_transmittance > THRESHOLD => mask = 0xFFFF
-          const uint32_t next_transmittance_acceptable_mask = __hge2_mask(
-              next_transmittance_h, least_acceptable_transmittance_h2);
+          const uint32_t next_t_acceptable_01 = hge2_positive(next_transmittance_h, least_acceptable_transmittance_h2);
           // convert it to mask.
-          enable_this_mask = bool2mask(enable_this_mask & next_transmittance_acceptable_mask, 16);
+          auto enable_this_mask = bool2mask(unfinished.data_u32 & next_t_acceptable_01, 16);
 
-          __half2 tah2 =
-              __hmul2(__hmul2(transmittance, alpha_h), TINYGS_UNSCALE_HALF2);
+          __half2 tah2 = __hmul2(__hmul2(transmittance, alpha_h), TINYGS_UNSCALE_HALF2);
           reinterpret_cast<uint32_t &>(tah2) &= enable_this_mask;
+#define bitselect(a, b, mask) ((a) ^ ((mask) & ((b) ^ (a))))
 
           color_r = __hfma2(collected_color_r[j], tah2, color_r);
           color_g = __hfma2(collected_color_g[j], tah2, color_g);
           color_b = __hfma2(collected_color_b[j], tah2, color_b);
-          reinterpret_cast<uint32_t &>(transmittance) =
-              (~enable_this_mask & reinterpret_cast<const uint32_t &>(transmittance)) |
-              (enable_this_mask & reinterpret_cast<const uint32_t &>(next_transmittance_h));
+          TINYGS_HALF2_TO_UI(transmittance) = bitselect(
+            TINYGS_HALF2_TO_CUI(transmittance),
+            TINYGS_HALF2_TO_CUI(next_transmittance_h),
+            enable_this_mask);
 
           //? we set max_contributions to 0xFFFF (for each ushort). We increase
           //the value by 1 everytime ? Therefore, no overflow will be caused.
-          n_contributions.data_u32 =
-              (n_possible_contributions.data_u32 & enable_this_mask) |
-              (n_contributions.data_u32 & ~enable_this_mask);
+          n_contributions.data_u32 = __vaddus2(n_contributions.data_u32, unfinished.data_u32);
           // If n_contributions == 0xFFFF => set unfinished to false.
-          unfinished.data_u32 &=
-              next_transmittance_acceptable_mask &
-              __vsetltu2(n_contributions.data_u32, 0xFFFF'FFFFu);
+          unfinished.data_u32 &= next_t_acceptable_01;
         }
+        unfinished.data_u32 &= __vsetltu2(n_contributions.data_u32, 0xFFFF'FFFFu);
         i += warp_size;
       }
 
@@ -1166,15 +1156,14 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
         *(reinterpret_cast<__half2*>(image + physical_pixel_idx + channel_stride)) = color_g;
         *(reinterpret_cast<__half2*>(image + physical_pixel_idx + 2 * channel_stride)) = color_b;
         *(reinterpret_cast<__half2*>(alpha_map + physical_pixel_idx)) = __hsub2(one_h2, transmittance);
-        tile_n_contributions[physical_pixel_idx] = n_contributions.data.x;
-        tile_n_contributions[physical_pixel_idx + 1] = n_contributions.data.y;
+        *(reinterpret_cast<uint32_t*>(tile_n_contributions+physical_pixel_idx)) = n_contributions.data_u32;
     }
 
     // max reduce the number of contributions
     using BlockReduce = cub::BlockReduce<ushort, config::tile_width / 2, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_width>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
     ushort max_xy = n_contributions.data.x > n_contributions.data.y ? n_contributions.data.x : n_contributions.data.y;
-    max_xy = BlockReduce(temp_storage).Reduce(max_xy, cub::Max());
+    max_xy = BlockReduce(temp_storage).Reduce(max_xy, cuda::maximum<ushort>());
 
     if (thread_rank == 0) {
 #ifndef NDEBUG
@@ -1183,6 +1172,10 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
 #endif
         // tile_max_n_contributions[tile_idx] = static_cast<ushort>(n_contributions);
         tile_max_n_contributions[tile_idx] = max_xy;
+        // typically, max_xy < 2048
+        // if we have 1-alpha = 0.99 => 0.99 ** 1000 = 0.00004317, which is small enough
+        // to be ignored.
+        // but, does we have so much transparent gaussians?
     }
 }
 
