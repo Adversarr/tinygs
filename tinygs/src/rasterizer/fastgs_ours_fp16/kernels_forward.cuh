@@ -244,7 +244,7 @@ __device__ uint compute_exact_n_touched_tiles(
 
 
 
-__global__ void preprocess_cu(
+__global__ __launch_bounds__(config::block_size_preprocess) void preprocess_cu(
     const float3* __restrict__ means,
     const float3* __restrict__ raw_scales,
     const float4* __restrict__ raw_rotations,
@@ -284,39 +284,23 @@ __global__ void preprocess_cu(
     }
 
     auto block = cg::this_thread_block();
-
-    constexpr int stages_count = 3; // rot, opa, scale
-    /* == common settings ==  */
-    __shared__ cuda::pipeline_shared_state<
-        cuda::thread_scope::thread_scope_block,
-        stages_count
-    > shared_state;
-    auto pipeline = cuda::make_pipeline(block, &shared_state);
-
-    // Create a synchronization object (C++20 barrier)
-    __shared__ float shm_opacities[config::block_size_preprocess];
-    __shared__ float4 shm_raw_rotations[config::block_size_preprocess];
-    __shared__ float3 shm_raw_scales[config::block_size_preprocess];
-
-    const int block_batch_idx = block.group_index().x * config::block_size_preprocess;
-    const int block_max_idx = min(block_batch_idx + block.size(), n_primitives);
-    pipeline.producer_acquire();
-    cuda::memcpy_async(block, shm_opacities, raw_opacities + block_batch_idx, sizeof(float) * (block_max_idx - block_batch_idx), pipeline);
-    pipeline.producer_commit();
-
-    pipeline.producer_acquire();
-    cuda::memcpy_async(block, shm_raw_scales, raw_scales + block_batch_idx, sizeof(float3) * (block_max_idx - block_batch_idx), pipeline);
-    pipeline.producer_commit();
-
-    pipeline.producer_acquire();
-    cuda::memcpy_async(block, shm_raw_rotations, raw_rotations + block_batch_idx, sizeof(float4) * (block_max_idx - block_batch_idx), pipeline);
-    pipeline.producer_commit();
+    auto warp = cg::tiled_partition<32>(block);
+    const int warp_idx = block.thread_rank() / 32;
+    using Load3 = cub::WarpLoad<float, 3, cub::WARP_LOAD_TRANSPOSE, 32>;
+    constexpr int n_warps = config::block_size_preprocess / 32;
+    // starting index of the current warp
+    const int block_batch_idx = block.group_index().x * config::block_size_preprocess + 32 * warp_idx;
+    const int batch_size = min(block_batch_idx + warp.size(), n_primitives) - block_batch_idx;
+    __shared__ typename Load3::TempStorage load_means_storage[n_warps];
 
     if (active)
         primitive_n_touched_tiles[primitive_idx] = 0;
 
     // load 3d mean
-    const float3 mean3d = means[primitive_idx];
+    float3 mean3d = make_float3(0);
+    Load3(load_means_storage[warp_idx]).Load(
+      (float*) (means + block_batch_idx),
+      reinterpret_cast<float(&)[3]>(mean3d), batch_size * 3, 0.0f);
 
     // z culling
     const float4 w2c_r1 = w2c[0];
@@ -327,27 +311,32 @@ __global__ void preprocess_cu(
         active = false;
 
     // load opacity
-    pipeline.consumer_wait();
-    const __half raw_opacity = __float2half_rn(shm_opacities[block.thread_rank()]);
-    pipeline.consumer_release();
+    __half raw_opacity = CUDART_ZERO_FP16;
+    if (active) {
+      raw_opacity = __float2half_rn(raw_opacities[primitive_idx]);
+    }
 
     const float f_opacity = tinygs::activate_opacity(__half2float(raw_opacity));
     if (f_opacity < config::min_alpha_threshold)
         active = false;
     const __half opacity = __float2half_rn(f_opacity);
-
+    
+    __shared__ typename Load3::TempStorage load_scales_temp[n_warps];
     // compute 3d covariance from raw scale and rotation
-    pipeline.consumer_wait();
-    const float3 raw_scale = shm_raw_scales[block.thread_rank()];
-    // const float3 raw_scale = raw_scales[primitive_idx];
-    pipeline.consumer_release();
+    float3 raw_scale = make_float3(0.0f);
+    Load3(load_scales_temp[warp_idx]).Load(
+      (float*) (raw_scales + block_batch_idx),
+      reinterpret_cast<float (&)[3]>(raw_scale), batch_size * 3, 0.0f);
+
     const float3 variance = make_float3(
         tinygs::activate_scale(raw_scale.x) * tinygs::activate_scale(raw_scale.x),
         tinygs::activate_scale(raw_scale.y) * tinygs::activate_scale(raw_scale.y), 
         tinygs::activate_scale(raw_scale.z) * tinygs::activate_scale(raw_scale.z));
-    pipeline.consumer_wait();
-    auto [qr, qx, qy, qz] = shm_raw_rotations[block.thread_rank()];
-    pipeline.consumer_release();
+    float qr = 0.0f, qx = 0.0f, qy = 0.0f, qz = 0.0f;
+    if (active) {
+      auto [r, x, y, z] = raw_rotations[primitive_idx];
+      qr = r; qx = x; qy = y; qz = z;
+    }
 
     const float qrr_raw = qr * qr, qxx_raw = qx * qx, qyy_raw = qy * qy, qzz_raw = qz * qz;
     const float q_norm_sq = qrr_raw + qxx_raw + qyy_raw + qzz_raw;
@@ -506,6 +495,12 @@ __global__ void preprocess_cu(
     fast_copy(primitive_infos[primitive_idx], info);
 }
 
+__device__ __forceinline__ uint32_t fns(uint32_t mask, uint32_t base, int offset) {
+    uint32_t r;
+    asm ("fns.b32 %0, %1, %2, %3;" : "=r"(r) : "r"(mask), "r"(base), "r"(offset));
+    return r;
+}
+
 __global__ void apply_depth_ordering_cu(
     const uint* primitive_indices_sorted,
     const uint* primitive_n_touched_tiles,
@@ -594,7 +589,7 @@ __global__ void create_instances_cu(
 
     const uint n_remaining_threads = __popc(remaining_threads);
     for (int n = 0; n < n_remaining_threads && n < 32; n++) {
-        int current_lane = __fns(remaining_threads, 0, n + 1);
+        int current_lane = fns(remaining_threads, 0, n + 1);
         uint primitive_idx_coop = __shfl_sync(0xffffffffu, primitive_idx, current_lane);
         uint current_write_offset_coop = __shfl_sync(0xffffffffu, current_write_offset, current_lane);
 

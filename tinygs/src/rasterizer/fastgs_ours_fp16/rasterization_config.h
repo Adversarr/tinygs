@@ -98,8 +98,8 @@ static_assert(std::is_trivially_copyable_v<PrimitiveInfo>, "PrimitiveInfo must b
 
 __device__ __forceinline__ void fast_copy(PrimitiveInfo& dst, const PrimitiveInfo& src) {
   // dst = src;
-  float3& dst_rgb = reinterpret_cast<float3&>(dst);
-  const float3& src_rgb = reinterpret_cast<const float3&>(src);
+  uint4& dst_rgb = reinterpret_cast<uint4&>(dst);
+  const uint4& src_rgb = reinterpret_cast<const uint4&>(src);
   dst_rgb = src_rgb;
 }
 
@@ -156,7 +156,7 @@ __device__ __forceinline__ uint tile_xy_to_linear(uint2 wh, uint2 xy) {
 
 __device__ __forceinline__ __half2 fast_exp_approx(__half2 input) {
     __half2 output;
-    const __half2 log2_e = __float22half2_rn({1.4426950409f, 1.4426950409f});
+    const __half2 log2_e = __floats2half2_rn(1.4426950409f, 1.4426950409f);
     __half2 scaled_input = __hmul2(input, log2_e);
     asm("ex2.approx.f16x2 %0, %1;" : "=r"(TINYGS_HALF2_TO_UI(output)) : "r"(TINYGS_HALF2_TO_CUI(scaled_input)));
     return output;

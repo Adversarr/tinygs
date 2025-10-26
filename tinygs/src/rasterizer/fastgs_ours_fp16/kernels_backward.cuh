@@ -1,18 +1,19 @@
 /* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
-
-#pragma once
-#include "tinygs/core/gaussian.hpp"
 // blend_backward based on
 // https://github.com/humansensinglab/taming-3dgs/blob/fd0f7d9edfe135eb4eefd3be82ee56dada7f2a16/submodules/diff-gaussian-rasterization/cuda_rasterizer/backward.cu#L404
 
+#pragma once
+// Disables `pipeline_shared_state` initialization warning.
+#pragma nv_diag_suppress static_var_with_dynamic_init
 #include "buffer_utils.h"
 #include "helper_math.h"
 #include "kernel_utils.cuh"
 #include "rasterization_config.h"
-#include "utils.h"
 #include "tinygs/common.hpp"
+#include "tinygs/core/gaussian.hpp"
+#include "utils.h"
 #include <cooperative_groups.h>
 #include <cstdint>
 
