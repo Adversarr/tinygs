@@ -8,6 +8,8 @@
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
+#include "tinygs/cuda/common_device.cuh"
+
 #define DEF inline constexpr
 
 namespace tinygs::fast_gs_fp16::config {
@@ -146,11 +148,41 @@ void load4a(const packed_half2x2* src, __half2& x, __half2& y, __half2& z, __hal
   w = ui32ashalf2(u.w);
 }
 
-__device__ __forceinline__ uint2 tile_linear_to_xy(uint linear, ushort2 wh) {
-  return make_uint2(linear % wh.x, linear / wh.x);
+// 从每 3 位中提取一位并压缩回原始 10-bit 值
+__host__ __device__ inline uint32_t compact_bits(uint32_t v) {
+    v &= 0x49249249u;                     // keep bits at positions 0,3,6,...
+    v = (v | (v >> 2)) & 0xC30C30C3u;
+    v = (v | (v >> 4)) & 0x0F00F00Fu;
+    v = (v | (v >> 8)) & 0xFF0000FFu;
+    v = (v | (v >> 16)) & 0x000003FFu;    // result is 10 bits
+    return v;
+}
+__host__ __device__ inline uint32_t morton3D_invert_x(uint32_t code) {
+    return compact_bits(code);            // x 位位于 0,3,6,...
+}
+__host__ __device__ inline uint32_t morton3D_invert_y(uint32_t code) {
+    return compact_bits(code >> 1);       // y 位位于 1,4,7,...
+}
+__host__ __device__ inline uint32_t morton3D_invert_z(uint32_t code) {
+    return compact_bits(code >> 2);       // z 位位于 2,5,8,...
+}
+
+__device__ __forceinline__ uint2 morton2d_invert(uint32_t lin) {
+  return make_uint2(morton3D_invert_x(lin),   // x
+                    morton3D_invert_y(lin));  // y
+}
+
+__device__ __forceinline__ uint morton2d(uint2 xy) {
+  return morton3D(xy.x, xy.y, 0);
+}
+
+__device__ __forceinline__ uint2 tile_linear_to_xy(uint linear, uint2 wh) {
+  // return make_uint2(linear % wh.x, linear / wh.x);
+  return morton2d_invert(linear);
 }
 
 __device__ __forceinline__ uint tile_xy_to_linear(uint2 wh, uint2 xy) {
+  // width * tile_y + tile_x
   return wh.x * xy.y + xy.x;
 }
 

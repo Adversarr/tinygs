@@ -517,7 +517,7 @@ __global__ void create_instances_cu(
     const uint* primitive_offsets,
     const ushort4* primitive_screen_bounds,
     const float2* primitive_mean2d,
-    ushort* instance_keys,
+    uint* instance_keys,
     uint* instance_primitive_indices,
     const PrimitiveInfo* __restrict__ primitive_infos,
     const uint grid_width,
@@ -618,11 +618,7 @@ __global__ void create_instances_cu(
             const uint write_offset = current_write_offset_coop + write_offset_current;
             if (write) {
                 const uint tile_key_u32 = tile_y * grid_width + tile_x;
-#ifndef NDEBUG
-                assert(tile_key_u32 <= 0xffffu);
-#endif
-                const ushort tile_key = static_cast<ushort>(tile_key_u32);
-                instance_keys[write_offset] = tile_key;
+                instance_keys[write_offset] = tile_key_u32;
                 instance_primitive_indices[write_offset] = primitive_idx_coop;
             }
             current_write_offset_coop += n_writes;
@@ -633,17 +629,17 @@ __global__ void create_instances_cu(
 }
 
 __global__ void extract_instance_ranges_cu(
-    const ushort* instance_keys,
+    const uint* instance_keys,
     uint2* tile_instance_ranges,
     const uint n_instances) {
     auto instance_idx = cg::this_grid().thread_rank();
     if (instance_idx >= n_instances)
         return;
-    const ushort instance_tile_idx = instance_keys[instance_idx];
+    const uint instance_tile_idx = instance_keys[instance_idx];
     if (instance_idx == 0)
         tile_instance_ranges[instance_tile_idx].x = 0;
     else {
-        const ushort previous_instance_tile_idx = instance_keys[instance_idx - 1];
+        const uint previous_instance_tile_idx = instance_keys[instance_idx - 1];
         if (instance_tile_idx != previous_instance_tile_idx) {
             tile_instance_ranges[previous_instance_tile_idx].y = instance_idx;
             tile_instance_ranges[instance_tile_idx].x = instance_idx;

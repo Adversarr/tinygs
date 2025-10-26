@@ -59,8 +59,6 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
     const int n_tiles = grid.x * grid.y;
     const int grid_width = grid.x;
 
-
-
     // Per-tile buffers
     char* per_tile_buffers_blob = per_tile_buffers_func(required<PerTileBuffers>(n_tiles));
     PerTileBuffers per_tile_buffers = PerTileBuffers::from_blob(per_tile_buffers_blob, n_tiles);
@@ -151,7 +149,7 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
             per_primitive_buffers.depth_keys,
             per_primitive_buffers.primitive_indices,
             n_visible_primitives,
-            0, sizeof(int) * 8, major_stream); // TODO: major_stream
+            0, sizeof(uint) * 8, major_stream); // keys are uint
         CHECK_CUDA(config::debug, "cub::DeviceRadixSort::SortPairs (Depth)");
         tinygs::maybe_sync(major_stream);
     }
@@ -210,7 +208,7 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
             per_instance_buffers.keys,
             per_instance_buffers.primitive_indices,
             n_instances,
-            0, sizeof(ushort) * 8, major_stream); // TODO: major_stream
+            0, sizeof(uint) * 8, major_stream); // keys are uint
         CHECK_CUDA(config::debug, "cub::DeviceRadixSort::SortPairs (Tile)");
         tinygs::maybe_sync(major_stream);
     }

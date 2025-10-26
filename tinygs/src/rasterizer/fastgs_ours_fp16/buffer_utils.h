@@ -84,16 +84,16 @@ struct PerPrimitiveBuffers {
 struct PerInstanceBuffers {
   size_t cub_workspace_size;
   char* cub_workspace;
-  cub::DoubleBuffer<ushort> keys;
+  cub::DoubleBuffer<uint> keys;
   cub::DoubleBuffer<uint> primitive_indices;
 
   static PerInstanceBuffers from_blob(char*& blob, size_t n_instances) {
     PerInstanceBuffers buffers;
-    ushort* keys_current;
+    uint* keys_current;
     obtain(blob, keys_current, n_instances, 128);
-    ushort* keys_alternate;
+    uint* keys_alternate;
     obtain(blob, keys_alternate, n_instances, 128);
-    buffers.keys = cub::DoubleBuffer<ushort>(keys_current, keys_alternate);
+    buffers.keys = cub::DoubleBuffer<uint>(keys_current, keys_alternate);
     uint* primitive_indices_current;
     obtain(blob, primitive_indices_current, n_instances, 128);
     uint* primitive_indices_alternate;
