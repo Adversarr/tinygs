@@ -5,6 +5,7 @@ namespace tinygs {
 
 struct FastGSRasterizerParams {
   float f16_grad_scaler = 1.0f;
+  bool enable_pose_opt = false;
 
   void from_json(const json& params);
   json to_json() const;

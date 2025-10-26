@@ -227,13 +227,9 @@ void tinygs::fast_gs_fp16::backward(
     float* grad_opacities_raw,
     float3* grad_sh_coefficients_0,
     float3* grad_sh_coefficients_rest,
-    float2* grad_mean2d_helper,
-    float* /* grad_conic_helper */,
-    float3* grad_color,
     float4* grad_w2c,
     float4* grad_w2c_per_gs,
     tinygs::DensificationInfo* densification_info,
-    float2* absgrad_mean2d_helper,
     const int n_primitives,
     const int /* n_visible_primitives */,
     const int n_instances,
@@ -326,7 +322,7 @@ void tinygs::fast_gs_fp16::backward(
         tinygs::maybe_sync(stream);
     }
 
-    {
+   if (grad_w2c_per_gs != nullptr) {
         GS_RANGE_SCOPE(m_reduce_w2c_grad, C_GREEN, catK(), n_primitives);
         using float16 = float[16];
         const int grids = div_round_up(n_primitives, 256);
@@ -340,5 +336,7 @@ void tinygs::fast_gs_fp16::backward(
 
         CHECK_CUDA(config::debug, "reduce_sum_4x4_aos_inplace_f32x4");
         tinygs::maybe_sync(stream);
+    } else {
+      CUDA_CHECK_THROW(cudaMemsetAsync(grad_w2c, 0, 16 * sizeof(float), stream));
     }
 }

@@ -241,27 +241,6 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
     throw std::runtime_error("Gaussians or gradient gaussians not set");
   }
   const auto n_gaussians = m_gaussians->size();
-  if (m_impl->grad_mean2d_helper.size() < n_gaussians) {
-    m_impl->grad_mean2d_helper = GPUBuffer<float2>(ctx.stream, n_gaussians);
-  }
-  if (m_impl->grad_conic_helper.size() < n_gaussians) {
-    m_impl->grad_conic_helper = GPUBuffer<float3>(ctx.stream, n_gaussians);
-  }
-  if (m_impl->grad_w2c_per_gs.size() < 4 * n_gaussians) {
-    m_impl->grad_w2c_per_gs = GPUBuffer<float4>(ctx.stream, 4 * n_gaussians);
-  }
-  if (m_impl->grad_color.size() < n_gaussians) {
-    m_impl->grad_color = GPUBuffer<float3>(ctx.stream, n_gaussians);
-  }
-  if (m_impl->absgrad_mean2d_helper.size() < n_gaussians) {
-    m_impl->absgrad_mean2d_helper = GPUBuffer<float2>(ctx.stream, n_gaussians);
-  }
-
-  m_impl->grad_w2c_per_gs.memset_async(ctx.stream, 0);
-  m_impl->grad_mean2d_helper.memset_async(ctx.stream, 0);
-  m_impl->grad_conic_helper.memset_async(ctx.stream, 0);
-  m_impl->grad_color.memset_async(ctx.stream, 0);
-  m_impl->absgrad_mean2d_helper.memset_async(ctx.stream, 0);
 
   float fx = ctx.fwd_input.K[0][0];
   float fy = ctx.fwd_input.K[1][1];
@@ -280,8 +259,16 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
   if (ctx.densification_info) {
     densification_info = ctx.densification_info->data();
   }
-  
   int activated_bases = (m_gaussians->get_sh_degree() + 1) * (m_gaussians->get_sh_degree() + 1);
+
+  float4* grad_w2c_per_gs = nullptr;
+  if (m_params.enable_pose_opt) {
+    if (m_impl->grad_w2c_per_gs.size() < 4 * n_gaussians) {
+      m_impl->grad_w2c_per_gs = GPUBuffer<float4>(ctx.stream, 4 * n_gaussians);
+    }
+    m_impl->grad_w2c_per_gs.memset_async(ctx.stream, 0);
+    grad_w2c_per_gs = m_impl->grad_w2c_per_gs.data();
+  }
 
   if (ctx.fwd_output.image.data_type == DataType::Float16) {
     tinygs::fast_gs_fp16::backward(
@@ -303,13 +290,9 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
       /* grad_opacities */ thrust::raw_pointer_cast(opacities_grad.data()),
       /* grad_sh_coeffs */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(sh_coeffs_0_grad.data())),
       /* grad_sh_coeffs_rest */ reinterpret_cast<float3*>(thrust::raw_pointer_cast(sh_coeffs_rest_grad.data())),
-      /* grad_mean2d_helper */  m_impl->grad_mean2d_helper.data(),
-      /* grad_conic_helper */ reinterpret_cast<float*>(m_impl->grad_conic_helper.data()),
-      /* grad_color_helper */ m_impl->grad_color.data(),
       /* grad_w2c */ reinterpret_cast<float4*>(&m_impl->device_block.data()->w2c_grad),
-      /* grad_w2c_per_gs */ m_impl->grad_w2c_per_gs.data(),
+      /* grad_w2c_per_gs */ grad_w2c_per_gs,
       /* densification_info */ densification_info,
-      /* absgrad_mean2d_helper */ m_impl->absgrad_mean2d_helper.data(),
       /* n_primitives */ n_gaussians,
       /* n_visible_primitives */ m_impl->n_visible_primitives,
       /* n_instances */ m_impl->n_instances,
@@ -327,6 +310,22 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
       /* stream */ ctx.stream
     );
   } else {
+    if (m_impl->grad_mean2d_helper.size() < n_gaussians) {
+      m_impl->grad_mean2d_helper = GPUBuffer<float2>(ctx.stream, n_gaussians);
+    }
+    if (m_impl->grad_conic_helper.size() < n_gaussians) {
+      m_impl->grad_conic_helper = GPUBuffer<float3>(ctx.stream, n_gaussians);
+    }
+    if (m_impl->grad_color.size() < n_gaussians) {
+      m_impl->grad_color = GPUBuffer<float3>(ctx.stream, n_gaussians);
+    }
+    if (m_impl->absgrad_mean2d_helper.size() < n_gaussians) {
+      m_impl->absgrad_mean2d_helper = GPUBuffer<float2>(ctx.stream, n_gaussians);
+    }
+    m_impl->grad_mean2d_helper.memset_async(ctx.stream, 0);
+    m_impl->grad_conic_helper.memset_async(ctx.stream, 0);
+    m_impl->grad_color.memset_async(ctx.stream, 0);
+    m_impl->absgrad_mean2d_helper.memset_async(ctx.stream, 0);
     fast_gs::rasterization::backward(
       /* grad_image */ static_cast<float*>(ctx.grad_output.image.data),
       /* image */ static_cast<float*>(ctx.fwd_output.image.data),
@@ -350,7 +349,7 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
       /* grad_conic_helper */ reinterpret_cast<float*>(m_impl->grad_conic_helper.data()),
       /* grad_color_helper */ m_impl->grad_color.data(),
       /* grad_w2c */ reinterpret_cast<float4*>(&m_impl->device_block.data()->w2c_grad),
-      /* grad_w2c_per_gs */ m_impl->grad_w2c_per_gs.data(),
+      /* grad_w2c_per_gs */ grad_w2c_per_gs,
       /* densification_info */ densification_info,
       /* absgrad_mean2d_helper */ m_impl->absgrad_mean2d_helper.data(),
       /* n_primitives */ n_gaussians,

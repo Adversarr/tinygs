@@ -265,6 +265,7 @@ __global__ void preprocess_backward_cu(
         j22 * (dL_dmean2d.y - dL_dj23_clamped / depth),
         -j11 * (x * dL_dmean2d.x + djwr1_dz_helper / depth) - j22 * (y * dL_dmean2d.y + djwr2_dz_helper / depth));
 
+    if (grad_w2c_per_gs != nullptr) {
         grad_w2c_per_gs[primitive_idx * 4 + 0].w =  dL_dmean3d_cam.x;
         grad_w2c_per_gs[primitive_idx * 4 + 1].w =  dL_dmean3d_cam.y;
         grad_w2c_per_gs[primitive_idx * 4 + 2].w =  dL_dmean3d_cam.z;
@@ -277,7 +278,7 @@ __global__ void preprocess_backward_cu(
         grad_w2c_per_gs[primitive_idx * 4 + 2].x =  dL_dmean3d_cam.z * mean3d.x;
         grad_w2c_per_gs[primitive_idx * 4 + 2].y =  dL_dmean3d_cam.z * mean3d.y;
         grad_w2c_per_gs[primitive_idx * 4 + 2].z =  dL_dmean3d_cam.z * mean3d.z;
-
+    }
         // 3d mean gradient from splatting
         const float3 dL_dmean3d_from_splatting = make_float3(
             w2c_r1.x * dL_dmean3d_cam.x + w2c_r2.x * dL_dmean3d_cam.y + w2c_r3.x * dL_dmean3d_cam.z,

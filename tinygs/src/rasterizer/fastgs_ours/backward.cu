@@ -329,7 +329,7 @@ void fast_gs::rasterization::backward(
         tinygs::maybe_sync(stream);
     }
 
-    {
+    if (grad_w2c_per_gs != nullptr) {
         GS_RANGE_SCOPE(m_reduce_w2c_grad, C_GREEN, catK(), n_primitives);
         using float16 = float[16];
         const int grids = div_round_up(n_primitives, 256);
@@ -343,5 +343,7 @@ void fast_gs::rasterization::backward(
 
         CHECK_CUDA(config::debug, "reduce_sum_4x4_aos_inplace_f32x4");
         tinygs::maybe_sync(stream);
+    } else {
+      CUDA_CHECK_THROW(cudaMemsetAsync(grad_w2c, 0, 16 * sizeof(float), stream));
     }
 }

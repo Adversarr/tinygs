@@ -259,7 +259,6 @@ __global__ __launch_bounds__(config::block_size_preprocess) void preprocess_cu(
     uint* __restrict__ primitive_n_touched_tiles,
     ushort4* __restrict__ primitive_screen_bounds,
     float2* __restrict__ primitive_mean2d,
-    float3* __restrict__ primitive_color,
     uint* __restrict__ n_visible_primitives,
     uint* __restrict__ n_instances,
     PrimitiveInfo* __restrict__ primitive_infos,
@@ -483,7 +482,6 @@ __global__ __launch_bounds__(config::block_size_preprocess) void preprocess_cu(
         sh_coefficients_0, sh_coefficients_rest,
         mean3d, cam_position[0],
         primitive_idx, active_sh_bases, total_bases_sh_rest);
-    primitive_color[primitive_idx] = color;
 
     const uint offset = atomicAdd(n_visible_primitives, 1);
     const uint depth_key = __float_as_uint(depth);

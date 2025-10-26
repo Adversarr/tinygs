@@ -253,19 +253,20 @@ __global__ void preprocess_backward_cu(
         j11 * (dL_dmean2d.x - dL_dj13_clamped / depth),
         j22 * (dL_dmean2d.y - dL_dj23_clamped / depth),
         -j11 * (x * dL_dmean2d.x + djwr1_dz_helper / depth) - j22 * (y * dL_dmean2d.y + djwr2_dz_helper / depth));
-
-    grad_w2c_per_gs[primitive_idx * 4 + 0].w =  dL_dmean3d_cam.x;
-    grad_w2c_per_gs[primitive_idx * 4 + 1].w =  dL_dmean3d_cam.y;
-    grad_w2c_per_gs[primitive_idx * 4 + 2].w =  dL_dmean3d_cam.z;
-    grad_w2c_per_gs[primitive_idx * 4 + 0].x =  dL_dmean3d_cam.x * mean3d.x;
-    grad_w2c_per_gs[primitive_idx * 4 + 0].y =  dL_dmean3d_cam.x * mean3d.y;
-    grad_w2c_per_gs[primitive_idx * 4 + 0].z =  dL_dmean3d_cam.x * mean3d.z;
-    grad_w2c_per_gs[primitive_idx * 4 + 1].x =  dL_dmean3d_cam.y * mean3d.x;
-    grad_w2c_per_gs[primitive_idx * 4 + 1].y =  dL_dmean3d_cam.y * mean3d.y;
-    grad_w2c_per_gs[primitive_idx * 4 + 1].z =  dL_dmean3d_cam.y * mean3d.z;
-    grad_w2c_per_gs[primitive_idx * 4 + 2].x =  dL_dmean3d_cam.z * mean3d.x;
-    grad_w2c_per_gs[primitive_idx * 4 + 2].y =  dL_dmean3d_cam.z * mean3d.y;
-    grad_w2c_per_gs[primitive_idx * 4 + 2].z =  dL_dmean3d_cam.z * mean3d.z;
+    if (grad_w2c_per_gs != nullptr) {
+        grad_w2c_per_gs[primitive_idx * 4 + 0].w =  dL_dmean3d_cam.x;
+        grad_w2c_per_gs[primitive_idx * 4 + 1].w =  dL_dmean3d_cam.y;
+        grad_w2c_per_gs[primitive_idx * 4 + 2].w =  dL_dmean3d_cam.z;
+        grad_w2c_per_gs[primitive_idx * 4 + 0].x =  dL_dmean3d_cam.x * mean3d.x;
+        grad_w2c_per_gs[primitive_idx * 4 + 0].y =  dL_dmean3d_cam.x * mean3d.y;
+        grad_w2c_per_gs[primitive_idx * 4 + 0].z =  dL_dmean3d_cam.x * mean3d.z;
+        grad_w2c_per_gs[primitive_idx * 4 + 1].x =  dL_dmean3d_cam.y * mean3d.x;
+        grad_w2c_per_gs[primitive_idx * 4 + 1].y =  dL_dmean3d_cam.y * mean3d.y;
+        grad_w2c_per_gs[primitive_idx * 4 + 1].z =  dL_dmean3d_cam.y * mean3d.z;
+        grad_w2c_per_gs[primitive_idx * 4 + 2].x =  dL_dmean3d_cam.z * mean3d.x;
+        grad_w2c_per_gs[primitive_idx * 4 + 2].y =  dL_dmean3d_cam.z * mean3d.y;
+        grad_w2c_per_gs[primitive_idx * 4 + 2].z =  dL_dmean3d_cam.z * mean3d.z;
+    }
 
     // 3d mean gradient from splatting
     const float3 dL_dmean3d_from_splatting = make_float3(
