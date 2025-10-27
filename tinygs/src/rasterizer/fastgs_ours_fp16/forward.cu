@@ -9,7 +9,7 @@
 
 #include "buffer_utils.h"
 #include "forward.h"
-#include "helper_math.h"
+#include "../../helper_math.h"
 #include "kernels_forward.cuh"
 #include "rasterization_config.h"
 #include "utils.h"

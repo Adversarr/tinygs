@@ -8,7 +8,7 @@
 // https://github.com/humansensinglab/taming-3dgs/blob/fd0f7d9edfe135eb4eefd3be82ee56dada7f2a16/submodules/diff-gaussian-rasterization/cuda_rasterizer/backward.cu#L404
 
 #include "buffer_utils.h"
-#include "helper_math.h"
+#include "../../helper_math.h"
 #include "kernel_utils.cuh"
 #include "rasterization_config.h"
 #include "utils.h"

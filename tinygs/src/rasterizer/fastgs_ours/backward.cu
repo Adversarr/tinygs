@@ -5,7 +5,7 @@
 #include "backward.h"
 #include "buffer_utils.h"
 #include "tinygs/cuda/common_host.hpp"
-#include "helper_math.h"
+#include "../../helper_math.h"
 #include "kernels_backward.cuh"
 #include "rasterization_config.h"
 #include "utils.h"

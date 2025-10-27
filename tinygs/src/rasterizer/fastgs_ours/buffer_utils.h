@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "helper_math.h"
+#include "../../helper_math.h"
 #include "rasterization_config.h"
 #include <cstdint>
 #include <cub/cub.cuh>

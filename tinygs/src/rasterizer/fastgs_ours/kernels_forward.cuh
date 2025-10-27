@@ -10,7 +10,7 @@
 #pragma nv_diag_suppress static_var_with_dynamic_init
 
 #include "buffer_utils.h"
-#include "helper_math.h"
+#include "../../helper_math.h"
 #include "rasterization_config.h"
 #include "utils.h"
 #include <cooperative_groups.h>

@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <cub/cub.cuh>
 
-#include "helper_math.h"
+#include "../../helper_math.h"
 #include "rasterization_config.h"
 
 namespace tinygs::fast_gs_fp16 {

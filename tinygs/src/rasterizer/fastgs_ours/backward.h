@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "helper_math.h"
+#include "../../helper_math.h"
 #include "tinygs/core/gaussian.hpp"
 #include <functional>
 
