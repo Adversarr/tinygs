@@ -16,6 +16,8 @@
 #include <cooperative_groups.h>
 #include "tinygs/common.hpp"
 
+#include <mma.h>
+
 namespace cg = cooperative_groups;
 namespace tinygs::fast_gs_fp16::kernels::forward {
 
