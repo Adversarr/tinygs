@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
 
-set -euo pipefail
-
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -113,7 +111,7 @@ echo -e "${GREEN}2. Initial Point Estimate${NC}"
 INITIAL_TIME=$( "${PYTHON_BIN}" scripts/aligner_vggt.py \
   --root "${ROOT}" \
   --id "${SCENE_ID}" \
-  --working_dir "${OUTPUT_DIR}/${SCENE_ID}/" 2>&1 | awk '/VGGT processing time:/ {print $5}' )
+  --working_dir "${OUTPUT_DIR}/${SCENE_ID}/" | awk '/VGGT processing time:/ {print $5}' )
 
 
 if [ $? -eq 0 ]; then
