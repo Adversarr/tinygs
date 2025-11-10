@@ -205,7 +205,7 @@ def main():
 
     # # Put the vggt point cloud into original
     pc_vggt_transformed = scale * (np.array(pc_vggt.vertices) @ R.T) + t
-    pc_vggt_color = np.array(pc_vggt.colors)
+    pc_vggt_color = np.array(pc_vggt.colors).astype(np.float32) / 255.0
 
     print(pc_vggt_transformed.shape, pc_vggt_color.shape) # (n, 3) (n, 4)
     print(xyz.shape, rgb.shape) # (n, 3) (n, 3)

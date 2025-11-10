@@ -52,12 +52,9 @@ def write_extrin_intrin_file(
         int_line = f"{cid} PINHOLE {W} {H} {fx} {fy} {cx} {cy} 0.0 0.0 0.0 0.0 0.0"
         extr.append(ext_line)
         intr.append(int_line)
-        print(ext_line)
-        print(int_line)
     Path(export_dir).mkdir(parents=True, exist_ok=True)
     (Path(export_dir) / 'images.txt').write_text('\n'.join(extr))
     (Path(export_dir) / 'cameras.txt').write_text('\n'.join(intr))
-
 
 def run_vggt(model: VGGT, vgg_input: torch.Tensor, dtype: torch.dtype, image_paths=None):
     """
@@ -101,6 +98,7 @@ def main():
     parser.add_argument("--merging", type=int, default=0, help="VGGT merging parameter")
     parser.add_argument("--depth_conf_thresh", type=float, default=1, help="Depth confidence threshold")
     parser.add_argument("--max_points", type=int, default=100000, help="Max number of 3D points to keep")
+    parser.add_argument("--avg-intr", action='store_true')
     args = parser.parse_args()
 
     ID = args.id
@@ -143,6 +141,9 @@ def main():
     # Run VGGT
     print(f"Running VGGT on {len(vgg_input)} images")
     extrinsic, intrinsic, depth_map, depth_conf, pose_enc = run_vggt(model, vgg_input, dtype, base_image_names)
+    if args.avg_intr:
+        intrisic_mean = np.mean(intrinsic, axis=0)
+        intrinsic = np.tile(intrisic_mean[None, ...], (len(vgg_input), 1, 1))
 
     # Rotate everything back to match original portrait orientation
     # - Inputs were rotated 90° clockwise before VGGT; revert outputs by 90° CCW.
@@ -209,10 +210,6 @@ def main():
     print(f"Depth conf shape: {depth_conf.shape}")
     print(f"Pose enc shape: {pose_enc.shape}")
 
-    np.save(f"{args.out}/{ID}_extrins.npy", extrinsic)
-    np.save(f"{args.out}/{ID}_intris.npy", intrinsic)
-    np.save(f"{args.out}/{ID}_pose_enc.npy", pose_enc)
-
     # Back-project depth to 3D points (world coords)
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
 
@@ -250,17 +247,20 @@ def main():
     try:
         import trimesh
         from pcloudsim import simplify_point_cloud, RemovalParams
+        mean = points_3d.mean(axis=0)
+        scale = np.abs(points_3d - mean).max()
         params = RemovalParams(
             enable_statistical_outliers=True,
             n_neighbors_stats=20,
             std_dev_mul=2.0,
             enable_radius_outliers=True,
-            radius=0.05,
+            radius=0.05 * scale,
             min_points_radius=16,
             enable_voxel_simplify=False,
-            voxel_size=0.01
+            voxel_size=0.001 * scale
         )
-        pc = trimesh.PointCloud(points_3d, colors=points_rgb)
+        points_3d, points_rgb = simplify_point_cloud(points_3d, points_rgb, params)
+        pc = trimesh.PointCloud(points_3d, colors=points_rgb.astype(np.uint8))
         pc.export(str(OUT_FILE))
         print(f"Exported {points_3d.shape[0]} points to {OUT_FILE}")
     except Exception as e:
