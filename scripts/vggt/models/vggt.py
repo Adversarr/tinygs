@@ -4,6 +4,7 @@
 # This source code is licensed under the license found in the
 # LICENSE file in the root directory of this source tree.
 
+import sys
 import torch
 import torch.nn as nn
 from huggingface_hub import PyTorchModelHubMixin  # used for model hub
@@ -88,7 +89,8 @@ class VGGT(nn.Module, PyTorchModelHubMixin):
         update_attention_in_module(self.aggregator)
 
         print(
-            f"🔧 Updated model attention layer patch dimensions: {patch_width}x{patch_height}"
+            f"🔧 Updated model attention layer patch dimensions: {patch_width}x{patch_height}",
+            file=sys.stderr,
         )
 
     def forward(

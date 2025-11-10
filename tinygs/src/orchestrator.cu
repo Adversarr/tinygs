@@ -299,7 +299,7 @@ TrainingState Orchestrator::train() {
       auto now = std::chrono::steady_clock::now();
       auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_state.start_time).count();
       if (elapsed >= static_cast<long>(m_config.max_seconds)) {
-        log_info("Max seconds ({}) reached at step {}", m_config.max_seconds, m_state.current_step);
+        log_warning("Max seconds ({}) reached at step {}", m_config.max_seconds, m_state.current_step);
         m_state.should_stop = true;
         test_step();
         break;
@@ -547,7 +547,8 @@ void Orchestrator::eval() {
                                                 std::plus<float>(),
                                                 [mean](float x) { return (x - mean) * (x - mean); }) 
                          / metric_pair.second.size());
-    std::cout << fmt::format("Metric {}: mean = {:.6f}, std = {:.6f}\n", metric_pair.first, mean, std);
+    std::cout << fmt::format("[Orchestrator] [Step {}] Metric {}: mean = {:.6f}, std = {:.6f}\n",
+                              m_state.current_step, metric_pair.first, mean, std);
   }
 
   // Restore training resolution and dtype
@@ -691,6 +692,10 @@ void Orchestrator::initialize() {
   ensure(m_config.out_dir);
   if (m_config.reorder_gaussians_interval > 0) {
     reorder_gaussians();
+  }
+
+  if (m_config.train_data_type == DataType::Float16) {
+    log_warning("Using Float16 precision for training.");
   }
 }
 

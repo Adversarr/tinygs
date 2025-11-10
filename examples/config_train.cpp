@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <chrono>
 #include <cuda_runtime.h>
 #include <cxxopts.hpp>
@@ -24,11 +23,18 @@ int main(int argc, char** argv) {
     ("h,help", "Print help")
     ("v,visualize", "Visualize training process", cxxopts::value<bool>()->default_value("false"))
     ("d,debug", "Enable debug mode", cxxopts::value<bool>()->default_value("false"))
-    ("c,config", "Config file path", cxxopts::value<std::string>());
+    ("c,config", "Config file path", cxxopts::value<std::string>())
+    ("l,log_level", "Verbose level of logger (debug, info, warn, error)", cxxopts::value<std::string>()->default_value("warn"));
 
   auto result = opts.parse(argc, argv);
   if(result["debug"].as<bool>()) {
     spdlog::set_level(spdlog::level::debug);
+  } else if (result["log_level"].as<std::string>() == "info") {
+    spdlog::set_level(spdlog::level::info);
+  } else if (result["log_level"].as<std::string>() == "warn") {
+    spdlog::set_level(spdlog::level::warn);
+  } else {
+    spdlog::set_level(spdlog::level::err);
   }
 
   if (result.count("help")) {
@@ -207,8 +213,9 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
     float psnr = metrics.empty() ? 0.0f : metrics[0];
     auto lr = orchestrator->get_optimizer()->get_lr();
 
-    log_info("step {} loss: {:.3e} psnr: {:.3f} time: {:.1f}ms/100step current_lr: {:.3e}", state.current_step, loss,
-             psnr, duration.count() / (state.current_step / 100.0), lr);
+    auto log_string = fmt::format("[Trainer][step {}] Loss: {:.3e} psnr: {:.3f} time: {:.1f}ms/100step CurrentLr: {:.3e}",
+                                  state.current_step, loss, psnr, duration.count() / (state.current_step / 100.0), lr);
+    std::cout << log_string << std::endl;
 
     // Visualize RGB - copy rendered image from trainer's internal buffers
     if (visualize) {

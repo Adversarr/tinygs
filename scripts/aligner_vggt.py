@@ -9,12 +9,14 @@ import torch
 import torch.nn.functional as F
 from scipy.spatial.transform import Rotation
 
+from time import time
+from argparse import ArgumentParser
+
+
 # Ensure project root (scripts/) is in sys.path so `vggt.*` imports work
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
-
-from argparse import ArgumentParser
 
 from vggt.models.vggt import VGGT
 from vggt.utils.pose_enc import pose_encoding_to_extri_intri, extri_intri_to_pose_encoding
@@ -27,7 +29,7 @@ def write_extrin_intrin_file(
     extrin_matrix: np.ndarray,
     intrins: np.ndarray,
     paths: list[Path],
-    export_dir: str, H, W
+    export_dir: Path, H: int, W: int
 ):
     extr = []
     intr = []
@@ -52,9 +54,9 @@ def write_extrin_intrin_file(
         int_line = f"{cid} PINHOLE {W} {H} {fx} {fy} {cx} {cy} 0.0 0.0 0.0 0.0 0.0"
         extr.append(ext_line)
         intr.append(int_line)
-    Path(export_dir).mkdir(parents=True, exist_ok=True)
-    (Path(export_dir) / 'images.txt').write_text('\n'.join(extr))
-    (Path(export_dir) / 'cameras.txt').write_text('\n'.join(intr))
+    export_dir.mkdir(parents=True, exist_ok=True)
+    (export_dir / 'images.txt').write_text('\n'.join(extr))
+    (export_dir / 'cameras.txt').write_text('\n'.join(intr))
 
 def run_vggt(model: VGGT, vgg_input: torch.Tensor, dtype: torch.dtype, image_paths=None):
     """
@@ -93,7 +95,6 @@ def main():
     parser.add_argument("--root", type=str, default='/data/yzr/Final', help="Root directory of all scenes")
     parser.add_argument("--id", type=str, default='1750383597053', help="ID of the scene")
     parser.add_argument("--working_dir", type=str, default='output/1750383597053', help="Working directory containing images/")
-    parser.add_argument("--out", type=str, default='aligned_points/', help="Output directory for generated PLY")
     parser.add_argument("--ckpt_path", type=str, default='model_tracker_fixed_e30.pt', help="VGGT model checkpoint path")
     parser.add_argument("--merging", type=int, default=0, help="VGGT merging parameter")
     parser.add_argument("--depth_conf_thresh", type=float, default=1, help="Depth confidence threshold")
@@ -103,23 +104,22 @@ def main():
 
     ID = args.id
     INPUT_FOLDER = f"{args.working_dir}/images/"
-    OUT_DIR = Path(args.out)
+    OUT_DIR = Path(f"{args.working_dir}/vggt/")
     OUT_DIR.mkdir(exist_ok=True, parents=True)
-    OUT_FILE = OUT_DIR / f"{ID}.ply"
+    OUT_FILE = OUT_DIR / "init_points.ply"
     INPUT_FOLDER = f"{args.working_dir}/images/"
 
     image_paths = sorted(glob.glob(os.path.join(INPUT_FOLDER, "*")))
     image_paths = [Path(i) for i in image_paths]
     if len(image_paths) == 0:
-        print(f"Error: no images found in {INPUT_FOLDER}")
-        return
+        raise ValueError(f"Error: no images found in {INPUT_FOLDER}")
     base_image_names = [os.path.basename(p) for p in image_paths]
-    print(f"Loaded {len(image_paths)} images from {INPUT_FOLDER}")
+    print(f"Loaded {len(image_paths)} images from {INPUT_FOLDER}", file=sys.stderr)
 
     # Load images as RGB array list and build VGGT input
     original_images = load_images_rgb(image_paths)
     image_height, image_width = original_images[0].shape[0:2]
-    print(f"Original height, width={image_height}, {image_width}")
+    print(f"Original height, width={image_height}, {image_width}", file=sys.stderr)
     images = []
     for img in original_images:
         # We are dealing with a portrait image, rotate it to landscape
@@ -130,16 +130,18 @@ def main():
 
     # Initialize VGGT
     dtype = torch.bfloat16 if (torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8) else torch.float16
-    print(f"Loading VGGT from {args.ckpt_path}")
+    print(f"Loading VGGT from {args.ckpt_path}", file=sys.stderr)
     model = VGGT(merging=args.merging, vis_attn_map=False)
     ckpt = torch.load(args.ckpt_path, map_location="cpu")
     model.load_state_dict(ckpt, strict=False)
     model = model.cuda().eval().to(dtype)
     model.update_patch_dimensions(patch_width, patch_height)
-    print(f"VGGT initialized with patch dimensions: {patch_width}x{patch_height}")
+    print(f"VGGT initialized with patch dimensions: {patch_width}x{patch_height}", file=sys.stderr)
 
     # Run VGGT
-    print(f"Running VGGT on {len(vgg_input)} images")
+    print("=" * 50, file=sys.stderr)
+    print(f"START:: Running VGGT on {len(vgg_input)} images", file=sys.stderr)
+    start = time()
     extrinsic, intrinsic, depth_map, depth_conf, pose_enc = run_vggt(model, vgg_input, dtype, base_image_names)
     if args.avg_intr:
         intrisic_mean = np.mean(intrinsic, axis=0)
@@ -181,7 +183,7 @@ def main():
     except Exception as e:
         # TODO: Intrinsics rotation failed; investigate shape/type. Using original intrinsics.
         # Reason: unexpected intrinsics shape or dtype caused exception: {e}
-        print(e)
+        print(e, file=sys.stderr)
         pass
 
     # Rotate extrinsics (world->cam [R|t]) to align with rotated-back camera axes.
@@ -202,13 +204,13 @@ def main():
     except Exception as e:
         # TODO: Extrinsics rotation failed; investigate numeric stability / dtype.
         # Reason: exception during S_ccw application: {e}
-        print(e)
+        print(e, file=sys.stderr)
 
-    print(f"Extrinsic shape: {extrinsic.shape}")
-    print(f"Intrinsic shape: {intrinsic.shape}")
-    print(f"Depth map shape: {depth_map.shape}")
-    print(f"Depth conf shape: {depth_conf.shape}")
-    print(f"Pose enc shape: {pose_enc.shape}")
+    print(f"Extrinsic shape: {extrinsic.shape}", file=sys.stderr)
+    print(f"Intrinsic shape: {intrinsic.shape}", file=sys.stderr)
+    print(f"Depth map shape: {depth_map.shape}", file=sys.stderr)
+    print(f"Depth conf shape: {depth_conf.shape}", file=sys.stderr)
+    print(f"Pose enc shape: {pose_enc.shape}", file=sys.stderr)
 
     # Back-project depth to 3D points (world coords)
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
@@ -232,16 +234,20 @@ def main():
     conf_mask = randomly_limit_trues(conf_mask, args.max_points)
 
     points_3d = points_3d[conf_mask]
-    print(f"Filtered {points_3d.shape[0]} points by confidence")
+    print(f"Filtered {points_3d.shape[0]} points by confidence", file=sys.stderr)
     points_rgb = points_rgb[conf_mask]
     points_xyf = points_xyf[conf_mask]  # not used for PLY but kept for completeness
     write_extrin_intrin_file(
         extrinsic,
         intrinsic,
         image_paths,
-        args.out,
+        OUT_DIR,
         vggt_fixed_resolution_height, vggt_fixed_resolution_width
     )
+    end_time = time()
+    print(f"[INFO] VGGT processing time: {end_time - start:.4f} seconds")
+    print(f"[INFO] VGGT processing time: {end_time - start:.4f} seconds", file=sys.stderr)
+    print("=" * 50, file=sys.stderr)
 
     # Save PLY point cloud
     try:
@@ -262,9 +268,9 @@ def main():
         points_3d, points_rgb = simplify_point_cloud(points_3d, points_rgb, params)
         pc = trimesh.PointCloud(points_3d, colors=points_rgb.astype(np.uint8))
         pc.export(str(OUT_FILE))
-        print(f"Exported {points_3d.shape[0]} points to {OUT_FILE}")
+        print(f"Exported {points_3d.shape[0]} points to {OUT_FILE}", file=sys.stderr)
     except Exception as e:
-        print(f"Failed to save PLY: {e}")
+        print(f"Failed to save PLY: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
