@@ -12,7 +12,6 @@
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/stbi/stbi_wrapper.h"
 #include "utils/scope_timer.hpp"
-#include <opencv2/opencv.hpp>
 
 namespace tinygs {
 
@@ -26,8 +25,7 @@ namespace tinygs {
  * @param channels Number of channels (should be 3 for RGB)
  */
 static void load_single_image(size_t index, const std::string& image_path, uint8_t* data_buffer, 
-                              uint32_t expected_width, uint32_t expected_height, uint32_t channels,
-                              bool undistort, const cv::Mat& map1, const cv::Mat& map2) {
+                              uint32_t expected_width, uint32_t expected_height, uint32_t channels) {
   auto img = load_stbi_u8(image_path.c_str());
 
   // TODO: If STB returns images with differing channel counts across files,
@@ -59,35 +57,15 @@ static void load_single_image(size_t index, const std::string& image_path, uint8
 
   const auto total_pix = temp_shape.padded_width() * temp_shape.padded_height();
 
-  // Optionally undistort using precomputed maps, then convert to RGB CHW + tiled
-  if (undistort) {
-    int type = (img.shape.channel == 3) ? CV_8UC3 : CV_8UC4;
-    cv::Mat src(expected_height, expected_width, type, img_data);
-    cv::Mat undistorted;
-    cv::remap(src, undistorted, map1, map2, cv::INTER_LINEAR);
-
-    // Use the undistorted data as source; if 4 channels, ignore alpha
-    const int src_channels = undistorted.channels();
-    for (uint32_t c = 0; c < channels; ++c) {
-      for (uint32_t h = 0; h < expected_height; ++h) {
-        for (uint32_t w = 0; w < expected_width; ++w) {
-          const auto dst_pix_idx = get_linear_index_tiled(h, w, temp_shape.tiled_width());
-          const uint8_t* row_ptr = undistorted.ptr<uint8_t>(h);
-          dest_ptr[c * total_pix + dst_pix_idx] = row_ptr[w * src_channels + c];
-        }
-      }
-    }
-  } else {
-    // img_data is in HWC format with img.shape.channel channels (RGB or RGBA)
-    // dest_ptr should be in RGB CHW format (3 channels) + tiled.
-    for (uint32_t c = 0; c < channels; ++c) {
-      for (uint32_t h = 0; h < expected_height; ++h) {
-        for (uint32_t w = 0; w < expected_width; ++w) {
-          const auto dst_pix_idx = get_linear_index_tiled(h, w, temp_shape.tiled_width());
-          // Source: HWC format; if RGBA, we read only RGB channels (ignore A)
-          const uint32_t src_idx = h * expected_width * img.shape.channel + w * img.shape.channel + c;
-          dest_ptr[c * total_pix + dst_pix_idx] = img_data[src_idx];
-        }
+  // Convert from HWC (RGB/RGBA) to CHW tiled; ignore alpha if present.
+  // TODO: If an image has fewer channels than expected (e.g., grayscale),
+  // decide whether to upsample channels or reject the file for consistency.
+  for (uint32_t c = 0; c < channels; ++c) {
+    for (uint32_t h = 0; h < expected_height; ++h) {
+      for (uint32_t w = 0; w < expected_width; ++w) {
+        const auto dst_pix_idx = get_linear_index_tiled(h, w, temp_shape.tiled_width());
+        const uint32_t src_idx = h * expected_width * img.shape.channel + w * img.shape.channel + c;
+        dest_ptr[c * total_pix + dst_pix_idx] = img_data[src_idx];
       }
     }
   }
@@ -137,32 +115,7 @@ void PngFolderDataset::load() {
     m_camera_loader.resize_sensor(m_image_shape.width, m_image_shape.height);
   }
 
-  // Precompute undistortion maps and update intrinsics if enabled
-  cv::Mat map1, map2;
-  if (m_undistortion) {
-    const auto& intr = m_camera_loader.get_camera_intrinsics();
-    cv::Mat K = (cv::Mat_<double>(3, 3) << intr.fx, 0.0, intr.cx,
-                                           0.0, intr.fy, intr.cy,
-                                           0.0, 0.0, 1.0);
-    cv::Mat dist = (cv::Mat_<double>(1, 5) << intr.k1, intr.k2, intr.p1, intr.p2, intr.k3);
-    cv::Size image_size(m_image_shape.width, m_image_shape.height);
-
-    cv::Rect valid_roi;
-    cv::Mat newK = cv::getOptimalNewCameraMatrix(K, dist, image_size, 0.0, image_size, &valid_roi);
-    cv::initUndistortRectifyMap(K, dist, cv::Mat::eye(3, 3, CV_64F), newK, image_size, CV_32FC1, map1, map2);
-
-    CameraIntrinsics new_intrisics = intr;
-    new_intrisics.fx = static_cast<float>(newK.at<double>(0, 0));
-    new_intrisics.fy = static_cast<float>(newK.at<double>(1, 1));
-    new_intrisics.cx = static_cast<float>(newK.at<double>(0, 2));
-    new_intrisics.cy = static_cast<float>(newK.at<double>(1, 2));
-    new_intrisics.k1 = 0.0f;
-    new_intrisics.k2 = 0.0f;
-    new_intrisics.k3 = 0.0f;
-    new_intrisics.p1 = 0.0f;
-    new_intrisics.p2 = 0.0f;
-    m_camera_loader.set_camera_intrinsics(new_intrisics);
-  }
+  // Undistortion support removed: images are loaded as-is.
 
   if (m_image_shape.channel != 3 && m_image_shape.channel != 4) {
     throw std::runtime_error("Only 3 (RGB) or 4 (RGBA) channels are supported now.");
@@ -179,8 +132,7 @@ void PngFolderDataset::load() {
   for (size_t i = 0; i < m_size; ++i) {
     uuid_t timestamp = m_camera_loader.get_camera_extrinsics().at(i).timestamp;
     std::string image_path = get_image(timestamp, m_extension, m_folder_path);
-    load_single_image(i, image_path, m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel,
-                      m_undistortion, map1, map2);
+    load_single_image(i, image_path, m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
   }
   auto end = std::chrono::steady_clock::now();
 
@@ -193,8 +145,6 @@ void PngFolderDataset::load() {
   log_info("Loaded {} images with resolution={}x{} (inferred from first image). (consumed {:.6f} GiB in {:.6f} sec.)",
             m_size, m_image_shape.width, m_image_shape.height, static_cast<double>(total_size) / (1024 * 1024 * 1024),
             std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
-
-  log_info("Camera Intrisics: {}", to_string(m_camera_loader.get_camera_intrinsics()));
 }
 
 ImageShape PngFolderDataset::image_shape() const {
@@ -217,12 +167,13 @@ Data PngFolderDataset::operator[](size_t index) const {
     throw std::out_of_range(fmt::format("Index {} out of range for dataset of size {}", index, m_size));
   }
 
-  const auto& intrin = m_camera_loader.get_camera_intrinsics();
   const auto& extrin = m_camera_loader.get_camera_extrinsics()[index];
+  const uuid_t cam_uid = extrin.cam_uid;
+  const auto& intrin = m_camera_loader.get_camera_intrinsics()[cam_uid];
 
   Data data;
   data.frame_idx = extrin.frame_idx;
-  data.cam_uid = 0; // TODO: Support multi-camera video dataset
+  data.cam_uid = cam_uid;
   data.timestamp = extrin.timestamp;
 
   // Set up image data
@@ -259,9 +210,6 @@ void PngFolderDataset::set_params(const json& j) {
   if (j.contains("interpolate")) {
     m_interpolate = j["interpolate"].get<bool>();
   }
-  if (j.contains("undistortion")) {
-    m_undistortion = j["undistortion"].get<bool>();
-  }
 }
 
 json PngFolderDataset::get_params() const {
@@ -272,7 +220,6 @@ json PngFolderDataset::get_params() const {
   params["intrinsics_file_path"] = m_intrinsics_file_path;
   params["extension"] = m_extension;
   params["interpolate"] = m_interpolate;
-  params["undistortion"] = m_undistortion;
   return params;
 }
 

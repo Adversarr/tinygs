@@ -129,41 +129,7 @@ void VideoDataset::load() {
     throw std::runtime_error("Failed to open video file: " + m_video_file_path);
   }
 
-  cv::Mat map1, map2;
-  if (m_undistortion) {
-    // Query video resolution and align intrinsics to it
-    const int video_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
-    const int video_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
-    m_camera_loader.resize_sensor(video_width, video_height);
-
-    // Build OpenCV camera matrix and distortion coefficients
-    const auto& intr = m_camera_loader.get_camera_intrinsics();
-    cv::Mat K = (cv::Mat_<double>(3, 3) << intr.fx, 0.0, intr.cx,
-                                           0.0, intr.fy, intr.cy,
-                                           0.0, 0.0, 1.0);
-    cv::Mat dist = (cv::Mat_<double>(1, 5) << intr.k1, intr.k2, intr.p1, intr.p2, intr.k3);
-    cv::Size image_size(intr.width, intr.height);
-
-    // Compute optimal new camera matrix (alpha=0 to minimize black regions)
-    cv::Rect valid_roi;
-    cv::Mat newK = cv::getOptimalNewCameraMatrix(K, dist, image_size, 0.0, image_size, &valid_roi);
-
-    // Initialize undistortion map
-    cv::initUndistortRectifyMap(K, dist, cv::Mat::eye(3, 3, CV_64F), newK, image_size, CV_32FC1, map1, map2);
-
-    // Update intrinsics to the new camera matrix and zero distortion (since frames will be undistorted)
-    CameraIntrinsics new_intrisics = intr;
-    new_intrisics.fx = static_cast<float>(newK.at<double>(0, 0));
-    new_intrisics.fy = static_cast<float>(newK.at<double>(1, 1));
-    new_intrisics.cx = static_cast<float>(newK.at<double>(0, 2));
-    new_intrisics.cy = static_cast<float>(newK.at<double>(1, 2));
-    new_intrisics.k1 = 0.0f;
-    new_intrisics.k2 = 0.0f;
-    new_intrisics.k3 = 0.0f;
-    new_intrisics.p1 = 0.0f;
-    new_intrisics.p2 = 0.0f;
-    m_camera_loader.set_camera_intrinsics(new_intrisics);
-  }
+  // Undistortion support removed: frames will be used as-is.
 
   // Get video properties
   const int total_frames = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_COUNT));
@@ -220,14 +186,8 @@ void VideoDataset::load() {
       current_video_frame++;
     }
 
-    // Optionally undistort then convert from BGR HWC to RGB CHW+Tiled format
-    if (m_undistortion) {
-      cv::Mat undistorted;
-      cv::remap(frame, undistorted, map1, map2, cv::INTER_LINEAR);
-      load_single_frame(i, undistorted, m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
-    } else {
-      load_single_frame(i, frame, m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
-    }
+    // Convert from BGR HWC to RGB CHW+Tiled format (undistortion removed)
+    load_single_frame(i, frame, m_data, m_image_shape.width, m_image_shape.height, m_image_shape.channel);
 
     m_timestamp_data[target_timestamp] = m_data + i * m_image_shape.padded_size();
   }
@@ -239,8 +199,6 @@ void VideoDataset::load() {
   log_info("Loaded {} frames with resolution={}x{}. (consumed {:.6f} GiB in {:.6f} sec.)",
             m_size, m_image_shape.width, m_image_shape.height, static_cast<double>(total_size) / (1024 * 1024 * 1024),
             std::chrono::duration_cast<std::chrono::duration<double>>(end - start).count());
-
-  log_info("Camera Intrinsics: {}", to_string(m_camera_loader.get_camera_intrinsics()));
 }
 
 ImageShape VideoDataset::image_shape() const {
@@ -264,13 +222,14 @@ Data VideoDataset::operator[](size_t index) const {
                             + std::to_string(m_size));
   }
 
-  const auto& intrin = m_camera_loader.get_camera_intrinsics();
   const auto& extrin = m_camera_loader.get_camera_extrinsics()[index];
+  const uuid_t cam_uid = extrin.cam_uid;
+  const auto& intrin = m_camera_loader.get_camera_intrinsics().at(cam_uid);
   const auto timestamp = extrin.timestamp;
 
   Data data;
   data.frame_idx = extrin.frame_idx;
-  data.cam_uid = 0; // TODO: Support multi-camera video dataset
+  data.cam_uid = cam_uid;
   data.timestamp = timestamp;
 
   // Set up image data
@@ -308,9 +267,6 @@ void VideoDataset::set_params(const json& j) {
   if (j.contains("intrinsics_file_path")) {
     m_intrinsics_file_path = j["intrinsics_file_path"].get<std::string>();
   }
-  if (j.contains("undistortion")) {
-    m_undistortion = j["undistortion"].get<bool>();
-  }
 }
 
 json VideoDataset::get_params() const {
@@ -321,7 +277,6 @@ json VideoDataset::get_params() const {
   params["extrinsics_file_path"] = m_extrinsics_file_path;
   params["intrinsics_file_path"] = m_intrinsics_file_path;
   params["interpolate"] = m_interpolate;
-  params["undistortion"] = m_undistortion;
   return params;
 }
 

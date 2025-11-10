@@ -62,11 +62,12 @@ struct CameraExtrinsics {
   vec3 m_t;            ///< Translation (tx, ty, tz)
   uuid_t frame_idx;    ///< Frame IDX (1-based)
   uuid_t timestamp;    ///< Global timestamp
-
+  uuid_t cam_uid;      ///< Camera ID (0-based)
+  
   /// @brief Constructor from quaternion and translation
   TINYGS_HOST_DEVICE CameraExtrinsics(const quat& quaternion, const vec3& translation,  //
-                                      uuid_t frame_uid, uuid_t timestamp) :
-      m_q(quaternion), m_t(translation), frame_idx(frame_uid), timestamp(timestamp) {}
+                                      uuid_t frame_uid, uuid_t timestamp, uuid_t cam_uid) :
+      m_q(quaternion), m_t(translation), frame_idx(frame_uid), timestamp(timestamp), cam_uid(cam_uid) {}
 
   /// @brief Default constructor
   CameraExtrinsics() = default;

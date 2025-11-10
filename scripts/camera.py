@@ -145,6 +145,22 @@ def load_camera_extrinsics(
 
     return extrinsics, qs, ts
 
+def export_camera_extrinsics(
+    extrinsics: List[CameraExtrinsic],
+    file_path: str,
+):
+    """Export camera extrinsics to a text file.
+
+    Args:
+        extrinsics: List of CameraExtrinsic objects
+        file_path: Path to the output text file
+    """
+    with open(file_path, "w") as f:
+        for extrinsic in extrinsics:
+            qw, qx, qy, qz = extrinsic.rotation
+            tx, ty, tz = extrinsic.translation
+            line = f"{extrinsic.timestamp} {qw} {qx} {qy} {qz} {tx} {ty} {tz}\n"
+            f.write(line)
 
 def load_point_cloud(file_path: str) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Load point cloud data from COLMAP points3D.txt file.

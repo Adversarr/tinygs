@@ -648,7 +648,9 @@ void Orchestrator::initialize() {
   } else {
     log_info("Start from full resolution {}x{}", training_shape.width, training_shape.height);
   }
-  log_info("Camera intrinsics: {}", to_string(m_dataloader->get_dataset()->get_camera_loader().get_camera_intrinsics()));
+  log_info("Camera intrinsics: {}", to_string(m_dataloader->get_dataset()
+                                                  ->get_camera_loader()
+                                                  .get_camera_intrinsics()[0]));
 
   // Set active dtype for training
   m_active_data_type = m_config.train_data_type;

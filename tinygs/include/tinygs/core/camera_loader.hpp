@@ -46,9 +46,9 @@ public:
   const std::vector<CameraExtrinsics>& get_camera_extrinsics() const { return m_camera_extrinsics; }
 
   /// @brief Get camera intrinsics
-  const CameraIntrinsics& get_camera_intrinsics() const { return m_camera_intrinsics; }
+  const std::vector<CameraIntrinsics>& get_camera_intrinsics() const { return m_camera_intrinsics; }
 
-  void set_camera_intrinsics(const CameraIntrinsics& intrinsics) { m_camera_intrinsics = intrinsics; }
+  void set_camera_intrinsics(const std::vector<CameraIntrinsics>& intrinsics) { m_camera_intrinsics = intrinsics; }
 
   /**
    * @brief Resize the camera sensor to new image dimensions. The ratio should remain the same.
@@ -61,7 +61,7 @@ public:
 
 private:
   std::vector<CameraExtrinsics> m_camera_extrinsics;
-  CameraIntrinsics m_camera_intrinsics;
+  std::vector<CameraIntrinsics> m_camera_intrinsics;
 };
 
 }  // namespace tinygs

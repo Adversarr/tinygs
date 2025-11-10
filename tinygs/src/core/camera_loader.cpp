@@ -35,41 +35,46 @@ void SingleCameraLoader::load_camera_intrinsics(const std::string& intrinsics_fi
     throw std::runtime_error("No camera intrinsics found in file: " + intrinsics_file_path);
   }
 
-  m_camera_intrinsics = CameraIntrinsics::parse(lines[0]);
-  log_info("Loaded camera intrinsics from file: {}", intrinsics_file_path);
+  m_camera_intrinsics.clear();
+  m_camera_intrinsics.reserve(lines.size());
+  for (const auto& line : lines) {
+    m_camera_intrinsics.emplace_back(CameraIntrinsics::parse(line));
+  }
+  log_info("Loaded {} camera intrinsics from file: {}", m_camera_intrinsics.size(), intrinsics_file_path);
 }
 
 void SingleCameraLoader::resize_sensor(uint32_t width, uint32_t height) {
-  if (width == 0 || height == 0) {
-    throw std::runtime_error("resize_sensor: width and height must be > 0");
+  for (auto& intr : m_camera_intrinsics) {
+    if (width == 0 || height == 0) {
+      throw std::runtime_error("resize_sensor: width and height must be > 0");
+    }
+    if (intr.width == 0 || intr.height == 0) {
+      throw std::runtime_error(fmt::format("resize_sensor: intrinsics not initialized (width={}, height={})",
+                                          intr.width, intr.height));
+    }
+    if (intr.width == static_cast<int>(width) && intr.height == static_cast<int>(height)) {
+      return; // no change
+    }
+
+    float sx = static_cast<float>(width) / static_cast<float>(intr.width);
+    float sy = static_cast<float>(height) / static_cast<float>(intr.height);
+
+    float rel_diff = std::fabs(sx - sy) / std::max(sx, sy);
+    if (rel_diff > 1e-2f) {
+      log_warning("resize_sensor: aspect ratio change detected (scales differ): {:.6f}", rel_diff);
+    }
+
+    // Use sx (≈ sy) as scale
+    intr.fx *= sx;
+    intr.fy *= sy;
+    intr.cx *= sx;
+    intr.cy *= sy;
+
+    intr.width  = static_cast<int>(width);
+    intr.height = static_cast<int>(height);
+
+    log_info("Resized camera sensor to {}x{} (scale {:.6f})", width, height, sx);
   }
-  auto &intr = m_camera_intrinsics;
-  if (intr.width == 0 || intr.height == 0) {
-    throw std::runtime_error(fmt::format("resize_sensor: intrinsics not initialized (width={}, height={})",
-                                         intr.width, intr.height));
-  }
-  if (intr.width == static_cast<int>(width) && intr.height == static_cast<int>(height)) {
-    return; // no change
-  }
-
-  float sx = static_cast<float>(width) / static_cast<float>(intr.width);
-  float sy = static_cast<float>(height) / static_cast<float>(intr.height);
-
-  float rel_diff = std::fabs(sx - sy) / std::max(sx, sy);
-  if (rel_diff > 1e-2f) {
-    log_warning("resize_sensor: aspect ratio change detected (scales differ): {:.6f}", rel_diff);
-  }
-
-  // Use sx (≈ sy) as scale
-  intr.fx *= sx;
-  intr.fy *= sy;
-  intr.cx *= sx;
-  intr.cy *= sy;
-
-  intr.width  = static_cast<int>(width);
-  intr.height = static_cast<int>(height);
-
-  log_info("Resized camera sensor to {}x{} (scale {:.6f})", width, height, sx);
 }
 
 void SingleCameraLoader::interpolate_to_support(uuid_t frame_idx, uuid_t timestamp) {

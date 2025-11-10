@@ -23,7 +23,7 @@ CameraExtrinsics interpolate(
 
       quat q = glm::slerp(qa, qb, t);
       vec3 tr = a.m_t * (1.0f - t) + b.m_t * t;
-      return CameraExtrinsics(q, tr, a.frame_idx, a.timestamp);
+      return CameraExtrinsics(q, tr, a.frame_idx, a.timestamp, a.cam_uid);
     }
     default:
       throw std::runtime_error("Unsupported interpolation method");

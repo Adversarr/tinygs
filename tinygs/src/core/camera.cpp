@@ -69,7 +69,7 @@ CameraExtrinsics CameraExtrinsics::parse(const std::string& line) {
     float tx = std::stof(tokens[5]);
     float ty = std::stof(tokens[6]);
     float tz = std::stof(tokens[7]);
-    float rotation_ignored = std::stof(tokens[8]); // ignore.
+    uuid_t camera_id = std::stoull(tokens[8]); // ignore.
 
     const auto& timestamp_token = tokens[9];
     uuid_t timestamp = 0;
@@ -85,7 +85,7 @@ CameraExtrinsics CameraExtrinsics::parse(const std::string& line) {
     float norm = std::sqrt(qw*qw + qx*qx + qy*qy + qz*qz);
     qw /= norm; qx /= norm; qy /= norm; qz /= norm;
 
-    return CameraExtrinsics(quat{qw, qx, qy, qz}, vec3{tx, ty, tz}, frame_idx, timestamp);
+    return CameraExtrinsics(quat{qw, qx, qy, qz}, vec3{tx, ty, tz}, frame_idx, timestamp, camera_id);
 }
 
 std::string CameraIntrinsics::to_string() const {

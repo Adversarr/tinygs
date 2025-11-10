@@ -52,56 +52,31 @@ def run_vggt(model: VGGT, vgg_input: torch.Tensor, dtype: torch.dtype, image_pat
     depth_conf_np = depth_conf_tensor.numpy()
     extrinsic_np = extrinsic.detach().float().cpu().numpy()
     intrinsic_np = intrinsic.detach().float().cpu().numpy()
+    pose_enc = predictions["pose_enc"].detach().float().cpu().numpy()
 
-    return extrinsic_np[0], intrinsic_np[0], depth_np[0], depth_conf_np[0]
-
+    return extrinsic_np[0], intrinsic_np[0], depth_np[0], depth_conf_np[0], pose_enc[0]
 
 def main():
     parser = ArgumentParser(description="Generate point cloud from images using VGGT (no SLAM aligner)")
     parser.add_argument("--root", type=str, default='/data/yzr/Final', help="Root directory of all scenes")
-    parser.add_argument("--id", type=str, default='1750383597053', help="ID of the scene")
-    parser.add_argument("--working_dir", type=str, default='output/1750383597053', help="Working directory containing images/")
+    parser.add_argument("--id", type=str, default='1747834320424', help="ID of the scene")
+    parser.add_argument("--working_dir", type=str, default='output/1747834320424', help="Working directory containing images/")
     parser.add_argument("--out", type=str, default='aligned_points/', help="Output directory for generated PLY")
     parser.add_argument("--ckpt_path", type=str, default='model_tracker_fixed_e30.pt', help="VGGT model checkpoint path")
     parser.add_argument("--merging", type=int, default=0, help="VGGT merging parameter")
     parser.add_argument("--depth_conf_thresh", type=float, default=2, help="Depth confidence threshold")
     parser.add_argument("--max_points", type=int, default=100000, help="Max number of 3D points to keep")
-    parser.add_argument("--full-video", action="store_true", help="Process full video instead of extracted frames")
-    parser.add_argument("--t_interval", type=int, default=1, help="Time interval between frames to process")
     args = parser.parse_args()
 
     ID = args.id
     INPUT_FOLDER = f"{args.working_dir}/images/"
-    VIDEO_FILE = f'{args.root}/{ID}/{ID}_flip.mp4'
     OUT_DIR = Path(args.out)
     OUT_DIR.mkdir(exist_ok=True, parents=True)
     OUT_FILE = OUT_DIR / f"{ID}.ply"
+    INPUT_FOLDER = f"{args.working_dir}/images/"
 
-    # Gather images
-    if args.full_video:
-        print(f"Extracting frames from {VIDEO_FILE}")
-        cap = cv2.VideoCapture(VIDEO_FILE)
-        Path(f"{args.working_dir}/full_frames").mkdir(exist_ok=True, parents=True)
-        frame_count = 0
-        max_resolution_wh = 518
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-            # Resize frame if larger than max_resolution_wh
-            if max(frame.shape[:2]) > max_resolution_wh:
-                scale = max_resolution_wh / max(frame.shape[:2])
-                frame = cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_LINEAR)
-            cv2.imwrite(f"{args.working_dir}/full_frames/{frame_count:06d}.png", frame)
-            frame_count += 1
-        cap.release()
-        INPUT_FOLDER = f"{args.working_dir}/full_frames/"
-    else:
-        INPUT_FOLDER = f"{args.working_dir}/images/"
     image_paths = sorted(glob.glob(os.path.join(INPUT_FOLDER, "*")))
-    # Filter image paths based on t_interval
-    image_paths = image_paths[::args.t_interval]
-    
+    image_paths = [Path(i) for i in image_paths]
     if len(image_paths) == 0:
         print(f"Error: no images found in {INPUT_FOLDER}")
         return
@@ -119,19 +94,23 @@ def main():
     model = VGGT(merging=args.merging, vis_attn_map=False)
     ckpt = torch.load(args.ckpt_path, map_location="cpu")
     model.load_state_dict(ckpt, strict=False)
-    model = model.cuda().eval().to(torch.bfloat16)
+    model = model.cuda().eval().to(dtype)
     model.update_patch_dimensions(patch_width, patch_height)
     print(f"VGGT initialized with patch dimensions: {patch_width}x{patch_height}")
 
-
     # Run VGGT
     print(f"Running VGGT on {len(vgg_input)} images")
-    extrinsic, intrinsic, depth_map, depth_conf = run_vggt(model, vgg_input, dtype, base_image_names)
+    extrinsic, intrinsic, depth_map, depth_conf, pose_enc = run_vggt(model, vgg_input, dtype, base_image_names)
 
     print(f"Extrinsic shape: {extrinsic.shape}")
     print(f"Intrinsic shape: {intrinsic.shape}")
     print(f"Depth map shape: {depth_map.shape}")
     print(f"Depth conf shape: {depth_conf.shape}")
+    print(f"Pose enc shape: {pose_enc.shape}")
+
+    np.save(f"{args.out}/{ID}_extrins.npy", extrinsic)
+    np.save(f"{args.out}/{ID}_intris.npy", intrinsic)
+    np.save(f"{args.out}/{ID}_pose_enc.npy", pose_enc)
 
     # Back-project depth to 3D points (world coords)
     points_3d = unproject_depth_map_to_point_map(depth_map, extrinsic, intrinsic)
@@ -158,7 +137,6 @@ def main():
     print(f"Filtered {points_3d.shape[0]} points by confidence")
     points_rgb = points_rgb[conf_mask]
     points_xyf = points_xyf[conf_mask]  # not used for PLY but kept for completeness
-    points_3d[:, 1] *= -1
 
     # Save PLY point cloud
     try:
