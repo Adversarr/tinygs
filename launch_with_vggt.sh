@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -21,9 +23,9 @@ Environment variables:
   PYTHON        Python interpreter (default: python)
 
 Examples:
-  ./launch.sh /data my_scene
-  OUTPUT_DIR=out ./launch.sh /data my_scene
-  PYTHON=python3 VIDEO_TO_PNG=./bin/video_to_png ./launch.sh /data my_scene
+  ./launch_with_vggt.sh /data my_scene
+  ./launch_with_vggt.sh /data my_scene out
+  PYTHON=python3 VIDEO_TO_PNG=./video_to_png CONFIG_TRAIN=./config_train ./launch_with_vggt.sh /data my_scene out
 EOF
 }
 
@@ -111,7 +113,7 @@ echo -e "${GREEN}2. Initial Point Estimate${NC}"
 INITIAL_TIME=$( "${PYTHON_BIN}" scripts/aligner_vggt.py \
   --root "${ROOT}" \
   --id "${SCENE_ID}" \
-  --working_dir "${OUTPUT_DIR}/${SCENE_ID}/" | awk '/VGGT processing time:/ {print $5}' )
+  --working_dir "${OUTPUT_DIR}/${SCENE_ID}/" 2>&1 | awk '/VGGT processing time:/ {print $5}' )
 
 
 if [ $? -eq 0 ]; then

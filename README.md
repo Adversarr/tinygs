@@ -1,5 +1,7 @@
 # tinygs: Reconstruct your scene with 3DGS in seconds.
 
+🚀 We updated our system with VGGT as initial and float16 training support!
+
 tinygs is a lightweight library for reconstructing 3D scenes with 3DGS in seconds.
 
 Features:
@@ -20,6 +22,109 @@ We have tested tinygs on the following platforms:
 1. Ubuntu 22.04 / Manjaro Linux (Latest). (No Windows & macOS support yet.)
 2. CUDA 12.4+ (12.6 to 12.9 is the recommended version)
 3. gcc 11.4.0
+
+## Setup and Run the competition + VGGT
+
+Quick start for VGGT-based initialization and float16 training:
+
+```bash
+# 1) Prepare Python environment
+uv sync
+source .venv/bin/activate
+
+# 2) Download VGGT checkpoint and verify Python tools
+bash setup_vggt.sh
+
+# 3) Build required binaries (video_to_png, config_train)
+bash build.sh
+
+# 4) Run per scene with VGGT initialization
+bash launch_with_vggt.sh <root> <scene_id> [output_dir]
+```
+
+Example:
+
+```bash
+# output_dir is 'outputs' by default
+bash launch_with_vggt.sh /data/SIGA_Competition/Final 1750383597053
+```
+
+Outputs and layout:
+- `output_dir/scene_id/images/`: extracted frames from the source video
+- `output_dir/scene_id/vggt/init_points.ply`: initial point cloud from VGGT
+- `output_dir/scene_id/vggt/images.txt` and `cameras.txt`: extrinsics/intrinsics estimated by VGGT
+- `output_dir/scene_id/config_vggt.json`: auto-generated config tuned to available time budget
+
+Notes:
+- The available training time is set to `60 - vggt_time - 1` seconds inside `config_vggt.json`.
+- Environment overrides: `PYTHON`, `VIDEO_TO_PNG`, `CONFIG_TRAIN` work the same as in `launch.sh`.
+- Dataset structure should follow the competition format: `root/scene_id/inputs/...` and a `root/<scene_id>_flip.mp4` video.
+
+## Setup and Run the competition (SIGA 2025)
+
+```bash
+# install dependencies for python part.
+uv sync
+source .venv/bin/activate
+# build the project with cmake
+bash build.sh
+# Per scene run
+bash launch.sh  PATH_TO_DATASETS SCENE_ID # run the project with the dataset and scene id.
+```
+
+example:
+
+```
+bash launch.sh /data/SIGA_Competition/Final/ 1750383597053
+```
+
+## Script Usage
+
+Build script (`build.sh`)
+
+```bash
+./build.sh --help
+# Example with overrides:
+NVCC=/usr/local/cuda/bin/nvcc BUILD_TYPE=Release JOBS=$(nproc) TARGETS="video_to_png config_train" ./build.sh
+```
+
+Environment variables:
+- `NVCC`: path to `nvcc` if not in `PATH`
+- `BUILD_TYPE`: `Release` (default) or `Debug`
+- `JOBS`: parallel jobs (defaults to `nproc`)
+- `TARGETS`: space-separated CMake targets (default: `video_to_png config_train`)
+
+Launch script (`launch.sh`)
+
+```bash
+./launch.sh --help
+./launch.sh <root> <scene_id> [output_dir]
+# Example with overrides:
+PYTHON=python3 VIDEO_TO_PNG=./video_to_png CONFIG_TRAIN=./config_train ./launch.sh /data my_scene out
+```
+
+Launch VGGT script (`launch_with_vggt.sh`)
+
+```bash
+./launch_with_vggt.sh --help
+./launch_with_vggt.sh <root> <scene_id> [output_dir]
+# Example with overrides:
+PYTHON=python3 VIDEO_TO_PNG=./video_to_png CONFIG_TRAIN=./config_train ./launch_with_vggt.sh /data my_scene out
+```
+
+Config notes
+
+- `trainer.max_seconds`: stops training after the given seconds (0 disables).
+
+Arguments:
+- `root`: dataset root containing the scene folder
+- `scene_id`: scene folder name under `root`
+- `output_dir`: output directory (default: `output`)
+
+Environment variables:
+- `VIDEO_TO_PNG`: path to the `video_to_png` executable (default: `./video_to_png`)
+- `CONFIG_TRAIN`: path to the `config_train` executable (default: `./config_train`)
+- `PYTHON`: Python interpreter (default: `python`)
 
 > We provide the output of our system here to help you reproduce the results.
 
@@ -76,62 +181,6 @@ Please make sure you have installed the required dependencies before running the
 
 We have a [build.log](build.log) file for reference of building the project on our GPU server.
 
-## Setup and Run the competetion (SIGA 2025)
-
-```bash
-# install dependencies for python part.
-uv sync
-source .venv/bin/activate
-# build the project with cmake
-bash build.sh
-# Per scene run
-bash launch.sh  PATH_TO_DATASETS SCENE_ID # run the project with the dataset and scene id.
-```
-
-example:
-
-```
-bash launch.sh /data/SIGA_Competetion/Final/ 1750383597053
-```
-
-## Script Usage
-
-Build script (`build.sh`)
-
-```bash
-./build.sh --help
-# Example with overrides:
-NVCC=/usr/local/cuda/bin/nvcc BUILD_TYPE=Release JOBS=$(nproc) TARGETS="video_to_png config_train" ./build.sh
-```
-
-Environment variables:
-- `NVCC`: path to `nvcc` if not in `PATH`
-- `BUILD_TYPE`: `Release` (default) or `Debug`
-- `JOBS`: parallel jobs (defaults to `nproc`)
-- `TARGETS`: space-separated CMake targets (default: `video_to_png config_train`)
-
-Launch script (`launch.sh`)
-
-```bash
-./launch.sh --help
-./launch.sh <root> <scene_id> [output_dir]
-# Example with overrides:
-PYTHON=python3 VIDEO_TO_PNG=./video_to_png CONFIG_TRAIN=./config_train ./launch.sh /data my_scene out
-```
-
-Config notes
-
-- `trainer.max_seconds`: stops training after the given seconds (0 disables).
-
-Arguments:
-- `root`: dataset root containing the scene folder
-- `scene_id`: scene folder name under `root`
-- `output_dir`: output directory (default: `output`)
-
-Environment variables:
-- `VIDEO_TO_PNG`: path to the `video_to_png` executable (default: `./video_to_png`)
-- `CONFIG_TRAIN`: path to the `config_train` executable (default: `./config_train`)
-- `PYTHON`: Python interpreter (default: `python`)
 
 # Acknowledgements
 
