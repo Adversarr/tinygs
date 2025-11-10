@@ -34,3 +34,4 @@ loss.png
 *.pt
 *.pth
 !build.log
+*.ply

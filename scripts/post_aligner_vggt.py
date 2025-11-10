@@ -25,7 +25,7 @@ def parse_args():
         help="Root directory of all scenes",
     )
     parser.add_argument(
-        "--id", type=str, default="1747834320424", help="ID of the scene"
+        "--id", type=str, default="1750383597053", help="ID of the scene"
     )
 
     return parser.parse_args()
@@ -186,23 +186,35 @@ def main():
 
     extrins, qs, ts = load_camera_extrinsics(f"{ROOT}/{ID}/inputs/slam/images.txt")
     intrin = load_camera_intrinsics(f"{ROOT}/{ID}/inputs/slam/cameras.txt")
-    pc_original = load_point_cloud(f"{ROOT}/{ID}/inputs/slam/points3D.txt")
+    id, xyz, rgb = load_point_cloud(f"{ROOT}/{ID}/inputs/slam/points3D.txt")
 
-    pc_vggt = load(f"{args.input}/{ID}.ply")
+    pc_vggt: PointCloud = load(f"{args.input}/{ID}.ply")
     extrin_from_vggt = np.load(f"{args.input}/{ID}_extrins.npy")
     intrin_from_vggt = np.load(f"{args.input}/{ID}_intris.npy")
-    print(intrin_from_vggt)
+
     pose_enc_from_vggt = np.load(f"{args.input}/{ID}_pose_enc.npy")
     ts_vggt = pose_enc_from_vggt[:, :3]
     qs_vggt = pose_enc_from_vggt[:, 3:7]
 
-    scale, R, t = similarity_transform(ts, ts_vggt)
+    scale, R, t = similarity_transform(ts_vggt, ts)
     print(scale, R, t)
     print(compute_similarity_error(
-        ts, ts_vggt,
+        ts_vggt, ts,
         scale, R, t
     ))
 
+    # # Put the vggt point cloud into original
+    pc_vggt_transformed = scale * (np.array(pc_vggt.vertices) @ R.T) + t
+    pc_vggt_color = np.array(pc_vggt.colors)
+
+    print(pc_vggt_transformed.shape, pc_vggt_color.shape) # (n, 3) (n, 4)
+    print(xyz.shape, rgb.shape) # (n, 3) (n, 3)
+
+    # Concatenate and export a larger point cloud
+    pc_combined = np.concatenate([xyz, pc_vggt_transformed], axis=0)
+    rgb_combined = np.concatenate([rgb, pc_vggt_color[:, :3]], axis=0)
+    pc = PointCloud(pc_combined, colors=rgb_combined)
+    pc.export(str(OUT_FILE))
 
 if __name__ == '__main__':
     main()

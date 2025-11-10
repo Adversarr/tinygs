@@ -590,9 +590,7 @@ def load_images_rgb(image_paths: List[Path]) -> List[np.ndarray]:
         if img is None:
             continue
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        # flip H, W to match VGG-T input
-        images.append(img.transpose((1, 0, 2)))
-        # images.append(img)
+        images.append(img)
     return images
 
 
