@@ -108,18 +108,24 @@ fi
 echo -e "${GREEN}2. Initial Point Estimate${NC}"
 
 
-INITIAL_TIME=$( "${PYTHON_BIN}" scripts/aligner_vggt.py \
+# Run aligner_vggt.py and capture output
+ALIGNER_OUTPUT=$("${PYTHON_BIN}" scripts/aligner_vggt.py \
   --root "${ROOT}" \
   --id "${SCENE_ID}" \
-  --working_dir "${OUTPUT_DIR}/${SCENE_ID}/" | awk '/VGGT processing time:/ {print $5}' )
+  --working_dir "${OUTPUT_DIR}/${SCENE_ID}/")
 
+# Check the exit code of aligner_vggt.py (not awk)
+ALIGNER_EXIT_CODE=$?
 
-if [ $? -eq 0 ]; then
+if [ ${ALIGNER_EXIT_CODE} -eq 0 ]; then
   echo -e "${GREEN}Initial Point Estimate completed successfully${NC}"
 else
-  echo -e "${RED}Initial Point Estimate failed${NC}"
+  echo -e "${RED}Initial Point Estimate failed with exit code ${ALIGNER_EXIT_CODE}${NC}"
+  echo -e "${RED}Error output: ${ALIGNER_OUTPUT}${NC}"
   exit 1
 fi
+
+INITIAL_TIME=$(echo "${ALIGNER_OUTPUT}" | awk '/VGGT processing time:/ {print $5}')
 
 if [[ -z "${INITIAL_TIME}" ]]; then
   echo -e "${RED}Failed to parse VGGT processing time. Have you activated the virtual environment?${NC}"
@@ -146,5 +152,14 @@ echo -e "${GREEN}Everything looks great, lets go~${NC}"
 echo -e "${GREEN}============================================================================ ${NC}"
 echo -e "${GREEN}4. Train${NC}"
 time "${CONFIG_TRAIN}" --config "${OUTPUT_DIR}/${SCENE_ID}/config_vggt.json" -l warn
+TRAIN_EXIT_CODE=$?
+
+if [ ${TRAIN_EXIT_CODE} -eq 0 ]; then
+  echo -e "${GREEN}Training completed successfully${NC}"
+else
+  echo -e "${RED}Training failed with exit code ${TRAIN_EXIT_CODE}${NC}"
+  exit 1
+fi
+
 echo -e "${GREEN}============================================================================ ${NC}"
 
