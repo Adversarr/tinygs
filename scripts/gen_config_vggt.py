@@ -103,11 +103,11 @@ config_template = r"""
     "reset_every": 3000,
     "reset_reset_optimizer": false,
     "seed": 42,
-    "start_refine": 1000,
-    "noise_lr_init": 8.0,
-    "split_distance": 0.45,
+    "start_refine": 500,
+    "noise_lr_init": 0.0,
+    "split_distance": 0.4,
     "opacity_reduction": 0.6,
-    "type": "default"
+    "type": "improved"
   },
   "trainer": {
     "accumulate_grad_steps": 1,

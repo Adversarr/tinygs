@@ -122,7 +122,7 @@ else
 fi
 
 if [[ -z "${INITIAL_TIME}" ]]; then
-  echo "Failed to parse VGGT processing time" >&2
+  echo -e "${RED}Failed to parse VGGT processing time. Have you activated the virtual environment?${NC}"
   exit 1
 fi
 
@@ -143,8 +143,8 @@ else
   exit 1
 fi
 echo -e "${GREEN}Everything looks great, lets go~${NC}"
-echo -e "${GREEN} ============================================================================ ${NC}"
+echo -e "${GREEN}============================================================================ ${NC}"
 echo -e "${GREEN}4. Train${NC}"
 time "${CONFIG_TRAIN}" --config "${OUTPUT_DIR}/${SCENE_ID}/config_vggt.json" -l warn
-echo -e "${GREEN} ============================================================================ ${NC}"
+echo -e "${GREEN}============================================================================ ${NC}"
 
