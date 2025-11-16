@@ -252,6 +252,14 @@ void Orchestrator::set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) {
   m_dataloader = dataloader;
 }
 
+void Orchestrator::set_test_dataloader(std::shared_ptr<DataLoaderBase> dataloader) {
+  m_test_dataloader = dataloader;
+}
+
+std::shared_ptr<DataLoaderBase> Orchestrator::get_test_dataloader() const {
+  return m_test_dataloader;
+}
+
 void Orchestrator::set_optimizer(std::shared_ptr<OptimizerBase> optimizer) {
   m_optimizer = optimizer;
 }
@@ -432,19 +440,20 @@ void Orchestrator::train_step() {
 
 void Orchestrator::test_step() {
   NVTX3_FUNC_RANGE();
-  eval();
+  DataLoaderBase* use_loader = m_test_dataloader ? m_test_dataloader.get() : m_dataloader.get();
+  eval(use_loader);
 }
 
-void Orchestrator::eval() {
+std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader) {
   NVTX3_FUNC_RANGE();
-
   // Store training state
   const ImageShape current_shape{m_rasterize_ctx.fwd_input.width, m_rasterize_ctx.fwd_input.height, 3};
   const DataType current_dtype = m_active_data_type;
 
   // Switch to eval dtype and full resolution if progressive
   m_active_data_type = m_config.eval_data_type;
-  ImageShape full_shape = m_dataloader->get_dataset()->image_shape();
+  DataLoaderBase* effective_loader = loader ? loader : m_dataloader.get();
+  ImageShape full_shape = effective_loader->get_dataset()->image_shape();
   if (m_config.enable_progressive_resolution &&
       (full_shape.width != current_shape.width || full_shape.height != current_shape.height)) {
     log_info("Switching to full resolution {}x{} for evaluation", full_shape.width, full_shape.height);
@@ -455,18 +464,20 @@ void Orchestrator::eval() {
   }
 
   // Switch dataloader output dtype for eval
-  m_dataloader->set_params(json{{"data_type", to_string(m_active_data_type)}});
-  m_dataloader->reset(); // reset the permutation.
+  effective_loader->set_params(json{{"data_type", to_string(m_active_data_type)}});
+  effective_loader->reset();
 
   std::string out_dir = m_config.out_dir + "/" + std::to_string(m_state.current_step);
   ensure(out_dir);
 
-  const auto total_samples = m_dataloader->get_dataset()->size();
+  const auto total_samples = effective_loader->get_dataset()->size();
   std::map<std::string, std::vector<float>> metrics;
   std::vector<uuid_t> timestamps;
-
+  log_info("Start Evaluation on {} samples, DataType={}",
+            total_samples, to_string(m_active_data_type));
+  auto start = std::chrono::high_resolution_clock::now();
   for (size_t idx = 0; idx < total_samples; ++idx) {
-    auto data = m_dataloader->next();
+    auto data = effective_loader->next();
     timestamps.push_back(data.input.timestamp);
 
     // Rasterize
@@ -559,13 +570,27 @@ void Orchestrator::eval() {
   set_render_resolution({training_shape.width, training_shape.height, 1});
 
   // Restore dataloader dtype
-  m_dataloader->set_params(json{{"data_type", to_string(m_active_data_type)}});
-  m_dataloader->reset();
+  effective_loader->set_params(json{{"data_type", to_string(m_active_data_type)}});
+  effective_loader->reset();
+
+  auto end = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  log_info("Evaluation finished in {} ms", duration.count());
 
   // Export PLY at eval end
   Gaussian3d gs_host;
   m_gaussians->copy_to_host(gs_host);
   save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features || m_state.should_stop);
+
+  // Return mean metrics
+  std::unordered_map<std::string, float> result;
+  for (const auto &metric_pair : metrics) {
+    if (!metric_pair.second.empty()) {
+      float mean = std::accumulate(metric_pair.second.begin(), metric_pair.second.end(), 0.0f) / metric_pair.second.size();
+      result[metric_pair.first] = mean;
+    }
+  }
+  return result;
 }
 
 float Orchestrator::accumulate_loss() {

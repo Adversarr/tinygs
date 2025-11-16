@@ -6,6 +6,7 @@
 #include <opencv2/core/mat.hpp>
 #include <string>
 #include <vector>
+#include <unordered_map>
 
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/cuda/gpu_memory.hpp"
@@ -108,6 +109,9 @@ public:
   /// @brief Set the data loader for training data
   void set_dataloader(std::shared_ptr<DataLoaderBase> dataloader);
 
+  void set_test_dataloader(std::shared_ptr<DataLoaderBase> dataloader);
+  std::shared_ptr<DataLoaderBase> get_test_dataloader() const;
+
   /// @brief Set the optimizer for parameter updates
   void set_optimizer(std::shared_ptr<OptimizerBase> optimizer);
 
@@ -157,7 +161,7 @@ public:
   void test_step();
 
   /// @brief Run full evaluation over dataset
-  void eval();
+  std::unordered_map<std::string, float> eval(DataLoaderBase* loader = nullptr);
 
   /// @brief Accumulate the loss in current loss buffer.
   float accumulate_loss();
@@ -211,6 +215,7 @@ private:
   std::shared_ptr<GPUGaussian3d> m_gradients;
   std::shared_ptr<RasterizerBase> m_rasterizer;
   std::shared_ptr<DataLoaderBase> m_dataloader;
+  std::shared_ptr<DataLoaderBase> m_test_dataloader;
   std::shared_ptr<OptimizerBase> m_optimizer;
   std::shared_ptr<StrategyBase> m_strategy;
   std::shared_ptr<PoseOptBase> m_pose_opt;
