@@ -252,8 +252,8 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
     float psnr = metrics.empty() ? 0.0f : metrics[0];
     auto lr = orchestrator->get_optimizer()->get_lr();
 
-    auto log_string = fmt::format("[Trainer][step {}] Loss: {:.3e} psnr: {:.3f} time: {:.1f}ms/100step CurrentLr: {:.3e}",
-                                  state.current_step, loss, psnr, duration.count() / (state.current_step / 100.0), lr);
+    auto log_string = fmt::format("[Trainer][step {}] PSNR: {:.3f} time: {:.1f}ms/100step CurrentLr: {:.3e}",
+                                  state.current_step, psnr, duration.count() / (state.current_step / 100.0), lr);
     std::cout << log_string << std::endl;
 
     // Visualize RGB - copy rendered image from trainer's internal buffers

@@ -5,7 +5,7 @@ Use the environment below, then:
 ```sh
 bash build.sh
 source .venv/bin/activate
-python scripts/launch_siga2.py --root-dir /data/eval_data_pinhole --working-dir ./outputs
+python scripts/launch_siga2.py --root-dir /data/eval_data_pinhole --working-dir ./outputs --normalize
 cat ./outputs/metrics.json # <- This is what you want
 ```
 

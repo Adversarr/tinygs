@@ -9,6 +9,7 @@ def parse_args():
     parser.add_argument('--working-dir', type=str, required=True, help='Working directory to store preprocessed data and outputs.')
     parser.add_argument('--magic-number', type=int, default=42, help='Magic number to prepend to the UUID of each image.')
     parser.add_argument('--log-level', type=str, default='warn', choices=['debug', 'info', 'warn', 'error'], help='Verbose level of logger.')
+    parser.add_argument('--normalize', action='store_true', help='Normalize the points3D to have std=1.')
     return parser.parse_args()
 
 def _find_config_train(repo_root: Path) -> Path:
@@ -49,9 +50,12 @@ def main():
         print(f'[INFO] Processing scene {sid}')
         # Preprocess
         try:
-            subprocess.run([sys.executable, str(repo_root / 'scripts' / 'preprocess_siga2.py'),
-                            '--input', str(root_dir), '--id', sid, '--output', str(work_root),
-                            '--magic-number', str(args.magic_number)], check=True)
+            subargs = [sys.executable, str(repo_root / 'scripts' / 'preprocess_siga2.py'),
+                       '--input', str(root_dir), '--id', sid, '--output', str(work_root),
+                       '--magic-number', str(args.magic_number)]
+            if args.normalize:
+                subargs.append('--normalize')
+            subprocess.run(subargs, check=True)
         except subprocess.CalledProcessError as e:
             print(f'[ERROR] Preprocess failed for {sid}: {e}')
             failed[sid] = 'preprocess'

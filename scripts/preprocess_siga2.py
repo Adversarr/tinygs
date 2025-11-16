@@ -43,6 +43,7 @@ def parse_args():
     parser.add_argument("--id", type=str, required=True, help='ID of the scene you want to preprocess.')
     parser.add_argument('--output', type=str, required=True, help='Tempoerary output directory for training/evaluation.')
     parser.add_argument('--magic-number', type=int, default=42, help='Magic number to prepend to the UUID of each image.')
+    parser.add_argument("--normalize", action='store_true', help='Normalize points3D to normal distributed.')
     args = parser.parse_args()
     assert args.magic_number > 0, f"[ERROR] Magic number must be positive to ensure unique UUID, but got {args.magic_number}."
     return args
@@ -158,6 +159,70 @@ def load_points3D(file_of_points3D: Path) -> trimesh.PointCloud:
     points3D_rgb = np.loadtxt(file_of_points3D, dtype=np.uint8, usecols=(4, 5, 6))
     return trimesh.PointCloud(vertices=points3D_xyz, colors=points3D_rgb)
 
+def global_scale(points3D: trimesh.PointCloud) -> tuple[np.ndarray, float]:
+    """Ensure std = 1"""
+    mean = points3D.vertices.mean(axis=0)
+    std = points3D.vertices.std()
+    print(f"[INFO] Global scale: mean={mean}, std={std}")
+    return mean, std if std > 0.01 else 1.0
+
+def _quat_to_rot_matrix(qw: float, qx: float, qy: float, qz: float) -> np.ndarray:
+    """Convert quaternion (qw, qx, qy, qz) to a 3x3 rotation matrix.
+
+    Assumes right-handed coordinate system and unit quaternion.
+    """
+    q = np.array([qw, qx, qy, qz], dtype=np.float64)
+    n = np.linalg.norm(q)
+    if n == 0.0:
+        # TODO: Clarify how to handle zero-norm quaternions; dataset should not contain this.
+        raise ValueError("[ERROR] Zero-norm quaternion encountered.")
+    qw, qx, qy, qz = q / n
+    xx, yy, zz = qx*qx, qy*qy, qz*qz
+    xy, xz, yz = qx*qy, qx*qz, qy*qz
+    wx, wy, wz = qw*qx, qw*qy, qw*qz
+    R = np.array([
+        [1.0 - 2.0*(yy + zz), 2.0*(xy - wz),       2.0*(xz + wy)],
+        [2.0*(xy + wz),       1.0 - 2.0*(xx + zz), 2.0*(yz - wx)],
+        [2.0*(xz - wy),       2.0*(yz + wx),       1.0 - 2.0*(xx + yy)],
+    ], dtype=np.float64)
+    return R
+
+def _normalize_extrinsics_translations(
+    extrinsics: dict[int, dict], mean: np.ndarray, std: float
+) -> dict[int, dict]:
+    """Normalize world-to-camera translations consistent with point normalization.
+
+    We apply x' = (x - mean) / std to world points while keeping rotation R
+    unchanged. For a world->camera transform (R, t) where X_cam = R X_world + t,
+    the translation must be updated to t' = (t + R * mean) / std to preserve
+    projection consistency.
+
+    Args:
+        extrinsics: Mapping frame_id -> pose dict containing 'qw','qx','qy','qz','tx','ty','tz'.
+        mean: Global mean of points3D.
+        std: Global std of points3D (scalar).
+
+    Returns:
+        A new dict with updated translations.
+    """
+    eps = 1e-8
+    if std < eps:
+        # TODO: Decide behavior for near-zero std; skip normalization for safety.
+        print("[WARN] Std too small; skipping extrinsics normalization.")
+        return extrinsics
+
+    mean = np.asarray(mean, dtype=np.float64)
+    new_extrinsics: dict[int, dict] = {}
+    for frame_id, pose in extrinsics.items():
+        R = _quat_to_rot_matrix(pose['qw'], pose['qx'], pose['qy'], pose['qz'])
+        t = np.array([pose['tx'], pose['ty'], pose['tz']], dtype=np.float64)
+        # Derived from camera center normalization and transform consistency
+        t_prime = (t + R @ mean) / float(std)
+        p = pose.copy()
+        p['tx'], p['ty'], p['tz'] = float(t_prime[0]), float(t_prime[1]), float(t_prime[2])
+        new_extrinsics[frame_id] = p
+    return new_extrinsics
+
 def main(args):
     print(f"[INFO] {args.input} -> {args.id} -> {args.output}")
 
@@ -184,6 +249,18 @@ def main(args):
     else:
         raise FileNotFoundError(f"[ERROR] Either {input_dir / 'images'} or {input_dir / 'images_gt_downsampled'} does not exist.")
 
+    shutil.copy(input_dir / 'sparse' / '0' / 'points3D.txt', output_dir / 'points3D.txt')
+    print(f"[INFO] Wrote points3D to {output_dir / 'points3D.txt'}")
+    points3D = load_points3D(output_dir / 'points3D.txt')
+    if args.normalize:
+        mean, std = global_scale(points3D)
+        points3D.vertices = (points3D.vertices - mean) / std
+    else:
+        mean = np.array([0.0, 0.0, 0.0])
+        std = 1.0
+    points3D.export(output_dir / 'points3D.ply')
+    print(f"[INFO] Wrote points3D to {output_dir / 'points3D.ply'}, {points3D.vertices.shape}, {points3D.colors.shape}")
+
     (output_dir / 'images').mkdir(parents=True, exist_ok=True)
 
     # Copy images, with prepend magic number
@@ -205,6 +282,11 @@ def main(args):
     intrinsics = parse_first_camera(input_dir / 'sparse' / '0' / 'cameras.txt')
     extrinsics = parse_poses(input_dir / 'sparse' / '0' / 'frames.txt')
 
+    if args.normalize:
+        # Adjust translations consistent with world->camera convention and point normalization.
+        # TODO: Confirm frames.txt poses represent world->camera (RIG_FROM_WORLD). If opposite, invert R.
+        extrinsics = _normalize_extrinsics_translations(extrinsics, mean, std)
+
     # build png_folder dataset for them.
     train_desired = make_desired_images_txt(extrinsics, train_images)
     test_desired = make_desired_images_txt(extrinsics, test_images)
@@ -216,12 +298,6 @@ def main(args):
     intrinsics_desired = make_desired_intrinsics_txt(intrinsics)
     Path(output_dir / 'intrinsics.txt').write_text(intrinsics_desired)
     print(f"[INFO] Wrote intrinsics to {output_dir / 'intrinsics.txt'}")
-
-    shutil.copy(input_dir / 'sparse' / '0' / 'points3D.txt', output_dir / 'points3D.txt')
-    print(f"[INFO] Wrote points3D to {output_dir / 'points3D.txt'}")
-    points3D = load_points3D(output_dir / 'points3D.txt')
-    points3D.export(output_dir / 'points3D.ply')
-    print(f"[INFO] Wrote points3D to {output_dir / 'points3D.ply'}, {points3D.vertices.shape}, {points3D.colors.shape}")
 
 if __name__ == '__main__':
     main(parse_args())
