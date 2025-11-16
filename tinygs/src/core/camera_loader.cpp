@@ -38,6 +38,9 @@ void SingleCameraLoader::load_camera_intrinsics(const std::string& intrinsics_fi
   m_camera_intrinsics.clear();
   m_camera_intrinsics.reserve(lines.size());
   for (const auto& line : lines) {
+    if (line.empty() || line[0] == '#') {
+      continue;
+    }
     m_camera_intrinsics.emplace_back(CameraIntrinsics::parse(line));
   }
   log_info("Loaded {} camera intrinsics from file: {}", m_camera_intrinsics.size(), intrinsics_file_path);

@@ -5,6 +5,7 @@ out
 .idea
 cmake-build*
 output
+.trae
 
 # Python
 .mypy_cache

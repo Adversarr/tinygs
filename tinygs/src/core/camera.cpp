@@ -15,7 +15,7 @@ CameraIntrinsics CameraIntrinsics::parse(const std::string& line) {
         tokens.push_back(token);
     }
     
-    if (tokens.size() < 13) {
+    if (tokens.size() < 8) {
         throw std::runtime_error("Invalid camera intrinsics format: expected 13 values");
     }
     
@@ -35,11 +35,25 @@ CameraIntrinsics CameraIntrinsics::parse(const std::string& line) {
     intrinsics.fy = std::stof(tokens[5]);
     intrinsics.cx = std::stof(tokens[6]);
     intrinsics.cy = std::stof(tokens[7]);
-    intrinsics.k1 = std::stof(tokens[8]);
-    intrinsics.k2 = std::stof(tokens[9]);
-    intrinsics.k3 = std::stof(tokens[10]);
-    intrinsics.p1 = std::stof(tokens[11]);
-    intrinsics.p2 = std::stof(tokens[12]);
+    if (tokens.size() > 8) {
+        if (tokens.size() < 13) {
+            throw std::runtime_error("Invalid camera intrinsics format: expected 13 values");
+        }
+        log_info("Camera {} has distortion parameters: k1={}, k2={}, k3={}, p1={}, p2={}",
+                 intrinsics.uid, tokens[8], tokens[9], tokens[10], tokens[11], tokens[12]);
+        intrinsics.k1 = std::stof(tokens[8]);
+        intrinsics.k2 = std::stof(tokens[9]);
+        intrinsics.k3 = std::stof(tokens[10]);
+        intrinsics.p1 = std::stof(tokens[11]);
+        intrinsics.p2 = std::stof(tokens[12]);
+    } else {
+        log_info("Camera {} has no distortion parameters", intrinsics.uid);
+        intrinsics.k1 = 0.0f;
+        intrinsics.k2 = 0.0f;
+        intrinsics.k3 = 0.0f;
+        intrinsics.p1 = 0.0f;
+        intrinsics.p2 = 0.0f;
+    }
     
     return intrinsics;
 }
