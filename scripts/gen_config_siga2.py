@@ -95,7 +95,7 @@ config_template = r"""
     "type": "fastgs"
   },
   "strategy": {
-    "duplicate_grad_threshold": 0.0008,
+    "duplicate_grad_threshold": 0.0006,
     "absgrad": true,
     "duplicate_scale_threshold": 0.005,
     "end_refine": 15000,
@@ -135,10 +135,10 @@ config_template = r"""
     "record_trajectory": false,
     "resolution_milestones": [0, 3000, 5000],
     "resolution_scales": [0.5, 0.75, 1.0],
-    "test_steps": [ 30000],
+    "test_steps": [30000],
     "out_dir": "$ARG_WORKING_DIR/train_output",
     "export_rasterized": false,
-    "max_seconds": 1
+    "max_seconds": 59
   }
 }
 """
