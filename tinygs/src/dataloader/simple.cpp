@@ -23,11 +23,13 @@ void SimpleDataLoader::generate_permutation() {
     m_permutation[i] = i;
   }
   
+#ifdef NDEBUG
   // Fisher-Yates shuffle using our RNG
   for (size_t i = dataset_size - 1; i > 0; --i) {
     size_t j = m_rng.next_uint(i + 1);
     std::swap(m_permutation[i], m_permutation[j]);
   }
+#endif
   
   // Reset current index to start of new permutation
   m_current_index = 0;

@@ -36,3 +36,4 @@ loss.png
 *.pth
 !build.log
 *.ply
+out2

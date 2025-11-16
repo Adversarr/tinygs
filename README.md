@@ -1,3 +1,14 @@
+# Round 2 Instructions
+
+Use the environment below, then:
+
+```sh
+bash build.sh
+source .venv/bin/activate
+python scripts/launch_siga2.py --root-dir /data/eval_data_pinhole --working-dir ./outputs
+cat ./outputs/metrics.json # <- This is what you want
+```
+
 # tinygs: Reconstruct your scene with 3DGS in seconds.
 
 🚀 We updated our system with VGGT as initial and float16 training support!

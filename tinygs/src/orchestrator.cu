@@ -473,8 +473,8 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
   const auto total_samples = effective_loader->get_dataset()->size();
   std::map<std::string, std::vector<float>> metrics;
   std::vector<uuid_t> timestamps;
-  log_info("Start Evaluation on {} samples, DataType={}",
-            total_samples, to_string(m_active_data_type));
+  log_warning("Start Evaluation on {} samples, DataType={}",
+              total_samples, to_string(m_active_data_type));
   auto start = std::chrono::high_resolution_clock::now();
   for (size_t idx = 0; idx < total_samples; ++idx) {
     auto data = effective_loader->next();

@@ -78,11 +78,11 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   auto pointcloud = load_point_cloud(pointcloud_filepath);
 
   // dataset
-  std::shared_ptr<DatasetBase> dataset;
+  std::shared_ptr<DatasetBase> train_dataset;
   if (auto dataset_config = config.at("dataset"); dataset_config.is_object()) {
-    dataset = create_dataset(dataset_config.at("type").get<std::string>());
-    dataset->set_params(dataset_config);
-    dataset->load();
+    train_dataset = create_dataset(dataset_config.at("type").get<std::string>());
+    train_dataset->set_params(dataset_config);
+    train_dataset->load();
   } else {
     throw std::runtime_error("Dataset config is required.");
   }
@@ -90,13 +90,37 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   // dataloader
   std::shared_ptr<DataLoaderBase> dataloader;
   if (auto dataloader_config = config.at("dataloader"); dataloader_config.is_object()) {
-    dataloader = create_dataloader(dataloader_config.at("type").get<std::string>(), dataset);
+    dataloader = create_dataloader(dataloader_config.at("type").get<std::string>(), train_dataset);
     dataloader->set_params(dataloader_config);
   } else {
     throw std::runtime_error("Dataloader config is required.");
   }
   orchestrator->set_dataloader(dataloader);
   log_info("All loaders done.");
+  std::cout << "Training samples: " << train_dataset->size() << std::endl;
+
+  if (config.contains("test_dataset") && config.at("test_dataset").is_object()) {
+    const auto &test_dataset_cfg = config.at("test_dataset");
+    std::shared_ptr<DatasetBase> test_dataset = create_dataset(test_dataset_cfg.at("type").get<std::string>());
+    test_dataset->set_params(test_dataset_cfg);
+    test_dataset->load();
+
+    std::shared_ptr<DataLoaderBase> test_loader;
+    if (config.contains("test_dataloader") && config.at("test_dataloader").is_object()) {
+      const auto &test_dataloader_cfg = config.at("test_dataloader");
+      test_loader = create_dataloader(test_dataloader_cfg.at("type").get<std::string>(), test_dataset);
+      test_loader->set_params(test_dataloader_cfg);
+    } else {
+      const auto &train_dataloader_cfg = config.at("dataloader");
+      test_loader = create_dataloader(train_dataloader_cfg.at("type").get<std::string>(), test_dataset);
+      test_loader->set_params(train_dataloader_cfg);
+    }
+    orchestrator->set_test_dataloader(test_loader);
+    log_info("Test dataset and dataloader configured.");
+    std::cout << "Test samples: " << test_dataset->size() << std::endl;
+  } else {
+    log_warning("Test dataset and dataloader not configured.");
+  }
 
   // initializer
   std::shared_ptr<InitializationBase> initializer;
@@ -197,10 +221,25 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   return orchestrator;
 }
 
+void eval(std::shared_ptr<Orchestrator> orchestrator) {
+  auto output_dir = orchestrator->get_config().out_dir;
+  auto test_loader = orchestrator->get_test_dataloader();
+  auto test_set_result = orchestrator->eval(test_loader.get());
+  log_warning("Evaluation into {}, len={}", output_dir, test_loader->get_dataset()->size());
+  const float test_psnr = test_set_result.at("psnr");
+  log_info("Evaluation on test set done.");
+
+  json result_json;
+  result_json["psnr"] = test_psnr;
+  result_json["time"] = orchestrator->get_config().max_seconds;
+  std::cout << result_json << std::endl;
+  std::ofstream out(fmt::format("{}/stats.json", output_dir));
+  out << result_json;
+}
+
 void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
   auto gs3d = orchestrator->get_optimizer()->get_gaussians();
   auto grads = orchestrator->get_optimizer()->get_gaussians_grad();
-  
   orchestrator->set_post_step_callback([orchestrator, gs3d, grads, visualize] (const TrainingState& state) {
     if (state.current_step % 100 != 0) {
       return;
@@ -221,10 +260,10 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
     if (visualize) {
       cv::Mat img = orchestrator->to_opencv();
       if (!img.empty()) {
-        cv::imwrite("render.png", img);
-        // cv::imshow("render", img);
+        // cv::imwrite("render.png", img);
+        cv::imshow("render", img);
 
-        if (char key = cv::waitKey(3); key == 27) {
+        if (char key = cv::waitKey(0); key == 27) {
           orchestrator->stop_training();
           std::cout << "ESC pressed - stopping training..." << std::endl;
         }
@@ -237,4 +276,6 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
     cv::waitKey(0);
     cv::destroyAllWindows();
   }
+
+  eval(orchestrator);
 }
