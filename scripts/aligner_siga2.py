@@ -145,7 +145,7 @@ class Aligner:
                 best_cam_id, best_result, best_aligner = self.best_alignment(interval, len(prev_scales))
                 if best_cam_id != -1 and best_result is not None:
                     if (
-                        best_result.score >= 0.96
+                        best_result.score >= 0.95
                         and 0.1 * estim_scale < best_result.scale < 10 * estim_scale
                     ) or iteration < 2:
                         print(f"{iteration}: selected cam {best_cam_id} with score {best_result.score:.4f} and scale {best_result.scale:.4f}")

@@ -9,11 +9,11 @@ source .venv/bin/activate
 python scripts/toggle_depth.py
 # Should print: ✅ Depth anything setup!
 
-# 2) Run the competition
-# 2.1) Run no aligner
-python scripts/launch_siga2.py --root-dir /data/eval_data_pinhole --working-dir ./outputs --normalize
-# 2.2) Run with aligner
+# 2) Run the competition 🔥
 python scripts/launch_siga2.py --root-dir /data/eval_data_pinhole --working-dir ./outputs --align
+
+# 3) Optional ⚠️ DO NOT USE THIS UNLESS YOU KNOW WHAT YOU ARE DOING
+# python scripts/launch_siga2.py --root-dir /data/eval_data_pinhole --working-dir ./outputs --normalize
 
 cat ./outputs/metrics.json # <- This is what you want
 ```
