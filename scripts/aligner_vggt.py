@@ -245,8 +245,8 @@ def main():
         vggt_fixed_resolution_height, vggt_fixed_resolution_width
     )
     end_time = time()
-    print(f"[INFO] VGGT processing time: {end_time - start:.4f} seconds")
-    print(f"[INFO] VGGT processing time: {end_time - start:.4f} seconds", file=sys.stderr)
+    print(f"✅ VGGT processing time: {end_time - start:.4f} seconds")
+    print(f"✅ VGGT processing time: {end_time - start:.4f} seconds", file=sys.stderr)
     print("=" * 50, file=sys.stderr)
 
     # Save PLY point cloud

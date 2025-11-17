@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument('--magic-number', type=int, default=42, help='Magic number to prepend to the UUID of each image.')
     parser.add_argument("--normalize", action='store_true', help='Normalize points3D to normal distributed.')
     args = parser.parse_args()
-    assert args.magic_number > 0, f"[ERROR] Magic number must be positive to ensure unique UUID, but got {args.magic_number}."
+    assert args.magic_number > 0, f"❌ Magic number must be positive to ensure unique UUID, but got {args.magic_number}."
     return args
 
 def readlines_and_prune(file_path: Path):
@@ -67,10 +67,10 @@ def parse_first_camera(file_of_camera_intrisic):
     ID MODEL WIDTH HEIGHT FX FY CX CY
     """
     lines = readlines_and_prune(file_of_camera_intrisic)
-    assert len(lines) == 1, f"[ERROR] Expected 1 camera, but got {len(lines)}."
+    assert len(lines) == 1, f"❌ Expected 1 camera, but got {len(lines)}."
     line = lines[0]
     camera_id, model, width, height, fx, fy, cx, cy = line.split()
-    assert model == 'PINHOLE', f"[ERROR] Expected PINHOLE model, but got {model}."
+    assert model == 'PINHOLE', f"❌ Expected PINHOLE model, but got {model}."
     try:
         return {
             'id': int(camera_id),
@@ -83,7 +83,7 @@ def parse_first_camera(file_of_camera_intrisic):
             'cy': float(cy),
         }
     except ValueError as e:
-        raise ValueError(f"[ERROR] Failed to parse camera intrinsics: {e}") from e
+        raise ValueError(f"❌ Failed to parse camera intrinsics: {e}") from e
 
 def parse_single_pose(line: str) -> dict:
     """
@@ -94,7 +94,7 @@ def parse_single_pose(line: str) -> dict:
     """
 
     frame_id, rig_id, qw, qx, qy, qz, tx, ty, tz, num_data_ids, *_ = line.split()
-    assert int(num_data_ids) == 1, f"[ERROR] Expected 1 data ID, but got {num_data_ids}."
+    assert int(num_data_ids) == 1, f"❌ Expected 1 data ID, but got {num_data_ids}."
     try:
         return {
             'frame_id': int(frame_id) - 1, # Frame ID is 1-indexed, but we want 0-indexed.
@@ -108,7 +108,7 @@ def parse_single_pose(line: str) -> dict:
             'tz': float(tz),
         }
     except ValueError as e:
-        raise ValueError(f"[ERROR] Failed to parse pose: {e}") from e
+        raise ValueError(f"❌ Failed to parse pose: {e}") from e
 
 
 def parse_poses(file_of_poses) -> dict[int, dict]:
@@ -119,7 +119,7 @@ def parse_poses(file_of_poses) -> dict[int, dict]:
     2 1 0.99332061988404452 0.03554105551421452 0.087965961307444454 0.065673199536571594 -0.85684555212765534 -0.81016635795194825 1.4558832797791708 1 CAMERA 1 2
     """
     lines = readlines_and_prune(file_of_poses)
-    print(f"[INFO] Loaded {len(lines)} poses.")
+    print(f"✅ Loaded {len(lines)} poses.")
     poses = [parse_single_pose(line) for line in lines]
     return {d['frame_id']: d for d in poses} # Map frame_id to pose
 
@@ -164,7 +164,7 @@ def global_scale(points3D: trimesh.PointCloud) -> tuple[np.ndarray, float]:
     vertices = np.array(points3D.vertices, dtype=np.float64)
     mean = vertices.mean(axis=0)
     std = (vertices - mean).std()
-    print(f"[INFO] Global scale: mean={mean}, std={std}")
+    print(f"✅ Global scale: mean={mean}, std={std}")
     return mean, std if std > 0.01 else 1.0
 
 def _quat_to_rot_matrix(qw: float, qx: float, qy: float, qz: float) -> np.ndarray:
@@ -176,7 +176,7 @@ def _quat_to_rot_matrix(qw: float, qx: float, qy: float, qz: float) -> np.ndarra
     n = np.linalg.norm(q)
     if n == 0.0:
         # TODO: Clarify how to handle zero-norm quaternions; dataset should not contain this.
-        raise ValueError("[ERROR] Zero-norm quaternion encountered.")
+        raise ValueError("❌ Zero-norm quaternion encountered.")
     qw, qx, qy, qz = q / n
     xx, yy, zz = qx*qx, qy*qy, qz*qz
     xy, xz, yz = qx*qy, qx*qz, qy*qz
@@ -209,7 +209,7 @@ def _normalize_extrinsics_translations(
     eps = 1e-8
     if std < eps:
         # TODO: Decide behavior for near-zero std; skip normalization for safety.
-        print("[WARN] Std too small; skipping extrinsics normalization.")
+        print("⚠️ Std too small; skipping extrinsics normalization.")
         return extrinsics
 
     mean = np.asarray(mean, dtype=np.float64)
@@ -225,7 +225,7 @@ def _normalize_extrinsics_translations(
     return new_extrinsics
 
 def main(args):
-    print(f"[INFO] {args.input} -> {args.id} -> {args.output}")
+    print(f"✅ {args.input} -> {args.id} -> {args.output}")
 
     input_dir = Path(args.input) / args.id
     output_dir = Path(args.output) / args.id
@@ -233,11 +233,11 @@ def main(args):
         output_dir.mkdir(parents=True, exist_ok=True)
 
     if not (input_dir / 'images').exists() and not (input_dir / 'images_gt_downsampled').exists():
-        raise FileNotFoundError(f"[ERROR] Either {input_dir / 'images'} or {input_dir / 'images_gt_downsampled'} does not exist.")
+        raise FileNotFoundError(f"❌ Either {input_dir / 'images'} or {input_dir / 'images_gt_downsampled'} does not exist.")
     if not (input_dir / 'sparse').exists():
-        raise FileNotFoundError(f"[ERROR] {input_dir / 'sparse'} does not exist.")
+        raise FileNotFoundError(f"❌ {input_dir / 'sparse'} does not exist.")
     if not (input_dir / 'train_test_split.json').exists():
-        raise FileNotFoundError(f"[ERROR] {input_dir / 'train_test_split.json'} does not exist.")
+        raise FileNotFoundError(f"❌ {input_dir / 'train_test_split.json'} does not exist.")
 
     with open(input_dir / 'train_test_split.json', 'r') as f:
         data = json.load(f)
@@ -248,10 +248,10 @@ def main(args):
     elif (input_dir / 'images_gt_downsampled').exists():
         image_dir = input_dir / 'images_gt_downsampled'
     else:
-        raise FileNotFoundError(f"[ERROR] Either {input_dir / 'images'} or {input_dir / 'images_gt_downsampled'} does not exist.")
+        raise FileNotFoundError(f"❌ Either {input_dir / 'images'} or {input_dir / 'images_gt_downsampled'} does not exist.")
 
     shutil.copy(input_dir / 'sparse' / '0' / 'points3D.txt', output_dir / 'points3D.in.txt')
-    print(f"[INFO] Wrote points3D to {output_dir / 'points3D.in.txt'}")
+    print(f"✅ Wrote points3D to {output_dir / 'points3D.in.txt'}")
     points3D = load_points3D(output_dir / 'points3D.in.txt')
     if args.normalize:
         mean, std = global_scale(points3D)
@@ -260,7 +260,7 @@ def main(args):
         mean = np.array([0.0, 0.0, 0.0])
         std = 1.0
     points3D.export(output_dir / 'points3D.ply')
-    print(f"[INFO] Wrote points3D to {output_dir / 'points3D.ply'}, {points3D.vertices.shape}, {points3D.colors.shape}")
+    print(f"✅ Wrote points3D to {output_dir / 'points3D.ply'}, {points3D.vertices.shape}, {points3D.colors.shape}")
 
     (output_dir / 'images').mkdir(parents=True, exist_ok=True)
 
@@ -279,7 +279,7 @@ def main(args):
         out_file_path = Path(output_dir / 'images' / f'{args.magic_number}{relp}')
         shutil.copy(in_file_path, out_file_path)
         test_images[int(in_file_path.stem)] = int(int(out_file_path.stem)) # e.g. 0000 -> 1 -> 420001
-    print(f"[INFO] Loaded {len(train_images)} train images and {len(test_images)} test images.")
+    print(f"✅ Loaded {len(train_images)} train images and {len(test_images)} test images.")
     intrinsics = parse_first_camera(input_dir / 'sparse' / '0' / 'cameras.txt')
     extrinsics = parse_poses(input_dir / 'sparse' / '0' / 'frames.txt')
 
@@ -294,11 +294,11 @@ def main(args):
 
     Path(output_dir / 'train_desired.txt').write_text('\n'.join(train_desired))
     Path(output_dir / 'test_desired.txt').write_text('\n'.join(test_desired))
-    print(f"[INFO] Wrote {len(train_desired)} train desired images and {len(test_desired)} test desired images.")
+    print(f"✅ Wrote {len(train_desired)} train desired images and {len(test_desired)} test desired images.")
 
     intrinsics_desired = make_desired_intrinsics_txt(intrinsics)
     Path(output_dir / 'intrinsics.txt').write_text(intrinsics_desired)
-    print(f"[INFO] Wrote intrinsics to {output_dir / 'intrinsics.txt'}")
+    print(f"✅ Wrote intrinsics to {output_dir / 'intrinsics.txt'}")
 
 if __name__ == '__main__':
     main(parse_args())

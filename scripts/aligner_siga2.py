@@ -148,10 +148,10 @@ class Aligner:
                         best_result.score >= 0.95
                         and 0.1 * estim_scale < best_result.scale < 10 * estim_scale
                     ) or iteration < 2:
-                        print(f"{iteration}: selected cam {best_cam_id} with score {best_result.score:.4f} and scale {best_result.scale:.4f}")
+                        print(f"{iteration}: ✓ selected cam {best_cam_id} with score {best_result.score:.4f} and scale {best_result.scale:.4f}")
                         candidates.append((best_cam_id, best_result, best_aligner))
                     else:
-                        print(f"{iteration}: best cam {best_cam_id} has low score {best_result.score:.4f}, skipping interval (scale={best_result.scale:.4f}, estim_scale={estim_scale:.4f})")
+                        print(f"{iteration}: ✗ best cam {best_cam_id} has low score {best_result.score:.4f}, skipping interval (scale={best_result.scale:.4f}, estim_scale={estim_scale:.4f})")
 
             if not candidates:
                 print("No more good candidates, stopping.")
@@ -203,7 +203,7 @@ class Aligner:
                 if current_interval:
                     new_intervals.append(current_interval)
             avail_intervals = [interv for interv in new_intervals if len(interv) > self.interval_removal]
-            print(avail_intervals)
+            # print(avail_intervals)
             estim_scale = np.mean(prev_scales) if prev_scales else -1
             iteration += 1
 
@@ -277,7 +277,7 @@ if __name__ == "__main__":
         aligner.run()
         aligner.run_finalize()
         end_time = perf_counter()
-        print(f"Alignment time: {end_time - start_time}")
+        print(f"🚀 Alignment time: {end_time - start_time}")
         aligner.export(OUT_FILE)
     except Exception as e:
         print(f"Error: {e}")

@@ -51,9 +51,10 @@ def main():
         return
 
     failed = {}
-    for sid in scenes:
+    for i, sid in enumerate(scenes):
         print("=" * 80)
         print(f'🚀 Processing scene {sid}')
+        print("=" * 80)
         # Preprocess
         try:
             subargs = [sys.executable, str(repo_root / 'scripts' / 'preprocess_siga2.py'),
@@ -113,7 +114,7 @@ def main():
             print(f'❌ Training failed for {sid}: {e}')
             failed[sid] = 'train'
             continue
-
+        print(f"✅ Training completed for {sid} ({i + 1}/{len(scenes)})")
     # Final report regardless of individual failures
     try:
         subprocess.run([sys.executable, str(repo_root / 'scripts' / 'report_final_siga2.py'),

@@ -234,6 +234,6 @@ def visualize_tracks_on_images(
         # Convert back to BGR for OpenCV imwrite
         grid_img_bgr = cv2.cvtColor(grid_img, cv2.COLOR_RGB2BGR)
         cv2.imwrite(out_path, grid_img_bgr)
-        print(f"[INFO] Saved color-by-XY track visualization grid -> {out_path}")
+        print(f"✅ Saved color-by-XY track visualization grid -> {out_path}")
 
-    print(f"[INFO] Saved {S} individual frames to {out_dir}/frame_*.png")
+    print(f"✅ Saved {S} individual frames to {out_dir}/frame_*.png")
