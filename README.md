@@ -6,6 +6,9 @@ Use the environment below, then:
 # 1) Build required binaries (video_to_png, config_train)
 bash build.sh
 source .venv/bin/activate
+uv pip install -e scripts/depth-anything-3 # Fine. Nov 14
+# (Optional 🫠)
+# export HF_ENDPOINT=https://hf-mirror.com
 python scripts/toggle_depth.py
 # Should print: ✅ Depth anything setup!
 

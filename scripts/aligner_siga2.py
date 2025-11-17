@@ -17,7 +17,7 @@ from camera import (
 from pathlib import Path
 from depth_alignment import DepthAlignment, DepthAlignmentResult
 from point_cloud import PointCloudManipulator, PointCloudUpdateConfig
-from depth import DepthEstimator
+from da3_depth import DepthEstimator
 import cv2
 from tqdm import tqdm
 from collections import OrderedDict
@@ -214,7 +214,7 @@ class Aligner:
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--working_dir", type=str, help="Working directory", default='out2/1747834320424')
-    parser.add_argument("--downsampling", type=int, help="Downsampling factor", default=480)
+    parser.add_argument("--downsampling", type=int, help="Downsampling factor", default=504)
     parser.add_argument('--t-interval', type=int, help="Time interval for alignment", default=4)
     args = parser.parse_args()
     PC_FILE = f"{args.working_dir}/points3D.ply"
@@ -278,11 +278,11 @@ if __name__ == "__main__":
         aligner.run_finalize()
         end_time = perf_counter()
         print(f"🚀 Alignment time: {end_time - start_time}")
+        Path(TIME_FILE).write_text(f"{int(60 - np.round(end_time - start_time))}")
         aligner.export(OUT_FILE)
     except Exception as e:
         print(f"Error: {e}")
         # use init point cloud
         aligner.point_cloud_running = aligner.init_point_cloud
         aligner.export(OUT_FILE)
-
-    Path(TIME_FILE).write_text(f"{int(60 - np.round(end_time - start_time))}")
+        raise e
