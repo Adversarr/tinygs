@@ -6,6 +6,12 @@ parser = ArgumentParser(description="Train TinyGS")
 parser.add_argument(
     "--working_dir", type=str, default="outputs", help="Path to the working directory."
 )
+parser.add_argument(
+  '--use-aligned', action='store_true', help='Use depth aligned points3D'
+)
+parser.add_argument(
+  '--time-budget', type=int, default=59, help='Time budget for training'
+)
 parser.add_argument("--out", type=str, required=True, help="Path to the output file.")
 args = parser.parse_args()
 
@@ -68,7 +74,7 @@ config_template = r"""
   "optimizer": {
     "epsilon": 1.0e-8,
     "max_grad_1": 1.0,
-    "means_lr": 0.00016,
+    "means_lr": 0.0002,
     "opacities_l1": 0.01,
     "decouple_decay": false,
     "decay_reduction": "mean",
@@ -76,7 +82,7 @@ config_template = r"""
     "rotations_lr": 0.001,
     "scales_l1": 0.01,
     "scales_lr": 0.005,
-    "shs_lr": 0.0025,
+    "shs_lr": 0.003,
     "skip_zero_grad": true,
     "trust_ratio_min": 0.01,
     "trust_ratio_max": 10.0,
@@ -99,7 +105,7 @@ config_template = r"""
     "absgrad": true,
     "duplicate_scale_threshold": 0.005,
     "end_refine": 15000,
-    "max_num_gaussians": 3000000,
+    "max_num_gaussians": 1500000,
     "max_screen_size": 10,
     "pruning_opacity_threshold": 0.005,
     "pruning_scale_threshold": 0.1,
@@ -108,10 +114,11 @@ config_template = r"""
     "reset_reset_optimizer": false,
     "seed": 42,
     "start_refine": 500,
-    "noise_lr_init": 8.0,
+    "noise_lr_init": 1.0,
     "split_distance": 0.45,
     "opacity_reduction": 0.6,
-    "type": "default"
+    "grow_ratio": 1.05,
+    "type": "improved"
   },
   "trainer": {
     "accumulate_grad_steps": 1,
@@ -138,10 +145,14 @@ config_template = r"""
     "test_steps": [30000],
     "out_dir": "$ARG_WORKING_DIR/train_output",
     "export_rasterized": false,
-    "max_seconds": 59
+    "max_seconds": $ARG_TIME_BUDGET
   }
 }
 """
 
 with open(args.out, "w") as f:
-    f.write(config_template.replace("$ARG_WORKING_DIR", args.working_dir))
+    cfg = config_template.replace("$ARG_WORKING_DIR", args.working_dir)
+    if args.use_aligned:
+        cfg = cfg.replace("points3D.ply", "aligned_points.ply")
+    cfg = cfg.replace("$ARG_TIME_BUDGET", str(args.time_budget))
+    f.write(cfg)

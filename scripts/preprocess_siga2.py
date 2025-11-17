@@ -161,8 +161,9 @@ def load_points3D(file_of_points3D: Path) -> trimesh.PointCloud:
 
 def global_scale(points3D: trimesh.PointCloud) -> tuple[np.ndarray, float]:
     """Ensure std = 1"""
-    mean = points3D.vertices.mean(axis=0)
-    std = points3D.vertices.std()
+    vertices = np.array(points3D.vertices, dtype=np.float64)
+    mean = vertices.mean(axis=0)
+    std = (vertices - mean).std()
     print(f"[INFO] Global scale: mean={mean}, std={std}")
     return mean, std if std > 0.01 else 1.0
 
@@ -249,12 +250,12 @@ def main(args):
     else:
         raise FileNotFoundError(f"[ERROR] Either {input_dir / 'images'} or {input_dir / 'images_gt_downsampled'} does not exist.")
 
-    shutil.copy(input_dir / 'sparse' / '0' / 'points3D.txt', output_dir / 'points3D.txt')
-    print(f"[INFO] Wrote points3D to {output_dir / 'points3D.txt'}")
-    points3D = load_points3D(output_dir / 'points3D.txt')
+    shutil.copy(input_dir / 'sparse' / '0' / 'points3D.txt', output_dir / 'points3D.in.txt')
+    print(f"[INFO] Wrote points3D to {output_dir / 'points3D.in.txt'}")
+    points3D = load_points3D(output_dir / 'points3D.in.txt')
     if args.normalize:
         mean, std = global_scale(points3D)
-        points3D.vertices = (points3D.vertices - mean) / std
+        points3D = trimesh.PointCloud(vertices=(np.array(points3D.vertices, dtype=np.float64) - mean) / std, colors=points3D.colors)
     else:
         mean = np.array([0.0, 0.0, 0.0])
         std = 1.0

@@ -148,7 +148,7 @@ class DepthAlignment:
         downsampling_factor: int = 1,
         scale: Optional[float] = None,
         offset: Optional[float] = None,
-    ) -> np.ndarray:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Unproject a relative depth map to 3D world coordinates.
 
@@ -162,6 +162,7 @@ class DepthAlignment:
 
         Returns:
             3D points in world coordinates (N, 3)
+            mask: Boolean mask indicating valid points (N,)
         """
         # Downsample the depth map
         depth_down = relative_depth_map[::downsampling_factor, ::downsampling_factor]
@@ -176,6 +177,14 @@ class DepthAlignment:
         u_flat = u_coords.flatten()
         v_flat = v_coords.flatten()
         depth_flat = depth_down.flatten()
+        depth_std = np.std(depth_flat)
+        # Filter outliers
+        mask = np.abs(depth_flat - np.mean(depth_flat)) < 3 * depth_std
+        mask = mask & (depth_flat > 0)
+        # mask = depth_flat > 0
+        u_flat = u_flat[mask]
+        v_flat = v_flat[mask]
+        depth_flat = depth_flat[mask]
 
         # Convert relative depth to absolute depth
         actual_depth = self.convert_relative_to_absolute_depth(
@@ -198,7 +207,7 @@ class DepthAlignment:
         # Transform to world coordinates
         points_world = (R_cw @ points_cam.T).T + t_cw
 
-        return points_world
+        return points_world, mask
 
     def restore(self, result: DepthAlignmentResult):
         self.scale = result.scale

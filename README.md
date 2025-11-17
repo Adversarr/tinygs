@@ -3,9 +3,18 @@
 Use the environment below, then:
 
 ```sh
+# 1) Build required binaries (video_to_png, config_train)
 bash build.sh
 source .venv/bin/activate
+python scripts/toggle_depth.py
+# Should print: ✅ Depth anything setup!
+
+# 2) Run the competition
+# 2.1) Run no aligner
 python scripts/launch_siga2.py --root-dir /data/eval_data_pinhole --working-dir ./outputs --normalize
+# 2.2) Run with aligner
+python scripts/launch_siga2.py --root-dir /data/eval_data_pinhole --working-dir ./outputs --align
+
 cat ./outputs/metrics.json # <- This is what you want
 ```
 
