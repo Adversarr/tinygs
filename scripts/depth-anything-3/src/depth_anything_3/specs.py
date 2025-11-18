@@ -43,3 +43,7 @@ class Prediction:
     gaussians: Gaussians | None = None  # 3D gaussians
     aux: dict[str, Any] = None  #
     scale_factor: Optional[float] = None  # metric scale
+
+    alignment_translation: Optional[np.ndarray] = None  # alignment translation [3, ]
+    alignment_rotation: Optional[np.ndarray] = None  # alignment rotation [3, 3]
+    alignment_scale: Optional[float] = None  # alignment scale

@@ -5,6 +5,7 @@ from camera import (
     CameraExtrinsic,
     CameraIntrinsic,
     calc_w2c,
+    calc_c2w,
     load_camera_intrinsics,
     load_camera_extrinsics,
 )
@@ -12,16 +13,22 @@ from pathlib import Path
 from argparse import ArgumentParser
 
 import trimesh
-from depth_anything_3.api import DepthAnything3
+from depth_anything_3.api import DepthAnything3, align_poses_umeyama
+from depth_anything_3.utils.export.gs import save_gaussian_ply
 from PIL import Image
+import torch
 
+import numpy as np
+import open3d as o3d
+from scipy.spatial import KDTree
+
+@torch.no_grad()
 def run_aligner(
-    points,
-    colors,
     images: list[str],
     camera_extrinsics: list[CameraExtrinsic],
     camera_intrinsics: CameraIntrinsic,
     da3: DepthAnything3,
+    out_file: str,
 ) -> tuple[np.ndarray, np.ndarray]:
     # depth = da3.inferrence
     w2c = [calc_w2c(extrinsic) for extrinsic in camera_extrinsics]
@@ -31,15 +38,59 @@ def run_aligner(
                      [0, 0, 1]]) # (3, 3)
     intr = np.tile(intr[None, ...], (w2c.shape[0], 1, 1)) # (n, 3, 3)
     w, h = camera_intrinsics.width, camera_intrinsics.height
-    input_images: list[Image.Image] = [Image.open(img).resize((w, h)) for img in images]
-    print(f"📕 num input images: {len(input_images)}")
+    print(f"📕 num input images: {len(images)}")
     pred = da3.inference(
-        image=input_images,
+        image=[Image.open(img).resize((w, h)) for img in images],
         extrinsics = w2c,
         intrinsics = intr,
         process_res_method='lower_bound_resize',
-        infer_gs=True
+        infer_gs=True,
     )
+    gs = pred.gaussians
+    assert gs is not None
+    scale = pred.alignment_scale
+    t = pred.alignment_translation
+    r = pred.alignment_rotation
+
+    points = gs.means.detach().cpu().numpy()[0] # (n, 3)
+    points = (points - t.reshape(-1,3)) @ r.T
+    # points = (points * scale) @ r.T + t.reshape(-1, 3)
+    colors = gs.harmonics.detach().cpu().numpy()[0, ..., 0] # (n, 3)
+    opacities = gs.opacities.detach().cpu().numpy()[0] # (n,)
+    mask = opacities > 0.0
+    if pred.conf is not None:
+        conf = pred.conf
+        print(f"Use confidence map to mask points with confidence > 0.5 percentile")
+        c_percentile = np.percentile(conf, 50, axis=(1, 2))
+        print(c_percentile.shape)
+        print(f"✓ Conf Threshold: {c_percentile.mean():.4f}")
+        mask &= (conf > c_percentile[:, None, None]).flatten()
+
+    # Boundaries
+    n, h, w = pred.depth.shape
+    gstrim_h = int(8 / 256 * h)
+    gstrim_w = int(8 / 256 * w)
+    b_mask = np.zeros((n, h, w), dtype=bool)
+    b_mask[:, gstrim_h:-gstrim_h, gstrim_w:-gstrim_w] = 1
+    mask &= b_mask.flatten()
+
+    ctx_depth = pred.depth
+    d_percentile = np.percentile(ctx_depth, 80, axis=(1, 2))
+    print(f"✓ Depth Threshold: {d_percentile.mean():.4f}")
+    mask &= (ctx_depth < d_percentile[:, None, None]).flatten()
+
+    print(f"📕 num predicted points: {points.shape}, colors: {colors.shape}, opacities: {opacities.shape}, valid: {mask.sum()}")
+    points = points[mask]
+    colors = colors[mask]
+
+    # # # Align the cameras.
+    # T_colmap = w2c[:, :3, :] # (n, 3, 4)
+    # T_pred = pred.extrinsics # (n, 3, 4)
+    # r, t, s = align_poses_umeyama(T_pred, T_colmap, return_aligned=False)
+    # # Apply r, t, s to points
+    # print(f"✓ r, t, s = {r}, {t}, {s}")
+    # points = (points * s) @ r.T + t.reshape(-1, 3)
+    return points, (colors * 0.2820948 + 0.5).clip(0, 1) # sh to 01
 
 if __name__ == "__main__":
     parser = ArgumentParser()
@@ -65,7 +116,7 @@ if __name__ == "__main__":
     camera_intrinsics.fy /= downscale
     camera_intrinsics.cx /= downscale
     camera_intrinsics.cy /= downscale
-    print(f"Downscaled camera: w={camera_intrinsics.width}, h={camera_intrinsics.height}")
+    print(f"Downscaled camera by factor {downscale:.2e}: w={camera_intrinsics.width}, h={camera_intrinsics.height}")
 
     # --- Load camera extrinsics ---
     camera_extrinsics, qs, ts = load_camera_extrinsics(EXTRIN_FILE)
@@ -76,10 +127,10 @@ if __name__ == "__main__":
 
     # --- Load point cloud ---
     pc = trimesh.load(PC_FILE)
-    points = np.array(pc.vertices)
-    colors = np.array(pc.colors)[:, :3] / 255.0
+    init_points = np.array(pc.vertices)
+    init_colors = np.array(pc.colors)[:, :3] / 255.0
 
-    print(f"Loaded {points.shape[0]} 3D points")
+    print(f"Loaded {init_points.shape[0]} 3D points")
 
     images = []
     for cam in camera_extrinsics:
@@ -97,22 +148,41 @@ if __name__ == "__main__":
 
     print("💾 Loading DepthAnything3 model...")
     da3 = DepthAnything3.from_pretrained("depth-anything/da3nested-giant-large")
-    da3 = da3.to("cuda")
+    da3 = da3.to("cuda").eval()
     print("✅ DepthAnything3 model loaded")
 
     start_time = perf_counter()
     try:
         points, colors = run_aligner(
-            points,
-            colors,
             images,
             camera_extrinsics,
             camera_intrinsics,
             da3,
+            OUT_FILE
         )
         end_time = perf_counter()
         print(f"🚀 Alignment time: {end_time - start_time}")
+
+        from pcloudsim import simplify_point_cloud, RemovalParams
+        params = RemovalParams(
+            enable_statistical_outliers=True,
+            std_dev_mul=3,
+            enable_radius_outliers=True,
+            radius=0.1,
+            enable_voxel_simplify=False,
+            voxel_size=0.005,
+        )
+        points, colors = simplify_point_cloud(points, colors, params)
+
+        # current_sparse_pc, final_transform, prev_mse = align_sparse_to_dense(init_points, points, max_iterations=10)
+        # points = np.concatenate([current_sparse_pc, points])
+        # colors = np.concatenate([init_colors, colors])
+
+        points = np.concatenate([init_points, points])
+        colors = np.concatenate([init_colors, colors])
+
         trimesh.PointCloud(vertices=points, colors=colors).export(OUT_FILE)
         Path(TIME_FILE).write_text(f"{int(60 - np.round(end_time - start_time))}")
     except Exception as e:
         print(f"❗️ Error: {e}")
+        raise
