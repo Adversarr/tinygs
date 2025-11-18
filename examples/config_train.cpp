@@ -240,21 +240,29 @@ void eval(std::shared_ptr<Orchestrator> orchestrator) {
 void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
   auto gs3d = orchestrator->get_optimizer()->get_gaussians();
   auto grads = orchestrator->get_optimizer()->get_gaussians_grad();
-  orchestrator->set_post_step_callback([orchestrator, gs3d, grads, visualize] (const TrainingState& state) {
+  auto last_log_time = std::chrono::steady_clock::now();
+  orchestrator->set_post_step_callback([orchestrator, gs3d, grads, visualize, last_log_time] (const TrainingState& state) mutable {
     if (state.current_step % 100 != 0) {
       return;
     }
-    
+
     auto now = std::chrono::steady_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - state.last_log_time);
+    auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_log_time);
     auto loss = orchestrator->accumulate_loss();
     auto metrics = orchestrator->evaluate_metrics();
     float psnr = metrics.empty() ? 0.0f : metrics[0];
     auto lr = orchestrator->get_optimizer()->get_lr();
 
-    auto log_string = fmt::format("[Trainer][step {}] PSNR: {:.3f} time: {:.1f}ms/100step CurrentLr: {:.3e}, N-Gs: {}",
-                                  state.current_step, psnr, duration.count() / (state.current_step / 100.0), lr, gs3d->size());
-    std::cout << log_string << std::endl;
+    // auto log_string = fmt::format("[Trainer][step {}] PSNR: {:.3f} time: {:.1f}ms/100step CurrentLr: {:.3e}, N-Gs: {}",
+    //                               state.current_step, psnr, duration.count() / (state.current_step / 100.0), lr, gs3d->size());
+    // std::cout << log_string << std::endl;
+    constexpr int LOG_WIDTH = 80; // 根据终端宽度调整
+
+    auto log_string = fmt::format("STEP {:4d}] PSNR={:.3f} | TPUT={:4d}ms/100step | LR={:.3e}, N-Gs: {:7d}",
+                                  state.current_step, psnr, duration.count(), lr, gs3d->size());
+
+    std::cout << "\r" << std::left << std::setw(LOG_WIDTH) << log_string << std::flush;
+
 
     // Visualize RGB - copy rendered image from trainer's internal buffers
     if (visualize) {
@@ -269,6 +277,7 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
         }
       }
     }
+    last_log_time = now;
   });
   auto final_state = orchestrator->train();
   log_info("Training completed after {} steps", final_state.current_step);
@@ -276,6 +285,6 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
     cv::waitKey(0);
     cv::destroyAllWindows();
   }
-
+  std::cout << std::endl;
   eval(orchestrator);
 }

@@ -43,17 +43,20 @@ def run_aligner(
         image=[Image.open(img).resize((w, h)) for img in images],
         extrinsics = w2c,
         intrinsics = intr,
-        process_res_method='lower_bound_resize',
+        process_res_method='upper_bound_resize',
         infer_gs=True,
     )
     gs = pred.gaussians
     assert gs is not None
-    scale = pred.alignment_scale
+    s = pred.alignment_scale
     t = pred.alignment_translation
     r = pred.alignment_rotation
+    # ✓ scale: 0.1305, t: [ 0.03388288 -0.14224175  0.39337836], r: [[ 0.9747912  -0.12696111  0.18347477]...
+    # r, t, s = align_poses_umeyama(pred.extrinsics, w2c[:, :3, :])
+    print(f"✓ scale: {s:.4f}, t: {t}, r: {r}")
 
     points = gs.means.detach().cpu().numpy()[0] # (n, 3)
-    points = (points - t.reshape(-1,3)) @ r.T
+    points = (points - t.reshape(-1, 3) * (1 / s - 1))
     # points = (points * scale) @ r.T + t.reshape(-1, 3)
     colors = gs.harmonics.detach().cpu().numpy()[0, ..., 0] # (n, 3)
     opacities = gs.opacities.detach().cpu().numpy()[0] # (n,)

@@ -94,7 +94,8 @@ class GaussianAdapter(nn.Module):
                 )
             except Exception:
                 pose_scales = torch.ones_like(extrinsics[:, 0, 0, 0])
-            pose_scales = torch.clamp(pose_scales, min=1 / 3.0, max=3.0)
+            # pose_scales = torch.clamp(pose_scales, min=1 / 3.0, max=3.0)
+            pose_scales = torch.clamp(pose_scales, min=1e-4, max=100.0)
             cam2worlds[:, :, :3, 3] = cam2worlds[:, :, :3, 3] * rearrange(
                 pose_scales, "b -> b () ()"
             )  # [b, i, j]

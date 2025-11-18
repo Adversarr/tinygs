@@ -319,7 +319,7 @@ class DepthAnything3(nn.Module, PyTorchModelHubMixin):
     ) -> Prediction:
         """Align depth map to input extrinsics"""
         if extrinsics is None:
-            return prediction, 1.0
+            return prediction
         prediction.intrinsics = intrinsics.numpy()
         r, t, scale, aligned_extrinsics = align_poses_umeyama(
             prediction.extrinsics,

@@ -40,7 +40,8 @@ class PointCloudManipulator:
         new_pcd = o3d.geometry.PointCloud()
         new_pcd.points = o3d.utility.Vector3dVector(new_xyz)
         new_pcd.colors = o3d.utility.Vector3dVector(new_rgb)
-
+        n_newpoints = new_xyz.shape[0]
+        print(f"💡 Adding {n_newpoints} points to point cloud")
         self.pcd += new_pcd
 
     def remove_hidden_points(self, cameras: np.ndarray) -> None:

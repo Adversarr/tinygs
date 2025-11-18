@@ -45,7 +45,7 @@ class DepthEstimator:
     def predict_depth(
         self,
         images: Union[np.ndarray, List[np.ndarray], Image.Image, List[Image.Image]],
-    ) -> Union[np.ndarray, List[np.ndarray]]:
+    ):
         """
         Predict depth for input images.
 
@@ -79,8 +79,13 @@ class DepthEstimator:
           pil_images,
           process_res_method="lower_bound_resize",
         )
-        print(prediction.is_metric, prediction.scale_factor)
-        return 1 / (prediction.depth[0] + 1e-12)
+
+        inv_depth = 1 / (prediction.depth + 1e-12)
+        conf = prediction.conf
+        if not is_batch:
+            inv_depth = inv_depth[0]
+            conf = conf[0]
+        return inv_depth, conf
 
     def predict_depth_as_image(
         self,

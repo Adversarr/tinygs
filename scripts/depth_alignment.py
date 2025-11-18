@@ -50,6 +50,7 @@ class DepthAlignment:
         camera_intrinsics: CameraIntrinsic,
         camera_extrinsic: CameraExtrinsic,
         relative_depth_map: np.ndarray,
+        conf: np.ndarray,
     ) -> DepthAlignmentResult:
         """
         Estimate scale between relative depth map and actual 3D points using RANSAC.
@@ -76,10 +77,12 @@ class DepthAlignment:
         )
 
         # give center points higher weight
-        weights = np.clip(dist_to_boundaries / np.max(dist_to_boundaries), 0.1, 1.0)
+        weights = np.clip(dist_to_boundaries / np.max(dist_to_boundaries), 0.25, 1.0)
 
         # Sample relative depth values at projected pixel coordinates
         depth_at_proj = relative_depth_map[v_in.astype(np.int32), u_in.astype(np.int32)]
+        conf_at_proj = conf[v_in.astype(np.int32), u_in.astype(np.int32)]
+        weights *= conf_at_proj / conf.max()
 
         # Inverse of actual depth (1/z)
         inv_z_in = 1.0 / (z_in + 1e-8)
@@ -148,7 +151,7 @@ class DepthAlignment:
         downsampling_factor: int = 1,
         scale: Optional[float] = None,
         offset: Optional[float] = None,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> np.ndarray:
         """
         Unproject a relative depth map to 3D world coordinates.
 
@@ -177,14 +180,6 @@ class DepthAlignment:
         u_flat = u_coords.flatten()
         v_flat = v_coords.flatten()
         depth_flat = depth_down.flatten()
-        depth_std = np.std(depth_flat)
-        # Filter outliers
-        mask = np.abs(depth_flat - np.mean(depth_flat)) < 3 * depth_std
-        mask = mask & (depth_flat > 0)
-        # mask = depth_flat > 0
-        u_flat = u_flat[mask]
-        v_flat = v_flat[mask]
-        depth_flat = depth_flat[mask]
 
         # Convert relative depth to absolute depth
         actual_depth = self.convert_relative_to_absolute_depth(
@@ -207,7 +202,7 @@ class DepthAlignment:
         # Transform to world coordinates
         points_world = (R_cw @ points_cam.T).T + t_cw
 
-        return points_world, mask
+        return points_world.reshape(h_d, w_d, 3)
 
     def restore(self, result: DepthAlignmentResult):
         self.scale = result.scale

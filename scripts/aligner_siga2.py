@@ -38,7 +38,7 @@ class Aligner:
         self.init_point_cloud = PointCloudManipulator(points, colors)
 
         self.point_cloud_running = PointCloudManipulator(points, colors)
-        self.histories = OrderedDict()  # cam_id -> (depth, rgb, cam)
+        self.histories = OrderedDict()  # cam_id -> (depth, conf, rgb, cam)
         self.camera_extrinsics = camera_extrinsics
         self.camera_intrinsics = camera_intrinsics
         self.images = images
@@ -56,7 +56,6 @@ class Aligner:
 
         w, h = camera_intrinsics.width, camera_intrinsics.height
         newK, _ = cv2.getOptimalNewCameraMatrix(K, distortion, (w, h), alpha=0)
-        self.map1, self.map2 = cv2.initUndistortRectifyMap(K, distortion, None, newK, (w, h), cv2.CV_32FC1) # type: ignore
         self.undistorted = CameraIntrinsic(
             width=w,
             height=h,
@@ -74,19 +73,25 @@ class Aligner:
         self.interval_removal = 1
         self.downsampling = 3
 
-    def run_ransac(self, points, cam: CameraExtrinsic, depth):
+    def run_ransac(self, points, cam: CameraExtrinsic, depth, conf):
         aligner = DepthAlignment(max_trials=1000, stop_score=0.999)
         result: DepthAlignmentResult = aligner.estimate_scale(
-            points, self.undistorted, cam, depth
+            points, self.undistorted, cam, depth, conf
         )
         return result, aligner
 
     def estimate_depth(self, img_path):
         img = Image.open(img_path)
         img = cv2.resize(np.array(img), (self.undistorted.width, self.undistorted.height))
-        img_np = cv2.remap(img, self.map1, self.map2, cv2.INTER_LINEAR)
-        depth_map: np.ndarray = self.depth_anything.predict_depth(img_np)  # type: ignore
-        return depth_map, img_np
+        # img_np = cv2.remap(img, self.map1, self.map2, cv2.INTER_LINEAR)
+        img_np = img
+        depth_map, conf_map = self.depth_anything.predict_depth(img_np)  # type: ignore
+        return depth_map, conf_map, img_np
+
+    def batched_estimate_depth(self, img_paths):
+        images = [cv2.resize(np.array(Image.open(img_path)), (self.undistorted.width, self.undistorted.height)) for img_path in img_paths]
+        depths, confs = self.depth_anything.predict_depth(images)  # type: ignore
+        return depths, confs, images
 
     def best_alignment(self, avail: List[int], known):
         max_score = -1
@@ -97,7 +102,7 @@ class Aligner:
         init = self.init_point_cloud.xyz
 
         # Limit the running's size to init's size
-        scaler = 1 + math.log(1 + known)
+        scaler = 1 + math.log(1 + known) * 2
         max_size = int(init.shape[0] * scaler)
         if running.shape[0] > max_size:
             c = np.random.choice(running.shape[0], max_size, replace=False)
@@ -108,8 +113,8 @@ class Aligner:
             points = init
 
         for cam_id in avail:
-            depth, _, cam = self.histories[cam_id]
-            result, aligner = self.run_ransac(points, cam, depth)
+            depth, conf, _, cam = self.histories[cam_id]
+            result, aligner = self.run_ransac(points, cam, depth, conf)
             if result.score > max_score and result.scale > 0:
                 max_score = result.score
                 best_result = result
@@ -130,16 +135,35 @@ class Aligner:
         self.point_cloud_running.add_points(self.init_point_cloud.xyz, self.init_point_cloud.rgb)
 
     def run(self):
-        for (cam, img_path) in tqdm(zip(self.camera_extrinsics, self.images), total=len(self.images)):
-            cam_id = cam.timestamp
-            depth, rgb = self.estimate_depth(img_path)
-            self.histories[cam_id] = (depth, rgb, cam)
+        batch_size = 8
+        # for (cam, img_path) in tqdm(zip(self.camera_extrinsics, self.images), total=len(self.images)):
+        #     cam_id = cam.timestamp
+        #     depth, rgb = self.estimate_depth(img_path)
+        #     self.histories[cam_id] = (depth, rgb, cam)
+        for i in range(0, len(self.images), batch_size):
+            batch_images = self.images[i:i+batch_size]
+            batch_cams = self.camera_extrinsics[i:i+batch_size]
+            batch_depths, batch_confs, batch_rgbs = self.batched_estimate_depth(batch_images)
+            for cam, depth, conf, rgb in zip(batch_cams, batch_depths, batch_confs, batch_rgbs):
+                cam_id = cam.timestamp
+                self.histories[cam_id] = (depth, conf, rgb, cam)
 
         avail_intervals = [list(self.histories.keys())]
         iteration = 0
         estim_scale = -1
         prev_scales = []
         while avail_intervals:
+            self.point_cloud_running.update(PointCloudUpdateConfig(
+                enable_radius_outlier_removal=False,
+                ror_radius=0.1,
+                sor_std_ratio=2.5,
+                enable_voxel_downsampling=True,
+            ))
+            # self.point_cloud_running.add_points(
+            #     self.init_point_cloud.xyz,
+            #     self.init_point_cloud.rgb,
+            # )
+
             candidates = []
             for interval in avail_intervals:
                 best_cam_id, best_result, best_aligner = self.best_alignment(interval, len(prev_scales))
@@ -161,8 +185,8 @@ class Aligner:
             unprojected_xyz = []
             unprojected_rgb = []
             for (cam_id, best_result, best_aligner) in candidates:
-                depth, rgb, cam = self.histories[cam_id]
-                points_world_unproj, mask = best_aligner.unproject_depth_map(
+                depth, conf, rgb, cam = self.histories[cam_id]
+                points_world_unproj = best_aligner.unproject_depth_map(
                     depth,
                     self.undistorted,
                     cam,
@@ -170,21 +194,43 @@ class Aligner:
                     scale=best_result.scale,
                     offset=best_result.offset,
                 )
-                unprojected_xyz.append(points_world_unproj)
-                rgb_out = rgb[::self.downsampling, ::self.downsampling].reshape(-1, 3) / 255.0
-                unprojected_rgb.append(rgb_out[mask])
+                rgb_out = rgb[::self.downsampling, ::self.downsampling] / 255.0
+                depth = depth[::self.downsampling, ::self.downsampling]
+                conf = conf[::self.downsampling, ::self.downsampling]
+                mask = np.zeros_like(depth, dtype=bool)
+                # disable bd
+                bd_h = int(8 / 256 * depth.shape[0])
+                bd_w = int(8 / 256 * depth.shape[1])
+                mask[bd_h:-bd_h, bd_w:-bd_w] = True
+
+                # disable far
+                gt_depth = 1 / (depth + 1e-12)
+                depth_c = np.percentile(gt_depth, 90)
+                mask &= (gt_depth <= depth_c) # points not far
+
+                # disable uncertainty
+                conf_c = np.percentile(conf, 40)
+                mask &= (conf >= conf_c) # points with high confidence
+                mask = mask.flatten()
+
+                # Pick 10% of not accepted points
+                not_accepted = ~mask
+                not_accepted_indices = np.where(not_accepted)[0]
+                np.random.shuffle(not_accepted_indices)
+                not_accepted_indices = not_accepted_indices[:int(not_accepted_indices.shape[0] * 0.2)]
+                mask[not_accepted_indices] = True
+
+                points_world_unproj = points_world_unproj.reshape(-1, 3)[mask]
+                rgb_out = rgb_out.reshape(-1, 3)[mask]
+
+                unprojected_xyz.append(points_world_unproj.reshape(-1, 3))
+                unprojected_rgb.append(rgb_out.reshape(-1, 3))
                 prev_scales.append(best_result.scale)
 
             self.point_cloud_running.add_points(
                 np.vstack(unprojected_xyz),
                 np.vstack(unprojected_rgb)
             )
-            self.point_cloud_running.update(PointCloudUpdateConfig(
-                enable_radius_outlier_removal=True,
-                ror_radius=0.2,
-                sor_std_ratio=2.5,
-                enable_voxel_downsampling=False,
-            ))
 
             # Update the available intervals
             used_cam_ids = {cam_id for (cam_id, _, _) in candidates}
@@ -264,21 +310,21 @@ if __name__ == "__main__":
     if not images:
         print("Error: no images found")
         exit(1)
-
+    aligner = Aligner(
+        points,
+        colors,
+        images,
+        camera_extrinsics,
+        camera_intrinsics,
+    )
+    print(f"✓ All preparation & dataloading done.")
     start_time = perf_counter()
     try:
-        aligner = Aligner(
-            points,
-            colors,
-            images,
-            camera_extrinsics,
-            camera_intrinsics,
-        )
         aligner.run()
         aligner.run_finalize()
         end_time = perf_counter()
         print(f"🚀 Alignment time: {end_time - start_time}")
-        Path(TIME_FILE).write_text(f"{int(60 - np.round(end_time - start_time))}")
+        Path(TIME_FILE).write_text(f"{int(60 - np.ceil(end_time - start_time))}")
         aligner.export(OUT_FILE)
     except Exception as e:
         print(f"Error: {e}")

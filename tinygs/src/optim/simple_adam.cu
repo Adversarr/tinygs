@@ -410,6 +410,7 @@ void SimpleAdam::step(float scale, cudaStream_t stream) {
     step_adam(scale, stream);
   }
 
+  return;
   // Logging (performed after update; uses same stream for ordering)
   if (m_global_steps % g_momentum_log_interval == 0 || m_global_steps % g_gradient_log_interval == 0) {
     // Momentum L1

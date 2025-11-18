@@ -119,7 +119,7 @@ def parse_poses(file_of_poses) -> dict[int, dict]:
     2 1 0.99332061988404452 0.03554105551421452 0.087965961307444454 0.065673199536571594 -0.85684555212765534 -0.81016635795194825 1.4558832797791708 1 CAMERA 1 2
     """
     lines = readlines_and_prune(file_of_poses)
-    print(f"✅ Loaded {len(lines)} poses.")
+    print(f"✓ Loaded {len(lines)} poses.")
     poses = [parse_single_pose(line) for line in lines]
     return {d['frame_id']: d for d in poses} # Map frame_id to pose
 
@@ -164,7 +164,7 @@ def global_scale(points3D: trimesh.PointCloud) -> tuple[np.ndarray, float]:
     vertices = np.array(points3D.vertices, dtype=np.float64)
     mean = vertices.mean(axis=0)
     std = (vertices - mean).std()
-    print(f"✅ Global scale: mean={mean}, std={std}")
+    print(f"✓ Global scale: mean={mean}, std={std}")
     return mean, std if std > 0.01 else 1.0
 
 def _quat_to_rot_matrix(qw: float, qx: float, qy: float, qz: float) -> np.ndarray:
@@ -225,7 +225,7 @@ def _normalize_extrinsics_translations(
     return new_extrinsics
 
 def main(args):
-    print(f"✅ {args.input} -> {args.id} -> {args.output}")
+    print(f"✓ {args.input} -> {args.id} -> {args.output}")
 
     input_dir = Path(args.input) / args.id
     output_dir = Path(args.output) / args.id
@@ -251,7 +251,7 @@ def main(args):
         raise FileNotFoundError(f"❌ Either {input_dir / 'images'} or {input_dir / 'images_gt_downsampled'} does not exist.")
 
     shutil.copy(input_dir / 'sparse' / '0' / 'points3D.txt', output_dir / 'points3D.in.txt')
-    print(f"✅ Wrote points3D to {output_dir / 'points3D.in.txt'}")
+    print(f"✓ Wrote points3D to {output_dir / 'points3D.in.txt'}")
     points3D = load_points3D(output_dir / 'points3D.in.txt')
     if args.normalize:
         mean, std = global_scale(points3D)
@@ -260,7 +260,7 @@ def main(args):
         mean = np.array([0.0, 0.0, 0.0])
         std = 1.0
     points3D.export(output_dir / 'points3D.ply')
-    print(f"✅ Wrote points3D to {output_dir / 'points3D.ply'}, {points3D.vertices.shape}, {points3D.colors.shape}")
+    print(f"✓ Wrote points3D to {output_dir / 'points3D.ply'}, {points3D.vertices.shape}, {points3D.colors.shape}")
 
     (output_dir / 'images').mkdir(parents=True, exist_ok=True)
 
@@ -279,7 +279,7 @@ def main(args):
         out_file_path = Path(output_dir / 'images' / f'{args.magic_number}{relp}')
         shutil.copy(in_file_path, out_file_path)
         test_images[int(in_file_path.stem)] = int(int(out_file_path.stem)) # e.g. 0000 -> 1 -> 420001
-    print(f"✅ Loaded {len(train_images)} train images and {len(test_images)} test images.")
+    print(f"✓ Loaded {len(train_images)} train images and {len(test_images)} test images.")
     intrinsics = parse_first_camera(input_dir / 'sparse' / '0' / 'cameras.txt')
     extrinsics = parse_poses(input_dir / 'sparse' / '0' / 'frames.txt')
 
@@ -294,11 +294,11 @@ def main(args):
 
     Path(output_dir / 'train_desired.txt').write_text('\n'.join(train_desired))
     Path(output_dir / 'test_desired.txt').write_text('\n'.join(test_desired))
-    print(f"✅ Wrote {len(train_desired)} train desired images and {len(test_desired)} test desired images.")
+    print(f"✓ Wrote {len(train_desired)} train desired images and {len(test_desired)} test desired images.")
 
     intrinsics_desired = make_desired_intrinsics_txt(intrinsics)
     Path(output_dir / 'intrinsics.txt').write_text(intrinsics_desired)
-    print(f"✅ Wrote intrinsics to {output_dir / 'intrinsics.txt'}")
+    print(f"✓ Wrote intrinsics to {output_dir / 'intrinsics.txt'}")
 
 if __name__ == '__main__':
     main(parse_args())

@@ -19,7 +19,6 @@ def main(args):
     working_dir = Path(args.working_dir)
     ids = list(working_dir.glob("*"))
     print(f"Found {len(ids)} scenes")
-
     stats = {}
     for id in ids:
         stat_file = id / "train_output" / "stats.json"
@@ -35,6 +34,8 @@ def main(args):
 
     print(json.dumps(stats, indent=2))
     (working_dir / "metrics.json").write_text(json.dumps(stats, indent=2))
+    avg_psnr = sum([v["PSNR"] for v in stats.values()]) / len(stats)
+    print(f"🎉 avg. psnr={avg_psnr:.4f}")
 
 
 if __name__ == "__main__":
