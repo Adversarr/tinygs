@@ -253,13 +253,11 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
     float psnr = metrics.empty() ? 0.0f : metrics[0];
     auto lr = orchestrator->get_optimizer()->get_lr();
 
-    // auto log_string = fmt::format("[Trainer][step {}] PSNR: {:.3f} time: {:.1f}ms/100step CurrentLr: {:.3e}, N-Gs: {}",
-    //                               state.current_step, psnr, duration.count() / (state.current_step / 100.0), lr, gs3d->size());
-    // std::cout << log_string << std::endl;
     constexpr int LOG_WIDTH = 80; // 根据终端宽度调整
+    auto duration_from_start = std::chrono::duration_cast<std::chrono::seconds>(now - state.last_log_time);
 
-    auto log_string = fmt::format("STEP {:4d}] PSNR={:.3f} | TPUT={:4d}ms/100step | LR={:.3e}, N-Gs: {:7d}",
-                                  state.current_step, psnr, duration.count(), lr, gs3d->size());
+    auto log_string = fmt::format("STEP {:4d}] PSNR={:.3f} | TPUT={:4d}ms/100step | LR={:.1e} | N-Gs: {:7d} | T={:3d}s",
+                                  state.current_step, psnr, duration.count(), lr, gs3d->size(), duration_from_start.count());
 
     std::cout << "\r" << std::left << std::setw(LOG_WIDTH) << log_string << std::flush;
 
