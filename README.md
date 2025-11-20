@@ -5,6 +5,7 @@ Use the environment below, then:
 ```sh
 # 1) Build required binaries (video_to_png, config_train)
 bash build.sh
+uv sync
 source .venv/bin/activate
 uv pip install -e scripts/depth-anything-3 # Fine. Nov 14
 # (Optional 🫠)
