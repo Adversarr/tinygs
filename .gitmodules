@@ -4,3 +4,6 @@
 [submodule "ref_impl/FastGS"]
 	path = ref_impl/FastGS
 	url = https://github.com/fastgs/FastGS.git
+[submodule "ref_impl/AbsGS"]
+	path = ref_impl/AbsGS
+	url = https://github.com/TY424/AbsGS.git
