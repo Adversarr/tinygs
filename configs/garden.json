@@ -8,6 +8,11 @@
     "extension": "JPG",
     "type": "image"
   },
+  "test_dataset": {
+    "root_path": "/data/gaussian-splatting/360_v2_converted/garden/val/",
+    "extension": "JPG",
+    "type": "image"
+  },
   "initializer": {
     "default_distance": 0.01,
     "enable_radius_outlier_removal": false,
@@ -81,7 +86,7 @@
     "noise_lr_init": 8.0,
     "split_distance": 0.45,
     "opacity_reduction": 0.6,
-    "type": "mcmc"
+    "type": "improved"
   },
   "trainer": {
     "accumulate_grad_steps": 1,
@@ -100,11 +105,11 @@
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 1000,
-    "enable_progressive_resolution": false,
+    "enable_progressive_resolution": true,
     "start_pose_opt": 50000,
     "record_trajectory": false,
-    "resolution_milestones": [0, 3000, 5000],
-    "resolution_scales": [0.5, 0.75, 1.0],
+    "resolution_milestones": [0],
+    "resolution_scales": [0.5],
     "test_steps": [3000, 5000, 7000, 10000, 15000, 30000],
     "out_dir": "outputs",
     "export_rasterized": false,
