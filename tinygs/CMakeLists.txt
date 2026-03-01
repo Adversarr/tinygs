@@ -138,6 +138,8 @@ target_include_directories(tinygs
         # Add CUDA include directories
         ${CUDAToolkit_INCLUDE_DIRS}
         ${OpenCV_INCLUDE_DIRS}
+        # CUDA 13+ moved thrust/cub to cccl/ subdirectory
+        $<$<VERSION_GREATER_EQUAL:${CUDA_VERSION},13.0>:${CUDAToolkit_INCLUDE_DIRS}/cccl>
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         # Add internal headers

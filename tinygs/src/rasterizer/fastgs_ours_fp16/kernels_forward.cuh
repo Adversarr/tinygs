@@ -901,7 +901,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu(
     using BlockReduce = cub::BlockReduce<ushort, config::tile_width / 2, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_width>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
     ushort max_xy = n_contributions.data.x > n_contributions.data.y ? n_contributions.data.x : n_contributions.data.y;
-    max_xy = BlockReduce(temp_storage).Reduce(max_xy, cub::Max());
+    max_xy = BlockReduce(temp_storage).Reduce(max_xy, [](ushort a, ushort b) { return a > b ? a : b; });
 
     if (thread_rank == 0) {
 #ifndef NDEBUG
@@ -1154,7 +1154,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     using BlockReduce = cub::BlockReduce<ushort, config::tile_width / 2, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_width>;
     __shared__ typename BlockReduce::TempStorage temp_storage;
     ushort max_xy = n_contributions.data.x > n_contributions.data.y ? n_contributions.data.x : n_contributions.data.y;
-    max_xy = BlockReduce(temp_storage).Reduce(max_xy, cub::Max());
+    max_xy = BlockReduce(temp_storage).Reduce(max_xy, [](ushort a, ushort b) { return a > b ? a : b; });
 
     if (thread_rank == 0) {
 #ifndef NDEBUG

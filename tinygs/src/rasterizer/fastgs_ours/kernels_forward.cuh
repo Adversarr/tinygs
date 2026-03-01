@@ -704,7 +704,7 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     // max reduce the number of contributions
     typedef cub::BlockReduce<uint, config::tile_width, cub::BLOCK_REDUCE_WARP_REDUCTIONS, config::tile_height> BlockReduce;
     __shared__ typename BlockReduce::TempStorage temp_storage;
-    n_contributions = BlockReduce(temp_storage).Reduce(n_contributions, cub::Max());
+    n_contributions = BlockReduce(temp_storage).Reduce(n_contributions, [](uint a, uint b) { return a > b ? a : b; });
     if (thread_rank == 0) {
 #ifndef NDEBUG
         // Boundary check for tile arrays

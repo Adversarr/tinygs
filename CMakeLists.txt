@@ -40,7 +40,6 @@ project(tinygs
         LANGUAGES CXX CUDA
 )
 option(TINYGS_BUILD_EXAMPLES "Build tinygs examples" ON)
-option(TINYGS_BUILD_BENCHMARKS "Build tinygs benchmarks" ON)
 option(TINYGS_ENABLE_PROFILE "Enable profiling with lineinfo" OFF)
 option(TINYGS_ENABLE_NVTX_SYNC "Enable operation sync to get accurate nvtx range" OFF)
 option(TINYGS_ENABLE_NATIVE "Enable native optimizations" ON)
@@ -75,11 +74,6 @@ if(TINYGS_BUILD_EXAMPLES)
     add_subdirectory(examples)
 endif()
 
-# Optional: Build benchmarks
-if(TINYGS_BUILD_BENCHMARKS)
-    add_subdirectory(benchmarks)
-endif()
-
 # Print configuration summary
 message(STATUS "")
 message(STATUS "tinygs Configuration Summary:")
@@ -91,5 +85,4 @@ message(STATUS "  CUDA version: ${CUDA_VERSION}")
 message(STATUS "  CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  Minimum GPU architecture: ${MIN_GPU_ARCH}")
 message(STATUS "  Build examples: ${TINYGS_BUILD_EXAMPLES}")
-message(STATUS "  Build benchmarks: ${TINYGS_BUILD_BENCHMARKS}")
 message(STATUS "")

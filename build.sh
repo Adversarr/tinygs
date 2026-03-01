@@ -43,7 +43,7 @@ fi
 NPROC=$(nproc)
 JOBS="${JOBS:-${NPROC}}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
-TARGETS="${TARGETS:-video_to_png config_train}"
+TARGETS="${TARGETS:-config_train}"
 BUILD_DIR="build/${BUILD_TYPE}"
 
 echo -e "${GREEN}nvcc found at: ${NVCC_BIN}, ${JOBS} cores available for build.${NC}"
