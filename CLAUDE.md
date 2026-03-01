@@ -56,26 +56,65 @@ The `Orchestrator` class coordinates training by composing these components:
 
 All components are created via factory functions (`create_rasterizer()`, `create_optimizer()`, etc.) and configured through JSON.
 
-### Key Module Locations
+### Configuration
+
+Training is driven by JSON config files (see `configs/garden.json`). Each component has a `type` field for factory selection and additional parameters consumed via `set_params()`.
+
+## Key Module Locations
 
 | Module | Headers | Implementation |
 |--------|---------|----------------|
 | Core (Gaussian, Camera) | `include/tinygs/core/` | `src/core/` |
 | CUDA utilities | `include/tinygs/cuda/` | `src/cuda/` |
-| Rasterizers | `include/tinygs/rasterizer/` | `src/rasterizer/` |
-| Optimizers | `include/tinygs/optim/` | `src/optim/` |
-| Strategies | `include/tinygs/strategy/` | `src/strategy/` |
+| Dataloader | `include/tinygs/dataloader/` | `src/dataloader/` |
+| Dataset | `include/tinygs/dataset/` | `src/dataset/` |
+| Initialization | `include/tinygs/initialization/` | `src/initialization/` |
 | Loss functions | `include/tinygs/loss/` | `src/loss/` |
+| Optimizers | `include/tinygs/optim/` | `src/optim/` |
+| Pose optimization | `include/tinygs/pose_opt/` | `src/pose_opt/` |
+| Rasterizers | `include/tinygs/rasterizer/` | `src/rasterizer/` |
+| Strategies | `include/tinygs/strategy/` | `src/strategy/` |
+| Utilities | `include/tinygs/utils/` | `src/utils/` |
 
 ### Rasterizer Implementations
 
 - **default**: Standard 3DGS rasterization
-- **fastgs**: Optimized rasterizer with custom forward/backward kernels in `src/rasterizer/fastgs_ours/`
-- **fastgs_fp16**: FP16 variant in `src/rasterizer/fastgs_ours_fp16/`
+- **fastgs**: Optimized rasterizer with custom forward/backward kernels
+- **fastgs_ours/**: Custom FastGS variant
+- **fastgs_ours_fp16/**: FP16-optimized variant
 
-### Configuration
+## Code Style
 
-Training is driven by JSON config files (see `configs/garden.json`). Each component has a `type` field for factory selection and additional parameters consumed via `set_params()`.
+```cpp
+// Headers: .hpp, implementations: .cu or .cpp, device-only: .cuh
+// Factory pattern with create_X(type_string) functions
+// JSON config via from_json()/to_json()
+
+// CUDA kernel pattern
+__global__ void forward_kernel(const float* __restrict__ means,
+                                const float* __restrict__ opacities,
+                                float* __restrict__ output,
+                                int n) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= n) return;
+  // ...
+}
+
+// Host function launches kernel
+void launch_forward(const GPUGaussian3d& gaussians, cudaStream_t stream) {
+  const int blocks = (gaussians.size() + 255) / 256;
+  forward_kernel<<<blocks, 256, 0, stream>>>(/* args */);
+}
+```
+
+### Conventions
+
+- Format: `.clang-format` (Google-based, 120 columns)
+- Lint: `.clang-tidy` (modern C++, performance checks)
+- Naming: `snake_case` for functions/variables, `CamelCase` for types
+- Member variables: `m_` prefix for private/protected (e.g., `m_data`)
+- CUDA streams: pass explicitly for async operations
+- Logging: use `log_info`, `log_warning`, `log_error` from `common.hpp` (never `std::cout` in library code)
 
 ## Dependencies
 
@@ -86,9 +125,22 @@ Training is driven by JSON config files (see `configs/garden.json`). Each compon
 
 Dependencies are fetched via CMake during configuration (see `cmake/dependencies.cmake`).
 
-## Code Conventions
+## Change Management
 
-- Headers use `.hpp`, CUDA kernels use `.cu`, device-only headers use `.cuh`
-- Factory pattern for polymorphic components with `create_X(type_string)` functions
-- JSON serialization via `from_json()`/`to_json()` methods on config structs
-- CUDA streams passed explicitly for async operations
+- Run `./build.sh` after modifying C++/CUDA code
+- Run format check before committing
+- Test training before submitting: `./config_train -c configs/garden.json`
+
+### Ask Before
+
+- Adding new third-party dependencies
+- Modifying CMake configuration
+- Adding new rasterizer implementations
+- Changing training defaults in JSON configs
+
+### Never
+
+- Modify files in `cmake/CPM.cmake` or fetched dependencies
+- Commit build artifacts (`build/`, `*.ply`, `*.pt`)
+- Add Python code (no Python interface yet)
+- Modify `.clang-format` or `.clang-tidy` without discussion
