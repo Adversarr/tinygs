@@ -3,6 +3,9 @@
 #include <stdexcept>
 #include <algorithm>
 #include <cmath>
+#include <fstream>
+#include <nlohmann/json.hpp>
+
 #include "tinygs/core/camera_ext.hpp"
 #include "tinygs/utils/file.hpp"
 
@@ -77,6 +80,124 @@ void SingleCameraLoader::resize_sensor(uint32_t width, uint32_t height) {
     intr.height = static_cast<int>(height);
 
     log_info("Resized camera sensor to {}x{} (scale {:.6f})", width, height, sx);
+  }
+}
+
+void SingleCameraLoader::load_from_json(const std::string& cameras_json_path,
+                                        const std::string& poses_json_path) {
+  using json = nlohmann::json;
+
+  // ---- Load cameras.json ----------------------------------------------------
+  {
+    std::ifstream f(cameras_json_path);
+    if (!f.is_open()) {
+      throw std::runtime_error("Failed to open cameras.json: " + cameras_json_path);
+    }
+    json cameras_json = json::parse(f);
+    if (!cameras_json.is_array()) {
+      throw std::runtime_error("cameras.json must be a JSON array");
+    }
+
+    m_camera_intrinsics.clear();
+    m_camera_intrinsics.reserve(cameras_json.size());
+
+    for (const auto& cam : cameras_json) {
+      CameraIntrinsics intr{};
+      intr.uid = cam.at("camera_id").get<uint64_t>();
+
+      const std::string model = cam.at("model").get<std::string>();
+      if (model == "PINHOLE") {
+        intr.model = CameraModel::Pinhole;
+      } else if (model == "SIMPLE_PINHOLE") {
+        intr.model = CameraModel::Pinhole;  // treat as pinhole with fx == fy
+      } else {
+        throw std::runtime_error("Unsupported camera model in cameras.json: " + model);
+      }
+
+      intr.width = cam.at("width").get<int>();
+      intr.height = cam.at("height").get<int>();
+
+      const auto& params = cam.at("params");
+      if (model == "SIMPLE_PINHOLE") {
+        // params: [f, cx, cy]
+        intr.fx = intr.fy = params.at(0).get<float>();
+        intr.cx = params.at(1).get<float>();
+        intr.cy = params.at(2).get<float>();
+      } else {
+        // PINHOLE: params: [fx, fy, cx, cy]
+        intr.fx = params.at(0).get<float>();
+        intr.fy = params.at(1).get<float>();
+        intr.cx = params.at(2).get<float>();
+        intr.cy = params.at(3).get<float>();
+      }
+
+      // No distortion from the JSON conversion pipeline
+      intr.k1 = intr.k2 = intr.k3 = 0.0f;
+      intr.p1 = intr.p2 = 0.0f;
+
+      m_camera_intrinsics.push_back(intr);
+    }
+    log_info("Loaded {} camera intrinsics from {}", m_camera_intrinsics.size(), cameras_json_path);
+  }
+
+  // ---- Load poses.json ------------------------------------------------------
+  {
+    std::ifstream f(poses_json_path);
+    if (!f.is_open()) {
+      throw std::runtime_error("Failed to open poses.json: " + poses_json_path);
+    }
+    json poses_json = json::parse(f);
+    if (!poses_json.is_array()) {
+      throw std::runtime_error("poses.json must be a JSON array");
+    }
+
+    m_camera_extrinsics.clear();
+    m_camera_extrinsics.reserve(poses_json.size());
+
+    for (const auto& pose : poses_json) {
+      const auto& qvals = pose.at("qvec");
+      const auto& tvals = pose.at("tvec");
+
+      float qw = qvals.at(0).get<float>();
+      float qx = qvals.at(1).get<float>();
+      float qy = qvals.at(2).get<float>();
+      float qz = qvals.at(3).get<float>();
+      float norm = std::sqrt(qw * qw + qx * qx + qy * qy + qz * qz);
+      qw /= norm; qx /= norm; qy /= norm; qz /= norm;
+
+      vec3 t{tvals.at(0).get<float>(), tvals.at(1).get<float>(), tvals.at(2).get<float>()};
+      quat q{qw, qx, qy, qz};
+
+      uuid_t image_id = pose.at("image_id").get<uint64_t>();
+      uuid_t camera_id = pose.at("camera_id").get<uint64_t>();
+
+      // Derive timestamp from image name (strip extension)
+      std::string name = pose.at("name").get<std::string>();
+      uuid_t timestamp = 0;
+      // Try to extract numeric timestamp from the name
+      auto dot_pos = name.rfind('.');
+      std::string stem = (dot_pos != std::string::npos) ? name.substr(0, dot_pos) : name;
+      try {
+        timestamp = std::stoull(stem);
+      } catch (...) {
+        // Non-numeric name: use image_id as timestamp
+        timestamp = image_id;
+      }
+
+      // Map camera_id to 0-based index in intrinsics vector
+      uuid_t cam_uid = 0;
+      for (size_t ci = 0; ci < m_camera_intrinsics.size(); ++ci) {
+        if (m_camera_intrinsics[ci].uid == camera_id) {
+          cam_uid = ci;
+          break;
+        }
+      }
+
+      m_camera_extrinsics.emplace_back(q, t, image_id, timestamp, cam_uid);
+    }
+    std::sort(m_camera_extrinsics.begin(), m_camera_extrinsics.end(),
+              [](const auto& a, const auto& b) { return a.frame_idx < b.frame_idx; });
+    log_info("Loaded {} camera extrinsics from {}", m_camera_extrinsics.size(), poses_json_path);
   }
 }
 

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build Commands
 
 ```bash
-# Build default targets (video_to_png, config_train)
+# Build default targets (config_train)
 ./build.sh
 
 # Build with specific configuration

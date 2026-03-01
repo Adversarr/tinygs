@@ -71,7 +71,7 @@ fi
 
 # Detect whether the built executables exist
 for t in ${TARGETS}; do
-    exe="${BUILD_DIR}/examples/${t}"
+    exe="${BUILD_DIR}/apps/${t}"
     if [ ! -f "${exe}" ]; then
         echo -e "${RED}Error: ${exe} not found.${NC}" >&2
         exit 1
@@ -80,7 +80,7 @@ done
 
 # Copy executables to repo root
 for t in ${TARGETS}; do
-    cp "${BUILD_DIR}/examples/${t}" .
+    cp "${BUILD_DIR}/apps/${t}" .
 done
 
 echo -e "${BLUE}Essential binaries built: ${TARGETS}.${NC}"

@@ -27,15 +27,20 @@ C++20, CUDA 12.4+, CMake 3.28+, GCC 11+, nvcc. Deps: OpenCV, spdlog, nlohmann_js
 | `tinygs/src/core/` | Gaussian primitives, camera models |
 | `tinygs/src/cuda/` | CUDA utilities, memory management |
 | `tinygs/src/rasterizer/` | Forward/backward rasterization kernels |
-| `tinygs/src/optim/` | Optimizers (adamw, sgd, lion, adan) |
-| `tinygs/src/loss/` | Loss functions (l1, ssim) |
+| `tinygs/src/optim/` | Optimizers (adam, adamw, sgd) |
+| `tinygs/src/loss/` | Loss functions (l1, fused_ssim) |
 | `tinygs/src/strategy/` | Densification strategies |
-| `tinygs/src/dataloader/` | Data loading |
+| `tinygs/src/dataloader/` | Data loading (simple, async) |
+| `tinygs/src/dataset/` | Dataset implementations (image) |
 | `tinygs/src/initialization/` | Gaussian initialization |
-| `examples/` | Executables (`config_train`, `video_to_png`, `single_gs`) |
+| `apps/` | Executables (`config_train`, `export_default`, `single_gs`) |
 | `configs/` | JSON training configurations |
 
 ## Code Style
+Concise, precise, clean, clear, extensible. Write HIGH-VERBOSITY code with comments for human review. Make patches and new features surgical (minimal, targeted changes).
+Plan and document style: detailed and explicit.
+Thorough tests: cover edge cases, error paths, and typical usage for all new functionalities.
+
 
 - Functions/variables: `snake_case`; types: `CamelCase`; private members: `m_` prefix
 - 2-space indent, 120 columns, `#pragma once`, braces on same line

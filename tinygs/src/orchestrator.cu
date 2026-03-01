@@ -190,12 +190,6 @@ void OrchestratorConfig::from_json(const json& j) {
 
   if (j.contains("scene_scale_recompute_interval")) scene_scale_recompute_interval = j["scene_scale_recompute_interval"].get<size_t>();
   if (j.contains("reorder_gaussians_interval")) reorder_gaussians_interval = j["reorder_gaussians_interval"].get<size_t>();
-  if (j.contains("rasterize_data_type")) {
-    // backwards compatibility
-    auto dt = from_string<DataType>(j["rasterize_data_type"].get<std::string>());
-    train_data_type = dt;
-    eval_data_type = dt;
-  }
   if (j.contains("train_data_type")) train_data_type = from_string<DataType>(j["train_data_type"].get<std::string>());
   if (j.contains("eval_data_type")) eval_data_type = from_string<DataType>(j["eval_data_type"].get<std::string>());
 }
@@ -301,13 +295,13 @@ TrainingState Orchestrator::train() {
   m_state.last_log_time = m_state.start_time;
   m_state.should_stop = false;
 
-  while (!m_state.should_stop && m_state.current_step <= m_config.max_steps) {
+  while (!m_state.should_stop && m_state.current_step < m_config.max_steps) {
     // Time-based stopping
     if (m_config.max_seconds > 0) {
       auto now = std::chrono::steady_clock::now();
       auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - m_state.start_time).count();
       if (elapsed >= static_cast<long>(m_config.max_seconds)) {
-        log_warning("Max seconds ({}) reached at step {}", m_config.max_seconds, m_state.current_step);
+        log_info("Max seconds ({}) reached at step {}", m_config.max_seconds, m_state.current_step);
         m_state.should_stop = true;
         test_step();
         break;
@@ -405,8 +399,8 @@ void Orchestrator::train_step() {
     // Optimizer step occurred; callbacks and checkpoints are gated above
   }
 
-  // Strategy step (densification)
-  if (m_strategy) {
+  // Strategy step (densification) — only after a full accumulation cycle completes
+  if (is_cycle_end && m_strategy) {
     m_strategy->step(m_rasterize_ctx);
   }
 
@@ -457,10 +451,10 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
   if (m_config.enable_progressive_resolution &&
       (full_shape.width != current_shape.width || full_shape.height != current_shape.height)) {
     log_info("Switching to full resolution {}x{} for evaluation", full_shape.width, full_shape.height);
-    set_render_resolution({full_shape.width, full_shape.height, 1});
+    set_render_resolution({full_shape.width, full_shape.height, 3});
   } else {
     // Still update buffers to match dtype
-    set_render_resolution({current_shape.width, current_shape.height, 1});
+    set_render_resolution({current_shape.width, current_shape.height, 3});
   }
 
   // Switch dataloader output dtype for eval
@@ -473,8 +467,8 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
   const auto total_samples = effective_loader->get_dataset()->size();
   std::map<std::string, std::vector<float>> metrics;
   std::vector<uuid_t> timestamps;
-  log_warning("Start Evaluation on {} samples, DataType={}",
-              total_samples, to_string(m_active_data_type));
+  log_info("Start Evaluation on {} samples, DataType={}",
+           total_samples, to_string(m_active_data_type));
   auto start = std::chrono::high_resolution_clock::now();
   for (size_t idx = 0; idx < total_samples; ++idx) {
     auto data = effective_loader->next();
@@ -558,8 +552,8 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
                                                 std::plus<float>(),
                                                 [mean](float x) { return (x - mean) * (x - mean); }) 
                          / metric_pair.second.size());
-    std::cout << fmt::format("[Orchestrator] [Step {}] Metric {}: mean = {:.6f}, std = {:.6f}\n",
-                              m_state.current_step, metric_pair.first, mean, std);
+    log_info("[Step {}] Metric {}: mean = {:.6f}, std = {:.6f}",
+             m_state.current_step, metric_pair.first, mean, std);
   }
 
   // Restore training resolution and dtype
@@ -567,7 +561,7 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
   ImageShape training_shape = m_config.enable_progressive_resolution
       ? scale_image_shape(m_dataloader->get_dataset()->image_shape(), calculate_resolution_scale(m_state.current_step))
       : current_shape;
-  set_render_resolution({training_shape.width, training_shape.height, 1});
+  set_render_resolution({training_shape.width, training_shape.height, 3});
 
   // Restore dataloader dtype
   effective_loader->set_params(json{{"data_type", to_string(m_active_data_type)}});
@@ -619,6 +613,10 @@ void Orchestrator::reset() {
   m_state.should_stop = false;
   m_state.start_time = std::chrono::steady_clock::now();
   m_state.last_log_time = m_state.start_time;
+
+  // Reset early stopping tracking
+  m_best_loss = -1.0f;
+  m_best_loss_step = 0;
   
   if (m_dataloader) {
     m_dataloader->reset();
@@ -720,7 +718,7 @@ void Orchestrator::initialize() {
   }
 
   if (m_config.train_data_type == DataType::Float16) {
-    log_warning("Using Float16 precision for training.");
+    log_info("Using Float16 precision for training.");
   }
 }
 
@@ -774,16 +772,26 @@ void Orchestrator::evaluate_losses(const GPUBatchInputOutput& data) {
     const float w = loss_component.weight * m_config.grad_scaler;
     loss_component.loss->evaluate(m_loss_ctx, w);
 
-    if (m_config.record_trajectory) {
+    if (m_config.record_trajectory || m_config.enable_early_stopping) {
       float accum_loss = accumulate_loss();
       loss_values[loss_component.loss->name()] = accum_loss - last_accum_loss;
       last_accum_loss = accum_loss;
     }
   }
 
-  if (m_config.record_trajectory) {
+  // Always update current_loss so that early stopping can observe it
+  if (m_config.record_trajectory || m_config.enable_early_stopping) {
     m_state.current_loss = last_accum_loss;
-    // write to file.
+
+    // Track best loss for patience-based early stopping
+    if (m_best_loss < 0.0f || last_accum_loss < m_best_loss - m_config.early_stopping_threshold) {
+      m_best_loss = last_accum_loss;
+      m_best_loss_step = m_state.current_step;
+    }
+  }
+
+  if (m_config.record_trajectory) {
+    // Write per-step loss breakdown to CSV file
     const auto openmode = m_state.current_step == 0 ? std::ios::out : std::ios::app;
     std::ofstream loss_file(m_config.out_dir + "/loss.csv", openmode);
     if (!loss_file.is_open()) {
@@ -822,9 +830,26 @@ std::vector<float> Orchestrator::evaluate_metrics() {
 }
 
 bool Orchestrator::should_early_stop() const {
-  // Simple early stopping based on loss threshold
-  // More sophisticated implementations could track loss history
-  return m_state.current_loss < m_config.early_stopping_threshold;
+  // Patience-based early stopping: stop when loss has not improved by at least
+  // early_stopping_threshold over the last early_stopping_patience steps.
+  if (m_state.current_step < m_config.early_stopping_patience) {
+    return false;  // Not enough history yet
+  }
+
+  // Use the best-seen loss tracked in m_best_loss (updated below in train_step flow).
+  // If the current loss is still above (best + threshold), patience counter in the
+  // caller will handle it. Here we use a simple check: if the loss hasn't meaningfully
+  // decreased from its value patience-steps ago, stop.
+  if (m_best_loss < 0.0f) {
+    return false;  // No valid loss recorded yet
+  }
+
+  const float improvement = m_best_loss - m_state.current_loss;
+  if (improvement < m_config.early_stopping_threshold &&
+      m_state.current_step - m_best_loss_step >= m_config.early_stopping_patience) {
+    return true;
+  }
+  return false;
 }
 
 void Orchestrator::set_params(const json& j) {
@@ -1021,7 +1046,7 @@ void Orchestrator::update_resolution(size_t current_step) {
              new_shape.width, new_shape.height, current_step);
     
     // Reallocate buffers for new resolution
-    set_render_resolution({new_shape.width, new_shape.height, 1});
+    set_render_resolution({new_shape.width, new_shape.height, 3});
   }
 }
 

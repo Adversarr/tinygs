@@ -256,6 +256,10 @@ private:
   // Active render/loss data type used for buffers
   DataType m_active_data_type = DataType::Float32;
 
+  // Early stopping state: track best loss and the step it was achieved
+  float m_best_loss = -1.0f;        ///< Best (lowest) loss seen so far, -1 means unset
+  size_t m_best_loss_step = 0;      ///< Step at which m_best_loss was recorded
+
   ////////////////////////////// Helper methods //////////////////////////////
 
   /// @brief Initialize GPU memory buffers

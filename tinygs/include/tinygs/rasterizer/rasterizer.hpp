@@ -6,46 +6,73 @@
 
 namespace tinygs {
 
+/// @brief Context object that carries all inputs, outputs, and intermediate state for a
+///        forward/backward rasterization pass.
+///
+/// Lifecycle: Owned by the Orchestrator.  Fields are populated before calling forward(),
+/// and gradient fields before calling backward().
+///
+/// Thread-safety: Not thread-safe.  All CUDA work is serialized on `stream`.
 struct RasterizeContext {
-  /// @brief Prepare gradients for camera intrinsics and extrinsics
+  /// @brief When true, the backward pass also computes gradients w.r.t. camera
+  ///        intrinsics (K) and extrinsics (w2c) in `grad_input`.
   bool prepare_input_gradients = false;
 
-  /// @brief Skip backpropagation information storage
+  /// @brief When true, the forward pass skips storing intermediate tensors needed
+  ///        for back-propagation, reducing memory usage during inference.
   bool inference = false;
 
-  /// @brief CUDA stream for computation
+  /// @brief CUDA stream on which all forward/backward kernels are launched.
   cudaStream_t stream = nullptr;
 
+  /// @brief Global gradient scaler applied during backward pass to stabilize
+  ///        mixed-precision training (typically 128 for FP16, 1 for FP32).
   float grad_scaler = 1.0f;
 
-  GPUBatchInput fwd_input;
-  GPUBatchOutput fwd_output;
-  GPUBatchInput grad_input;
-  GPUBatchOutput grad_output;
-  std::shared_ptr<GPUGaussian3d> gaussians_grad;
+  GPUBatchInput fwd_input;    ///< Camera params + image dims for the current sample
+  GPUBatchOutput fwd_output;  ///< Rendered image produced by forward()
+  GPUBatchInput grad_input;   ///< Gradients w.r.t. camera params (populated by backward())
+  GPUBatchOutput grad_output; ///< dL/d(rendered_image); must be set before backward()
+  std::shared_ptr<GPUGaussian3d> gaussians_grad; ///< Accumulated Gaussian parameter gradients
 
-  /// @brief Densification information storage
+  /// @brief Per-Gaussian densification statistics (view-space radii, accumulated
+  ///        gradients, etc.) produced by forward() and consumed by Strategy.
   mutable std::shared_ptr<GPUBuffer<DensificationInfo>> densification_info;
 };
 
+/// @brief Serializable parameters common to all rasterizer implementations.
 struct RasterizerParams {
-  DataType data_type = DataType::Float32;
+  DataType data_type = DataType::Float32; ///< Precision for rasterization buffers
 
   void from_json(const json& j);
   json to_json() const;
 };
 
+/// @brief Abstract base class for 3DGS rasterizer implementations.
+///
+/// Contract:
+///   - `set_gaussians()` must be called once before the first `forward()`.
+///   - `forward()` writes `ctx.fwd_output` and (unless `ctx.inference`) stores
+///     intermediate tensors needed by `backward()`.
+///   - `backward()` reads `ctx.grad_output` and fills `ctx.grad_input` +
+///     `ctx.gaussians_grad`.  It must be called on the same context that was
+///     last passed to `forward()`.
+///   - All CUDA work is enqueued on `ctx.stream`.
 class RasterizerBase {
 public:
   RasterizerBase();
 
   virtual ~RasterizerBase() = default;
 
+  /// @brief Render Gaussians into an image.
+  /// @param params Fully-populated context (fwd_input must be set).
   virtual void forward(const RasterizeContext& params) = 0;
 
+  /// @brief Compute parameter gradients given image-space loss gradients.
+  /// @param params Context previously used in forward(); grad_output.image must be set.
   virtual void backward(RasterizeContext& params) = 0;
 
-  /// @brief Update gaussians when changed
+  /// @brief Rebind the Gaussian data pointer (e.g. after densification resizes the buffer).
   virtual void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians);
 
   virtual json get_params() const = 0;
@@ -57,7 +84,8 @@ protected:
   RasterizerParams m_params;
 };
 
-/// @brief Factory function for creating rasterizers
+/// @brief Factory function for creating rasterizers.
+/// @param rasterizer_type One of: "default", "fastgs", "fastgs_ours", "fastgs_ours_fp16".
 std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type);
 
 }

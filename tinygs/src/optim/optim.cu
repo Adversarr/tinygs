@@ -1,10 +1,7 @@
+#include "tinygs/optim/adam.hpp"
 #include "tinygs/optim/adamw.hpp"
 #include "tinygs/optim/sgd.hpp"
-#include "tinygs/optim/simple_adam.hpp"
-#include "tinygs/optim/lion.hpp"
-#include "tinygs/optim/lamb.hpp"
 #include "tinygs/optim/optim.hpp"
-#include "tinygs/optim/adan.hpp"
 #include <nlohmann/json.hpp>
 
 namespace tinygs {
@@ -88,19 +85,14 @@ std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_typ
                                                 std::shared_ptr<GPUGaussian3d> gaussians_grad) {
   std::string lower_optimizer_type = to_lower(optimizer_type);
   if (lower_optimizer_type == "adam") {
+    return std::make_unique<Adam>(gaussians, gaussians_grad);
+  } else if (lower_optimizer_type == "adamw") {
     return std::make_unique<AdamW>(gaussians, gaussians_grad);
-  } else if (lower_optimizer_type == "simple_adam") {
-    return std::make_unique<SimpleAdam>(gaussians, gaussians_grad);
   } else if (lower_optimizer_type == "sgd") {
     return std::make_unique<SGD>(gaussians, gaussians_grad);
-  } else if (lower_optimizer_type == "lion") {
-    return std::make_unique<Lion>(gaussians, gaussians_grad);
-  } else if (lower_optimizer_type == "lamb") {
-    return std::make_unique<Lamb>(gaussians, gaussians_grad);
-  } else if (lower_optimizer_type == "adan") {
-    return std::make_unique<Adan>(gaussians, gaussians_grad);
   } else {
-    throw std::runtime_error("Unknown optimizer type: " + optimizer_type);
+    throw std::runtime_error("Unknown optimizer type: " + optimizer_type
+                             + ". Supported: adam, adamw, sgd");
   }
 }
 } // namespace tinygs

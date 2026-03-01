@@ -1,6 +1,6 @@
-# Examples CMakeLists.txt for tinygs
+# Application binaries CMakeLists.txt for tinygs
 
-function(tinygs_add_example name)
+function(tinygs_add_app name)
     add_executable(${name} ${name}.cpp)
     target_link_libraries(${name} 
         PRIVATE 
@@ -13,6 +13,6 @@ function(tinygs_add_example name)
     )
 endfunction()
 
-tinygs_add_example(export_default)
-tinygs_add_example(config_train)
-tinygs_add_example(single_gs)
+tinygs_add_app(export_default)
+tinygs_add_app(config_train)
+tinygs_add_app(single_gs)

@@ -4,7 +4,7 @@
 #include <nvtx3/nvtx3.hpp>
 #include <cooperative_groups.h>
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/optim/simple_adam.hpp"
+#include "tinygs/optim/adam.hpp"
 #include <cooperative_groups.h>
 #include <cooperative_groups/memcpy_async.h>
 #include <thrust/transform_reduce.h>
@@ -109,7 +109,7 @@ __global__ static void adam(
     float *__restrict__ thetas_first,
     float *__restrict__ thetas_second,
     // other
-    SimpleAdamParameters adam_p,
+    AdamParameters adam_p,
     float lr,
     uint32_t num_gaussians,
     float gradient_scale,
@@ -160,7 +160,7 @@ __global__ static void adam_f32x4(
     float4 *__restrict__ thetas_first,
     float4 *__restrict__ thetas_second,
     // other
-    SimpleAdamParameters adam_p,
+    AdamParameters adam_p,
     float lr,
     uint32_t num_gaussians,
     float gradient_scale,
@@ -219,7 +219,7 @@ __global__ static void adamw_f32x4(
     float4 const *__restrict__ thetas_grad,
     float4 *__restrict__ thetas_first,
     float4 *__restrict__ thetas_second,
-    SimpleAdamParameters adam_p,
+    AdamParameters adam_p,
     float lr,
     uint32_t num_gaussians,
     float gradient_scale,
@@ -300,7 +300,7 @@ __global__ static void adamw(
     float *__restrict__ thetas_first,
     float *__restrict__ thetas_second,
     // other
-    SimpleAdamParameters adam_p,
+    AdamParameters adam_p,
     float lr,
     uint32_t num_gaussians,
     float gradient_scale,
@@ -344,15 +344,15 @@ __global__ static void adamw(
   thetas_second[idx] = v;
 }
 
-struct SimpleAdam_domain {
+struct Adam_domain {
   static constexpr char const *name{"optim"};
 };
-using range = nvtx3::scoped_range_in<SimpleAdam_domain>;
+using range = nvtx3::scoped_range_in<Adam_domain>;
 using attr = nvtx3::event_attributes;
-using regstr = nvtx3::registered_string_in<SimpleAdam_domain>;
-using ncat = nvtx3::named_category_in<SimpleAdam_domain>;
+using regstr = nvtx3::registered_string_in<Adam_domain>;
+using ncat = nvtx3::named_category_in<Adam_domain>;
 struct m_step {
-  static constexpr char const *message{"simple_adam_step"};
+  static constexpr char const *message{"adam_step"};
 };
 
 namespace {
@@ -403,7 +403,7 @@ float l1_vec(const thrust::device_vector<VecT>& v, AbsFunctor f) {
 }
 } // anonymous namespace
 
-void SimpleAdam::step(float scale, cudaStream_t stream) {
+void Adam::step(float scale, cudaStream_t stream) {
   if (m_adam_params.decouple_decay) {
     step_adamw(scale, stream);
   } else {
@@ -439,13 +439,13 @@ void SimpleAdam::step(float scale, cudaStream_t stream) {
     cudaStreamSynchronize(stream);
 
     if (m_global_steps % g_momentum_log_interval == 0) {
-      std::printf("[SimpleAdam][step %llu] Momentum L1 | means=%.4g opacities=%.4g rotations=%.4g scales=%.4g sh0=%.4g shRest=%.4g total=%.4g\n",
+      std::printf("[Adam][step %llu] Momentum L1 | means=%.4g opacities=%.4g rotations=%.4g scales=%.4g sh0=%.4g shRest=%.4g total=%.4g\n",
                   (unsigned long long)m_global_steps,
                   m_means_l1, m_opacities_l1, m_rot_l1, m_scales_l1, m_sh0_l1, m_shrest_l1,
                   m_means_l1 + m_opacities_l1 + m_rot_l1 + m_scales_l1 + m_sh0_l1 + m_shrest_l1);
     }
     if (m_global_steps % g_gradient_log_interval == 0) {
-      std::printf("[SimpleAdam][step %llu] Grad L1     | means=%.4g opacities=%.4g rotations=%.4g scales=%.4g sh0=%.4g shRest=%.4g total=%.4g\n",
+      std::printf("[Adam][step %llu] Grad L1     | means=%.4g opacities=%.4g rotations=%.4g scales=%.4g sh0=%.4g shRest=%.4g total=%.4g\n",
                   (unsigned long long)m_global_steps,
                   g_means_l1, g_opacities_l1, g_rot_l1, g_scales_l1, g_sh0_l1, g_shrest_l1,
                   g_means_l1 + g_opacities_l1 + g_rot_l1 + g_scales_l1 + g_sh0_l1 + g_shrest_l1);
@@ -454,15 +454,15 @@ void SimpleAdam::step(float scale, cudaStream_t stream) {
 }
 
 
-void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
+void Adam::step_adam(float scale, cudaStream_t stream) {
   NVTX3_FUNC_RANGE();
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
   constexpr int block_size = 256;
 
   if (!m_gaussians || !m_gaussians_grad) {
-    throw std::runtime_error("SimpleAdam::step: gaussians or gaussians_grad is null");
+    throw std::runtime_error("Adam::step: gaussians or gaussians_grad is null");
   } else if (m_gaussians->size() != m_gaussians_grad->size()) {
-    throw std::runtime_error("SimpleAdam::step: gaussians and gaussians_grad must have same size");
+    throw std::runtime_error("Adam::step: gaussians and gaussians_grad must have same size");
   }
 
   auto n = m_gaussians->size();
@@ -580,14 +580,14 @@ void SimpleAdam::step_adam(float scale, cudaStream_t stream) {
 }
 
 
-void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
+void Adam::step_adamw(float scale, cudaStream_t stream) {
   NVTX3_FUNC_RANGE();
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
 
   if (!m_gaussians || !m_gaussians_grad) {
-    throw std::runtime_error("SimpleAdam::step: gaussians or gaussians_grad is null");
+    throw std::runtime_error("Adam::step: gaussians or gaussians_grad is null");
   } else if (m_gaussians->size() != m_gaussians_grad->size()) {
-    throw std::runtime_error("SimpleAdam::step: gaussians and gaussians_grad must have same size");
+    throw std::runtime_error("Adam::step: gaussians and gaussians_grad must have same size");
   }
 
   auto n = m_gaussians->size();
@@ -707,10 +707,10 @@ void SimpleAdam::step_adamw(float scale, cudaStream_t stream) {
 }
 
 
-SimpleAdam::SimpleAdam(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad) :
+Adam::Adam(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad) :
   OptimizerBase(gaussians, gaussians_grad) {
   // Resize and reset all internal buffers
-  SimpleAdam::reset();
+  Adam::reset();
 }
 
 __global__ void copy_optimizer_state(
@@ -838,7 +838,7 @@ __global__ void copy_items(
   }
 }
 
-void SimpleAdam::remove(char* kept_flag, int num_kept) {
+void Adam::remove(char* kept_flag, int num_kept) {
   // filters the gaussians' first second.
   size_t original_size = m_gaussians->size();
   thrust::device_vector<uint> mapping(original_size); // mapping[idx] = original_idx
@@ -905,7 +905,7 @@ void SimpleAdam::remove(char* kept_flag, int num_kept) {
   m_sh_coefficients_rest_second = std::move(sh_coefficients_rest_second);
 }
 
-void SimpleAdam::duplicate(int* indices, int* new_indices, int num_duplicate) {
+void Adam::duplicate(int* indices, int* new_indices, int num_duplicate) {
   if (num_duplicate == 0) return;
   const uint32_t num_sh_rest_per_gaussian = kMaxSphericalHarmonicsCoefficients - 1;
   // Resize vectors to accommodate duplicated gaussians
@@ -923,7 +923,7 @@ void SimpleAdam::duplicate(int* indices, int* new_indices, int num_duplicate) {
   m_sh_coefficients_rest_second.resize(m_gaussians->size() * num_sh_rest_per_gaussian, vec3(0.f, 0.f, 0.f));
 }
 
-void SimpleAdam::reset() {
+void Adam::reset() {
   size_t num_gaussians = m_gaussians->size();
   m_global_steps = 0;
 
@@ -941,7 +941,7 @@ void SimpleAdam::reset() {
   m_sh_coefficients_rest_second.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1), vec3(0.f));
 }
 
-void SimpleAdam::reset(int* indices, int num_reset) {
+void Adam::reset(int* indices, int num_reset) {
   size_t num_gaussians = m_gaussians->size();
   thrust::for_each(
     thrust::device_ptr<int>(indices),
@@ -978,39 +978,39 @@ void SimpleAdam::reset(int* indices, int num_reset) {
   );
 }
 
-void SimpleAdam::reset_opacity() {
+void Adam::reset_opacity() {
   // fxxk.
   thrust::fill(m_opacities_first.begin(), m_opacities_first.end(), 0.f);
   thrust::fill(m_opacities_second.begin(), m_opacities_second.end(), 0.f);
 }
 
-void SimpleAdam::set_params(const json& config) {
+void Adam::set_params(const json& config) {
   // Update base optimizer parameters
   OptimizerBase::set_params(config);
 
-  // Update SimpleAdam-specific parameters
+  // Update Adam-specific parameters
   m_adam_params.from_json(config);
 }
 
-json SimpleAdam::get_params() const {
+json Adam::get_params() const {
   // Get base optimizer parameters
   json params = OptimizerBase::get_params();
 
   // Add type for reflection
   params["type"] = "adam";
 
-  // Add SimpleAdam-specific parameters
-  json SimpleAdam_params = m_adam_params.to_json();
+  // Add Adam-specific parameters
+  json Adam_params = m_adam_params.to_json();
 
   // Merge the two JSON objects
-  for (auto& [key, value] : SimpleAdam_params.items()) {
+  for (auto& [key, value] : Adam_params.items()) {
     params[key] = value;
   }
 
   return params;
 }
 
-json SimpleAdamParameters::to_json() const {
+json AdamParameters::to_json() const {
   json j;
   j["beta1"] = beta1;
   j["beta2"] = beta2;
@@ -1023,7 +1023,7 @@ json SimpleAdamParameters::to_json() const {
   return j;
 }
 
-void SimpleAdamParameters::from_json(const json& config) {
+void AdamParameters::from_json(const json& config) {
   if (config.contains("beta1")) beta1 = config.at("beta1").get<float>();
   if (config.contains("beta2")) beta2 = config.at("beta2").get<float>();
   if (config.contains("epsilon")) epsilon = config.at("epsilon").get<float>();
@@ -1034,7 +1034,7 @@ void SimpleAdamParameters::from_json(const json& config) {
 }
 
 /// @brief Reorder Gaussians based on provided indices
-void SimpleAdam::reorder(uint* indices) {
+void Adam::reorder(uint* indices) {
   int num_gaussians = m_means_first.size();
   
   // Create temporary vectors for reordered data

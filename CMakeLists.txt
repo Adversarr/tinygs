@@ -39,7 +39,7 @@ project(tinygs
         DESCRIPTION "Lightweight library for reconstructing 3D scenes with 3DGS in seconds"
         LANGUAGES CXX CUDA
 )
-option(TINYGS_BUILD_EXAMPLES "Build tinygs examples" ON)
+option(TINYGS_BUILD_APPS "Build tinygs application binaries" ON)
 option(TINYGS_ENABLE_PROFILE "Enable profiling with lineinfo" OFF)
 option(TINYGS_ENABLE_NVTX_SYNC "Enable operation sync to get accurate nvtx range" OFF)
 option(TINYGS_ENABLE_NATIVE "Enable native optimizations" ON)
@@ -69,9 +69,9 @@ endif()
 
 add_subdirectory(tinygs)
 
-# Optional: Build examples
-if(TINYGS_BUILD_EXAMPLES)
-    add_subdirectory(examples)
+# Optional: Build application binaries
+if(TINYGS_BUILD_APPS)
+    add_subdirectory(apps)
 endif()
 
 # Print configuration summary
@@ -84,5 +84,5 @@ message(STATUS "  CUDA standard: ${CMAKE_CUDA_STANDARD}")
 message(STATUS "  CUDA version: ${CUDA_VERSION}")
 message(STATUS "  CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  Minimum GPU architecture: ${MIN_GPU_ARCH}")
-message(STATUS "  Build examples: ${TINYGS_BUILD_EXAMPLES}")
+message(STATUS "  Build apps: ${TINYGS_BUILD_APPS}")
 message(STATUS "")

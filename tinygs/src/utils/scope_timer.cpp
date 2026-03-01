@@ -1,6 +1,7 @@
 #include "tinygs/utils/scope_timer.hpp"
-#include <iostream>
+#include "tinygs/cuda/common_host.hpp"
 #include <iomanip>
+#include <sstream>
 
 namespace tinygs {
 
@@ -24,29 +25,20 @@ void GlobalTimerRegistry::print_all_stats() const {
   std::lock_guard<std::mutex> lock(mutex_);
   
   if (timers_.empty()) {
-    std::cout << "No timer statistics available.\n";
+    log_info("No timer statistics available.");
     return;
   }
   
-  int expected_max_func_name_length = 50;
-  std::cout << "\n=== Timer Statistics ===\n";
-  std::cout << std::left << std::setw(expected_max_func_name_length) << "Timer Name" 
-            << std::setw(10) << "Count"
-            << std::setw(12) << "Total (ms)"
-            << std::setw(12) << "Avg (ms)"
-            << std::setw(12) << "Min (ms)"
-            << std::setw(12) << "Max (ms)" << "\n";
-  std::cout << std::string(expected_max_func_name_length + 53, '-') << "\n";
+  log_info("=== Timer Statistics ===");
+  log_info("{:<50s} {:>8s} {:>12s} {:>12s} {:>12s} {:>12s}",
+           "Timer Name", "Count", "Total (ms)", "Avg (ms)", "Min (ms)", "Max (ms)");
   
   for (const auto& [name, stats] : timers_) {
-    std::cout << std::left << std::setw(expected_max_func_name_length) << name.substr(0, expected_max_func_name_length)
-              << std::setw(10) << stats.count
-              << std::setw(12) << std::fixed << std::setprecision(3) << stats.total_time
-              << std::setw(12) << std::fixed << std::setprecision(3) << stats.average_time()
-              << std::setw(12) << std::fixed << std::setprecision(3) << stats.min_time
-              << std::setw(12) << std::fixed << std::setprecision(3) << stats.max_time << "\n";
+    log_info("{:<50s} {:>8d} {:>12.3f} {:>12.3f} {:>12.3f} {:>12.3f}",
+             name.substr(0, 50), stats.count,
+             stats.total_time, stats.average_time(),
+             stats.min_time, stats.max_time);
   }
-  std::cout << "\n";
 }
 
 void GlobalTimerRegistry::clear() {

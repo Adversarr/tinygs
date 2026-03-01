@@ -5,7 +5,7 @@
 
 namespace tinygs {
 
-struct SimpleAdamParameters {
+struct AdamParameters {
   /// Shared parameters
   float beta1 = 0.9f;
   float beta2 = 0.999f;
@@ -14,10 +14,10 @@ struct SimpleAdamParameters {
   std::string decay_reduction = "mean"; // "mean" or "sum"
 
   /// @brief Default constructor with default values
-  SimpleAdamParameters() = default;
+  AdamParameters() = default;
 
   /// @brief Construct from JSON configuration
-  explicit SimpleAdamParameters(const json& config);
+  explicit AdamParameters(const json& config);
 
   /// @brief Convert parameters to JSON
   json to_json() const;
@@ -26,13 +26,13 @@ struct SimpleAdamParameters {
   void from_json(const json& config);
 };
 
-/// @brief SimpleAdam optimizer implementation for Gaussian Splatting
-class SimpleAdam final : public OptimizerBase {
+/// @brief Adam optimizer implementation for Gaussian Splatting
+class Adam final : public OptimizerBase {
 public:
-  /// @brief Construct SimpleAdam optimizer
-  SimpleAdam(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
+  /// @brief Construct Adam optimizer
+  Adam(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
-  ~SimpleAdam() override = default;
+  ~Adam() override = default;
 
   /// @brief Reset all optimizer state
   void reset() override;
@@ -66,7 +66,7 @@ private:
   void step_adam(float scale, cudaStream_t stream);
   void step_adamw(float scale, cudaStream_t stream);
 
-  SimpleAdamParameters m_adam_params;
+  AdamParameters m_adam_params;
   uint32_t m_global_steps = 0;
 
   /// First moment estimates for each parameter type

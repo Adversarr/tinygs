@@ -4,6 +4,7 @@
 #include <vector>
 
 #include "tinygs/core/camera.hpp"
+#include "tinygs/common.hpp"
 
 namespace tinygs {
 
@@ -56,6 +57,10 @@ public:
    * @param height new height
    */
   void resize_sensor(uint32_t width, uint32_t height);
+
+  /// @brief Load camera parameters from JSON files (cameras.json + poses.json)
+  ///        produced by convert_mipnerf360_to_data_storage.py.
+  void load_from_json(const std::string& cameras_json_path, const std::string& poses_json_path);
 
   void interpolate_to_support(uuid_t frame_idx, uuid_t timestamp);
 

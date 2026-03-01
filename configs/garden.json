@@ -4,15 +4,9 @@
     "data_type": "float16"
   },
   "dataset": {
-    "folder_path": "outputs/garden/images/",
-    "extrinsics_file_path": "outputs/garden/extri.txt",
-    "intrinsics_file_path": "outputs/garden/intri.txt",
-    "video_info_path": "/data/yzr/Final/1747834320424/inputs/videoInfo.txt",
-    "video_file_path": "/data/yzr/Final/1747834320424/1747834320424_flip.mp4",
-    "interpolate": true,
-    "undistortion": false,
-    "extension": "png",
-    "type": "png_folder"
+    "root_path": "/data/gaussian-splatting/360_v2_converted/garden/train/",
+    "extension": "JPG",
+    "type": "image"
   },
   "initializer": {
     "default_distance": 0.01,
@@ -26,7 +20,6 @@
     "sh_degree": 3,
     "type": "knn"
   },
-  "input_pc_file": "outputs/garden/points.ply",
   "losses": [
     {
       "type": "l1",
@@ -51,17 +44,13 @@
     "max_grad_1": 1.0,
     "means_lr": 0.00016,
     "opacities_l1": 0.01,
-    "decouple_decay": false,
-    "decay_reduction": "mean",
     "opacities_lr": 0.05,
     "rotations_lr": 0.001,
     "scales_l1": 0.01,
     "scales_lr": 0.005,
     "shs_lr": 0.0025,
     "skip_zero_grad": true,
-    "trust_ratio_min": 0.01,
-    "trust_ratio_max": 10.0,
-    "type": "simple_adam"
+    "type": "adam"
   },
   "pose_opt": {
     "type": "adamw",
