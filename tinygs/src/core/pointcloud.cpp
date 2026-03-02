@@ -109,8 +109,7 @@ PointCloud load_point_cloud(const std::string& filename) {
 }
 
 void save_ply(const std::string& filename, const Gaussian3d& gs, bool full_features) {
-  auto& sh0 = gs.sh_coefficient_0;
-  auto& sh_rest = gs.sh_coefficients_rest;
+  auto& sh_dc = gs.sh0;
   auto& xyz = gs.means;
   auto& scal = gs.scales;
   auto& opa = gs.opacities;
@@ -145,7 +144,7 @@ void save_ply(const std::string& filename, const Gaussian3d& gs, bool full_featu
     f_dc_1.reserve(num_points);
     f_dc_2.reserve(num_points);
 
-    for (const auto& dc : sh0) {
+    for (const auto& dc : sh_dc) {
       f_dc_0.push_back(dc.x);
       f_dc_1.push_back(dc.y);
       f_dc_2.push_back(dc.z);
@@ -172,23 +171,42 @@ void save_ply(const std::string& filename, const Gaussian3d& gs, bool full_featu
     plyData.getElement("vertex").addProperty<float>("f_dc_g", f_dc_1);
     plyData.getElement("vertex").addProperty<float>("f_dc_b", f_dc_2);
   }
-  // Extract and add rest of SH coefficients
-  if (!sh_rest.empty()) {
-    // sh_rest is a flat array where each gaussian has 15 vec3 coefficients stored contiguously
+  // Extract and add rest of SH coefficients from per-degree buffers (sh1, sh2, sh3)
+  // The PLY format stores them as a flat sequence of 15 coefficients per Gaussian.
+  // Degree 1: 3 coeffs (indices 0-2), Degree 2: 5 coeffs (indices 3-7), Degree 3: 7 coeffs (indices 8-14).
+  {
+    // Map from flat rest index [0..14] to (degree, coeff_within_degree)
+    struct ShRestMapping { int degree; int coeff; };
+    constexpr ShRestMapping rest_map[15] = {
+      {1,0},{1,1},{1,2},
+      {2,0},{2,1},{2,2},{2,3},{2,4},
+      {3,0},{3,1},{3,2},{3,3},{3,4},{3,5},{3,6}
+    };
+    const std::vector<vec3>* sh_degree_bufs[4] = {&gs.sh0, &gs.sh1, &gs.sh2, &gs.sh3};
+
     constexpr int num_rest_coeffs = kMaxSphericalHarmonicsCoefficients - 1; // 15
-    
     for (int coeff_idx = 0; coeff_idx < num_rest_coeffs; ++coeff_idx) {
       std::vector<float> f_rest_x, f_rest_y, f_rest_z;
       f_rest_x.reserve(num_points);
       f_rest_y.reserve(num_points);
       f_rest_z.reserve(num_points);
 
+      const auto& mapping = rest_map[coeff_idx];
+      const auto& degree_buf = *sh_degree_bufs[mapping.degree];
+      const int num_coeffs_in_degree = kSHDegreeNumCoeffs[mapping.degree];
+
       for (size_t point_idx = 0; point_idx < num_points; ++point_idx) {
-        size_t array_idx = point_idx * num_rest_coeffs + coeff_idx;
-        const vec3& coeff = sh_rest[array_idx];
-        f_rest_x.push_back(coeff.x);
-        f_rest_y.push_back(coeff.y);
-        f_rest_z.push_back(coeff.z);
+        size_t array_idx = point_idx * num_coeffs_in_degree + mapping.coeff;
+        if (array_idx < degree_buf.size()) {
+          const vec3& coeff = degree_buf[array_idx];
+          f_rest_x.push_back(coeff.x);
+          f_rest_y.push_back(coeff.y);
+          f_rest_z.push_back(coeff.z);
+        } else {
+          f_rest_x.push_back(0.0f);
+          f_rest_y.push_back(0.0f);
+          f_rest_z.push_back(0.0f);
+        }
       }
 
       plyData.getElement("vertex").addProperty<float>("f_rest_r_" + std::to_string(coeff_idx), f_rest_x);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tinygs/core/gpu_gaussian.hpp"
+#include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/optim/optim.hpp"
 namespace tinygs {
@@ -69,6 +70,14 @@ public:
 
   /// @brief Get current strategy parameters as JSON
   virtual json get_params() const;
+
+  /// @brief Provide the rasterizer to strategies that need rendering (e.g. FastGS).
+  ///        Called by Orchestrator after construction; default is no-op.
+  virtual void set_rasterizer(std::shared_ptr<RasterizerBase> /* rasterizer */) {}
+
+  /// @brief Provide the dataloader to strategies that need camera sampling (e.g. FastGS).
+  ///        Called by Orchestrator after construction; default is no-op.
+  virtual void set_dataloader(std::shared_ptr<DataLoaderBase> /* dataloader */) {}
 
 protected:
   /// @brief Handle removal of gaussians and update optimizer state

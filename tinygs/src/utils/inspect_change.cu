@@ -67,22 +67,36 @@ void InspectChange::step() {
       current->scales().size()
     );
     
-    // Compare sh_coefficient_0
+    // Compare sh0 (SoA float buffer)
     float sh0_diff = diff(
-      thrust::raw_pointer_cast(current->sh_coefficient_0().data()),
-      thrust::raw_pointer_cast(old->sh_coefficient_0().data()),
-      current->sh_coefficient_0().size()
+      thrust::raw_pointer_cast(current->sh0().data()),
+      thrust::raw_pointer_cast(old->sh0().data()),
+      static_cast<int>(current->sh0().size())
     );
     
-    // Compare sh_coefficients_rest
-    float sh_rest_diff = diff(
-      thrust::raw_pointer_cast(current->sh_coefficients_rest().data()),
-      thrust::raw_pointer_cast(old->sh_coefficients_rest().data()),
-      current->sh_coefficients_rest().size()
+    // Compare sh1 (SoA float buffer)
+    float sh1_diff = diff(
+      thrust::raw_pointer_cast(current->sh1().data()),
+      thrust::raw_pointer_cast(old->sh1().data()),
+      static_cast<int>(current->sh1().size())
     );
     
-    printf("Gaussian changes - means: %.6f, opacities: %.6f, rotations: %.6f, scales: %.6f, sh0: %.6f, sh_rest: %.6f\n",
-           means_diff, opacities_diff, rotations_diff, scales_diff, sh0_diff, sh_rest_diff);
+    // Compare sh2 (SoA float buffer)
+    float sh2_diff = diff(
+      thrust::raw_pointer_cast(current->sh2().data()),
+      thrust::raw_pointer_cast(old->sh2().data()),
+      static_cast<int>(current->sh2().size())
+    );
+    
+    // Compare sh3 (SoA float buffer)
+    float sh3_diff = diff(
+      thrust::raw_pointer_cast(current->sh3().data()),
+      thrust::raw_pointer_cast(old->sh3().data()),
+      static_cast<int>(current->sh3().size())
+    );
+    
+    printf("Gaussian changes - means: %.6f, opacities: %.6f, rotations: %.6f, scales: %.6f, sh0: %.6f, sh1: %.6f, sh2: %.6f, sh3: %.6f\n",
+           means_diff, opacities_diff, rotations_diff, scales_diff, sh0_diff, sh1_diff, sh2_diff, sh3_diff);
   }
   
   // Update the old copy with current state

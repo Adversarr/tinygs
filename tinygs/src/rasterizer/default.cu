@@ -6,6 +6,7 @@
 #include "3dgs_accel/backward.h"
 #include "3dgs_accel/forward.h"
 #include "3dgs_accel/rasterizer.h"
+#include "sh_pack_utils.cuh"
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/cuda/vec.hpp"
 #include "tinygs/rasterizer/default.hpp"
@@ -37,6 +38,12 @@ struct DefaultRasterizer::Impl {
   thrust::device_vector<vec4> grad_rotations_normalized; // grad of normalized rotation quaternion
   thrust::device_vector<vec3> exp_scales; // sigmoid(raw_opacities)
   thrust::device_vector<vec3> grad_exp_scales; // grad of exp(scales)
+
+  // Temporary AoS SH buffers (for CudaRasterizer which expects AoS format)
+  thrust::device_vector<float3> sh_dc_aos;     // [N] float3, AoS DC component
+  thrust::device_vector<float3> sh_rest_aos;   // [N*15] float3, AoS rest SH coefficients
+  thrust::device_vector<float3> grad_sh_dc_aos;   // [N] float3
+  thrust::device_vector<float3> grad_sh_rest_aos; // [N*15] float3
   thrust::device_vector<float> dL_dinvdepth; // per-pix
   thrust::device_vector<vec3> dL_dmean2D;
   thrust::device_vector<vec2> absgrad_mean2D; // per-gs absolute grad accumulator for mean2D
@@ -142,12 +149,24 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
   const auto& scales = m_gaussians->scales();
   const auto& rotations = m_gaussians->rotations();
   const auto& opacities = m_gaussians->opacities();
-  const auto& sh_coeffs_0 = m_gaussians->sh_coefficient_0();
-  const auto& sh_coeffs_rest = m_gaussians->sh_coefficients_rest();
 
-  m_impl->rotations_normalized.resize(rotations.size());
-  m_impl->opacities_normalized.resize(opacities.size());
-  m_impl->exp_scales.resize(scales.size());
+    // Convert SoA SH to AoS temp buffers for CudaRasterizer
+    m_impl->sh_dc_aos.resize(num_gaussians);
+    m_impl->sh_rest_aos.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
+    {
+      int grid0 = (num_gaussians + 255) / 256;
+      pack_sh0_soa_to_aos<<<grid0, 256>>>(
+          thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+          thrust::raw_pointer_cast(m_impl->sh_dc_aos.data()),
+          num_gaussians);
+      int grid_rest = (num_gaussians * 15 + 255) / 256;
+      pack_sh_rest_soa_to_aos<<<grid_rest, 256>>>(
+          thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+          thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+          thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+          thrust::raw_pointer_cast(m_impl->sh_rest_aos.data()),
+          num_gaussians);
+    }
 
   thrust::transform(
     thrust::device, rotations.begin(), rotations.end(),
@@ -180,8 +199,8 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
       /* background */ reinterpret_cast<float*>(thrust::raw_pointer_cast(m_impl->background.data())),   // [3]
       /* width, height */ ctx.fwd_input.width, ctx.fwd_input.height,
       /* means3D */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(means.data())),             // [N, 3]
-      /* dc */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(sh_coeffs_0.data())),            // [N, 3]
-      /* shs */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(sh_coeffs_rest.data())),        // [N, M, 3]
+      /* dc */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_impl->sh_dc_aos.data())),      // [N, 3] AoS
+      /* shs */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_impl->sh_rest_aos.data())),   // [N, M, 3] AoS
       /* opacities */ thrust::raw_pointer_cast(m_impl->opacities_normalized.data()),                                // [N]
       /* scales */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_impl->exp_scales.data())),             // [N, 3]
       /* scale_modifier */ 1.0f,                                               //! TODO: check this.
@@ -216,15 +235,20 @@ void DefaultRasterizer::backward(RasterizeContext& ctx) {
   const auto& scales = m_impl->exp_scales;
   const auto& rotations = m_impl->rotations_normalized;
   const auto& opacities = m_impl->opacities_normalized;
-  const auto& sh_coeffs_0 = m_gaussians->sh_coefficient_0();
-  const auto& sh_coeffs_rest = m_gaussians->sh_coefficients_rest();
+  // SH AoS buffers were packed in forward(); reuse them for backward input
+  const auto& sh_dc_aos = m_impl->sh_dc_aos;
+  const auto& sh_rest_aos = m_impl->sh_rest_aos;
 
   auto &grad_means = ctx.gaussians_grad->means();
   auto &grad_scales = ctx.gaussians_grad->scales();
   auto &grad_rotations = ctx.gaussians_grad->rotations();
   auto &grad_opacities = ctx.gaussians_grad->opacities();
-  auto &grad_sh_coeffs_0 = ctx.gaussians_grad->sh_coefficient_0();
-  auto &grad_sh_coeffs_rest = ctx.gaussians_grad->sh_coefficients_rest();
+
+  // Temp AoS gradient buffers for CudaRasterizer backward output
+  m_impl->grad_sh_dc_aos.resize(num_gaussians);
+  m_impl->grad_sh_rest_aos.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
+  cudaMemset(thrust::raw_pointer_cast(m_impl->grad_sh_dc_aos.data()), 0, sizeof(float3) * num_gaussians);
+  cudaMemset(thrust::raw_pointer_cast(m_impl->grad_sh_rest_aos.data()), 0, sizeof(float3) * num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
 
   // clear the internal buffers.
   auto& grad_exp_scales = m_impl->grad_exp_scales;
@@ -265,8 +289,8 @@ void DefaultRasterizer::backward(RasterizeContext& ctx) {
     /* background */ m_impl->background.data(),
     /* width, height */ width, height,
     /* means3D */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(means.data())),
-    /* dc */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(sh_coeffs_0.data())),
-    /* shs */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(sh_coeffs_rest.data())),
+    /* dc */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(sh_dc_aos.data())),
+    /* shs */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(sh_rest_aos.data())),
     /* opacities */ thrust::raw_pointer_cast(opacities.data()),
     /* scales */ reinterpret_cast<const float*>(thrust::raw_pointer_cast(scales.data())),
     /* scale_modifier */ 1.0f,
@@ -289,8 +313,8 @@ void DefaultRasterizer::backward(RasterizeContext& ctx) {
     /* dL_dinvdepth_gs */ reinterpret_cast<float*>(thrust::raw_pointer_cast(m_impl->dL_dinvdepth_gs.data())),
     /* dL_dmeans3D */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_means.data())),
     /* dL_dcov3D */ reinterpret_cast<float*>(thrust::raw_pointer_cast(m_impl->dL_dcov3D.data())),
-    /* dL_ddc */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_sh_coeffs_0.data())),
-    /* dL_dsh */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_sh_coeffs_rest.data())),
+    /* dL_ddc */ reinterpret_cast<float*>(thrust::raw_pointer_cast(m_impl->grad_sh_dc_aos.data())),
+    /* dL_dsh */ reinterpret_cast<float*>(thrust::raw_pointer_cast(m_impl->grad_sh_rest_aos.data())),
     /* dL_dscales */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_exp_scales.data())),
     /* dL_drotations */ reinterpret_cast<float*>(thrust::raw_pointer_cast(grad_rotations_normalized.data())),
     /* absgrad_mean2D */ reinterpret_cast<float2*>(thrust::raw_pointer_cast(m_impl->absgrad_mean2D.data())),
@@ -302,6 +326,22 @@ void DefaultRasterizer::backward(RasterizeContext& ctx) {
 #endif
   );
 
+
+  // Convert AoS SH gradient buffers back to SoA layout in gaussians_grad
+  {
+    int grid0 = (num_gaussians + 255) / 256;
+    unpack_sh0_aos_to_soa<<<grid0, 256>>>(
+        thrust::raw_pointer_cast(m_impl->grad_sh_dc_aos.data()),
+        thrust::raw_pointer_cast(ctx.gaussians_grad->sh0().data()),
+        num_gaussians);
+    int grid_rest = (num_gaussians * 15 + 255) / 256;
+    unpack_sh_rest_aos_to_soa<<<grid_rest, 256>>>(
+        thrust::raw_pointer_cast(m_impl->grad_sh_rest_aos.data()),
+        thrust::raw_pointer_cast(ctx.gaussians_grad->sh1().data()),
+        thrust::raw_pointer_cast(ctx.gaussians_grad->sh2().data()),
+        thrust::raw_pointer_cast(ctx.gaussians_grad->sh3().data()),
+        num_gaussians);
+  }
 
   // transform the gradients of rotations, opacities, and scales to the original space.
   thrust::for_each(

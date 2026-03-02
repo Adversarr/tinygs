@@ -281,8 +281,10 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   m_gaussians.means.resize(num_points);
   m_gaussians.rotations.resize(num_points, vec4(1.0f, 0.0f, 0.0f, 0.0f));
   m_gaussians.scales.resize(num_points);
-  m_gaussians.sh_coefficient_0.resize(num_points);
-  m_gaussians.sh_coefficients_rest.resize(num_points * (kMaxSphericalHarmonicsCoefficients - 1));
+  m_gaussians.sh0.resize(num_points);
+  m_gaussians.sh1.resize(num_points * kSHDegreeNumCoeffs[1], vec3(0.0f));
+  m_gaussians.sh2.resize(num_points * kSHDegreeNumCoeffs[2], vec3(0.0f));
+  m_gaussians.sh3.resize(num_points * kSHDegreeNumCoeffs[3], vec3(0.0f));
 
   // Compute per-point local covariance matrices from KNN
   auto local_covariances = compute_local_covariances(filtered_positions);
@@ -339,14 +341,11 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
       m_gaussians.scales[i] = vec3(log_scale, log_scale, log_scale);
     }
 
-    // Set spherical harmonics coefficients
+    // Set spherical harmonics coefficients (degree 0 = DC term)
     vec3 sh_color = rgb_to_sh(filtered_colors[i]);
-    m_gaussians.sh_coefficient_0[i] = sh_color;
+    m_gaussians.sh0[i] = sh_color;
 
-    // Initialize SH coefficients rest array
-    for (int j = 0; j < kMaxSphericalHarmonicsCoefficients - 1; ++j) {
-      m_gaussians.sh_coefficients_rest[i * (kMaxSphericalHarmonicsCoefficients - 1) + j] = vec3(0.0f);
-    }
+    // Higher-degree SH already initialized to zero during resize
   }
 
   log_info("Initialized {} gaussians with KNN method", m_gaussians.means.size());

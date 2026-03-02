@@ -214,17 +214,32 @@ void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
       scales3d = thrust::raw_pointer_cast(m_gaussians->scales().data()),         //
       opacities = thrust::raw_pointer_cast(m_gaussians->opacities().data()),     //
       rotations = thrust::raw_pointer_cast(m_gaussians->rotations().data()),     //
-      sh0 = thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),    //
-      sh_rest = thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()), //
+      sh0_data = thrust::raw_pointer_cast(m_gaussians->sh0().data()),            //
+      sh1_data = thrust::raw_pointer_cast(m_gaussians->sh1().data()),            //
+      sh2_data = thrust::raw_pointer_cast(m_gaussians->sh2().data()),            //
+      sh3_data = thrust::raw_pointer_cast(m_gaussians->sh3().data()),            //
+      N = static_cast<int>(m_gaussians->size()),                                 //
       rate, reduction] __device__(int i) {
         const int src_idx = d_grow_indices_src[i];
         const int target_idx = d_grow_indices_target[i];
 
-        // Copy rotation and SHs
+        // Copy rotation and SHs (SoA per-degree layout)
         rotations[target_idx] = rotations[src_idx];
-        sh0[target_idx] = sh0[src_idx];
-        for (int c = 0; c < 15; c++) {
-          sh_rest[target_idx * 15 + c] = sh_rest[src_idx * 15 + c];
+        // SH0: 1 coeff * 3 channels = 3 entries
+        for (int ch = 0; ch < 3; ch++) {
+          sh0_data[ch * N + target_idx] = sh0_data[ch * N + src_idx];
+        }
+        // SH1: 3 coeffs * 3 channels = 9 entries
+        for (int ch = 0; ch < 9; ch++) {
+          sh1_data[ch * N + target_idx] = sh1_data[ch * N + src_idx];
+        }
+        // SH2: 5 coeffs * 3 channels = 15 entries
+        for (int ch = 0; ch < 15; ch++) {
+          sh2_data[ch * N + target_idx] = sh2_data[ch * N + src_idx];
+        }
+        // SH3: 7 coeffs * 3 channels = 21 entries
+        for (int ch = 0; ch < 21; ch++) {
+          sh3_data[ch * N + target_idx] = sh3_data[ch * N + src_idx];
         }
 
         // Rotation matrix from quaternion (w, x, y, z) stored as (x,y,z,w)

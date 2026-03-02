@@ -1,5 +1,7 @@
+#include <cfloat>
 #include <cuda/pipeline>
 #include <thrust/execution_policy.h>
+#include <thrust/sequence.h>
 
 #include <nvtx3/nvtx3.hpp>
 #include <cooperative_groups.h>
@@ -59,13 +61,6 @@ __global__ void launch_gaussian_adam_step_SoA_ref2(
   vec3* __restrict__ scales,
   const vec3* __restrict__ scales_grad,
   vec3* __restrict__ scales_first_second,
-  // Spherical Harmonics
-  vec3* __restrict__ sh_coefficient_0,
-  const vec3* __restrict__ sh_coefficient_0_grad,
-  vec3* __restrict__ sh_coefficient_0_first_second,
-  vec3* __restrict__ sh_coefficients_rest,
-  const vec3* __restrict__ sh_coefficients_rest_grad,
-  vec3* __restrict__ sh_coefficients_rest_first_second,
   // other
   uint32_t* __restrict__ gaussian_steps,
   AdamWParameters adam_p,
@@ -219,7 +214,6 @@ __global__ void launch_gaussian_adam_step_SoA_ref2(
     }
     curr_stage_compute = (curr_stage_compute + 1) % stages_count;
     pipeline.consumer_release();
-    PREFETCH_SHM(vec3, sh_coefficient_0);
   }
   // Scales
   {
@@ -244,90 +238,113 @@ __global__ void launch_gaussian_adam_step_SoA_ref2(
     curr_stage_compute = (curr_stage_compute + 1) % stages_count;
     pipeline.consumer_release();
   }
-  // Spherical Harmonics - 0th coefficient
-  {
-    pipeline.consumer_wait();
-    if (enable) {
-      vec3* pval = reinterpret_cast<vec3*>(shared_val + shared_offset[curr_stage_compute]);
-      const vec3* pgrad = reinterpret_cast<const vec3*>(shared_grad + shared_offset[curr_stage_compute]);
-      vec3* pmom = reinterpret_cast<vec3*>(shared_momentum + shared_offset[curr_stage_compute]);
-      vec3 val = pval[local_idx];
-      vec3 grad = pgrad[local_idx] * gradient_scale;  // Fix: Add gradient_scale (no L1 here)
-      vec3 first = pmom[local_idx * 2];
-      vec3 second = pmom[local_idx * 2 + 1];
-      const float lr = general_p.shs_lr * global_lr * this_lr_scale;
-      apply_(val.x, grad.x, first.x, second.x, lr);
-      apply_(val.y, grad.y, first.y, second.y, lr);
-      apply_(val.z, grad.z, first.z, second.z, lr);
-      sh_coefficient_0[idx] = val;
-      sh_coefficient_0_first_second[2 * idx] = first;
-      sh_coefficient_0_first_second[2 * idx + 1] = second;
-    }
-    curr_stage_compute = (curr_stage_compute + 1) % stages_count;
-    pipeline.consumer_release();
-  }
 }
 
-// launch blockDim = (16, 16) = 256 => 16GS per block, 256 threads, one warp is responsible for 2GS.
-__global__ void launch_gaussian_adam_shrest(
-  const uint32_t* __restrict__ gaussian_steps,
-  vec3* __restrict__ sh_coefficients_rest,
-  const vec3* __restrict__ sh_coefficients_rest_grad,
-  vec3* __restrict__ sh_coefficients_rest_first_second,
-  AdamWParameters adam_p,
-  GaussianOptimizationParams general_p,
-  uint32_t num_gaussians,
-  const float gradient_scale,
-  const float global_lr
+// Per-element adam step for SoA SH buffers with interleaved first/second moments.
+// The gaussian_steps lookup uses gaussian_idx = element_idx % N (SoA stride).
+__global__ static void adamw_sh_soa_step(
+    float* __restrict__ thetas,
+    const float* __restrict__ thetas_grad,
+    float* __restrict__ first_second,
+    const uint32_t* __restrict__ gaussian_steps,
+    int num_elements,  // total SoA floats (num_coeffs * 3 * N)
+    int N,             // gaussian count (SoA stride)
+    AdamWParameters adam_p,
+    GaussianOptimizationParams general_p,
+    float lr,
+    float gradient_scale
 ) {
-  // gaussian id
-  const auto idx = blockIdx.x * blockDim.x + threadIdx.x;
-  const auto gs_idx = idx / 16;
-  const auto coef_idx = idx % 16;
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= num_elements) return;
 
-  if (gs_idx >= num_gaussians || coef_idx == 15) return;
-  const auto sh_idx = gs_idx * (kMaxSphericalHarmonicsCoefficients - 1) + coef_idx;
+    int gaussian_idx = tid % N;
+    uint32_t this_step = __ldg(gaussian_steps + gaussian_idx);
+    if (this_step == 0) return;  // skip if gaussian hasn't been stepped
 
-  // load
-  vec3 val = sh_coefficients_rest[sh_idx];
-  vec3 grad = sh_coefficients_rest_grad[sh_idx] * gradient_scale;
-  vec3 first = sh_coefficients_rest_first_second[2 * sh_idx];
-  vec3 second = sh_coefficients_rest_first_second[2 * sh_idx + 1];
-  const auto this_step = __ldg(gaussian_steps + gs_idx);
-  const float b2t = powf(adam_p.beta2, (float)this_step);
-  const float b1t = powf(adam_p.beta1, (float)this_step);
-  const float num = fmaxf(1.0f - b2t, adam_p.epsilon);
-  const float den = fmaxf(1.0f - b1t, adam_p.epsilon);
-  const float this_lr_scale = sqrtf(num) / den;
-  const float lr = general_p.shs_lr * 0.05f * this_lr_scale * global_lr;
+    float this_lr_scale = 1.0f;
+    if (this_step < 4096) {
+        float b2t = powf(adam_p.beta2, (float)this_step);
+        float b1t = powf(adam_p.beta1, (float)this_step);
+        float num = fmaxf(1.0f - b2t, adam_p.epsilon);
+        float den = fmaxf(1.0f - b1t, adam_p.epsilon);
+        this_lr_scale = sqrtf(num) / den;
+    }
 
-  float lower_lr_bound = 0.0f;
-  float upper_lr_bound = std::numeric_limits<float>::max();
+    float lower_lr_bound = 0.0f;
+    float upper_lr_bound = std::numeric_limits<float>::max();
+    if (adam_p.enable_adabound) {
+        float denom = fmaxf((1.0f - adam_p.beta2) * (float)this_step + 1.0f, 1e-20f);
+        float lower = 0.1f - 0.1f / denom;
+        float denom2 = fmaxf((1.0f - adam_p.beta2) * (float)this_step, 1e-20f);
+        float upper = 0.1f + 0.1f / denom2;
+        lower_lr_bound = fmaxf(lower, 0.0f);
+        upper_lr_bound = fmaxf(upper, lower_lr_bound + 1e-12f);
+    }
 
-  if (adam_p.enable_adabound) {
-    const float denom = fmaxf((1.0f - adam_p.beta2) * (float)this_step + 1.0f, 1e-20f);
-    const float lower = 0.1f - 0.1f / denom;
-    const float denom2 = fmaxf((1.0f - adam_p.beta2) * (float)this_step, 1e-20f);
-    const float upper = 0.1f + 0.1f / denom2;
-    lower_lr_bound = fmaxf(lower, 0.0f);
-    // ensure upper bound is not smaller than lower bound (tiny epsilon)
-    upper_lr_bound = fmaxf(upper, lower_lr_bound + 1e-12f);
-  }
+    float val = thetas[tid];
+    float grad = thetas_grad[tid] * gradient_scale;
+    float first = first_second[2 * tid];
+    float second = first_second[2 * tid + 1];
 
-  // step
-  adam_step_func(val.x, grad.x, first.x, second.x, lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon, general_p.max_grad_1,
-                 lower_lr_bound, upper_lr_bound);
+    adam_step_func(val, grad, first, second, lr * this_lr_scale,
+                   adam_p.beta1, adam_p.beta2, adam_p.epsilon, general_p.max_grad_1,
+                   lower_lr_bound, upper_lr_bound);
 
-  adam_step_func(val.y, grad.y, first.y, second.y, lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon, general_p.max_grad_1,
-                 lower_lr_bound, upper_lr_bound);
+    thetas[tid] = val;
+    first_second[2 * tid] = first;
+    first_second[2 * tid + 1] = second;
+}
 
-  adam_step_func(val.z, grad.z, first.z, second.z, lr, adam_p.beta1, adam_p.beta2, adam_p.epsilon, general_p.max_grad_1,
-                 lower_lr_bound, upper_lr_bound);
+// Gathers SoA interleaved first_second data based on mapping.
+__global__ static void gather_soa_interleaved(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    const uint* __restrict__ mapping,
+    int num_items,
+    int num_channels,
+    int src_stride
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= num_items * num_channels) return;
+    int item_idx = tid % num_items;
+    int channel = tid / num_items;
+    int src_pos = channel * src_stride + mapping[item_idx];
+    int dst_pos = channel * num_items + item_idx;
+    dst[2 * dst_pos] = src[2 * src_pos];
+    dst[2 * dst_pos + 1] = src[2 * src_pos + 1];
+}
 
-  // write back updated params and moments
-  sh_coefficients_rest[sh_idx] = val;
-  sh_coefficients_rest_first_second[2 * sh_idx + 0] = first;
-  sh_coefficients_rest_first_second[2 * sh_idx + 1] = second;
+static void gather_soa_interleaved_buffers(
+    const thrust::device_vector<float>& src,
+    thrust::device_vector<float>& dst,
+    const uint* mapping,
+    int num_items, int num_channels, int src_stride
+) {
+    int total = num_items * num_channels;
+    dst.resize(total * 2, 0.f);
+    int grid = (total + 255) / 256;
+    gather_soa_interleaved<<<grid, 256>>>(
+        thrust::raw_pointer_cast(src.data()),
+        thrust::raw_pointer_cast(dst.data()),
+        mapping, num_items, num_channels, src_stride);
+}
+
+static void relayout_soa_interleaved(
+    thrust::device_vector<float>& buf,
+    int old_n, int new_n, int num_channels
+) {
+    if (old_n == 0) { buf.assign(new_n * num_channels * 2, 0.f); return; }
+    thrust::device_vector<uint> identity(old_n);
+    thrust::sequence(thrust::device, identity.begin(), identity.end());
+    thrust::device_vector<float> new_buf(new_n * num_channels * 2, 0.f);
+    int total = old_n * num_channels;
+    int grid = (total + 255) / 256;
+    gather_soa_interleaved<<<grid, 256>>>(
+        thrust::raw_pointer_cast(buf.data()),
+        thrust::raw_pointer_cast(new_buf.data()),
+        thrust::raw_pointer_cast(identity.data()),
+        old_n, num_channels, old_n);
+    buf = std::move(new_buf);
 }
 
 struct adamw_domain {
@@ -377,12 +394,6 @@ void AdamW::step(float scale, cudaStream_t stream) {
       thrust::raw_pointer_cast(m_gaussians->scales().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->scales().data()),
       thrust::raw_pointer_cast(m_scales_first_second.data()),
-      thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),
-      thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficient_0().data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
-      thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
-      thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
       thrust::raw_pointer_cast(m_gaussian_steps.data()),
       m_adam_params,
       m_params,
@@ -393,23 +404,51 @@ void AdamW::step(float scale, cudaStream_t stream) {
     maybe_sync(stream);
   }
 
+  // SH0 - degree 0 (1 coeff, 3*N elements), lr = shs_lr
   {
-    auto msg = regstr::get<m_sh_rest>();
-    nvtx3::event_attributes attr(msg, nvtx3::payload{n});
-    range range(attr);
-
-    dim3 grid{div_round_up<uint>(n, block_size / 16)};
-    launch_gaussian_adam_shrest<<<grid, block_size, 0, stream>>>(
+    int grid_sh0 = (3 * n + 255) / 256;
+    adamw_sh_soa_step<<<grid_sh0, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh0().data()),
+      thrust::raw_pointer_cast(m_sh0_first_second.data()),
       thrust::raw_pointer_cast(m_gaussian_steps.data()),
-      thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
-      thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
-      m_adam_params,
-      m_params,
-      m_gaussians->size(),
-      gradient_scale,
-      m_global_lr
-    );
+      3 * n, n, m_adam_params, m_params, m_params.shs_lr * m_global_lr, gradient_scale);
+    maybe_sync(stream);
+  }
+
+  // SH1 - degree 1 (3 coeffs, 9*N elements), lr = shs_lr * 0.05
+  {
+    int grid_sh1 = (9 * n + 255) / 256;
+    adamw_sh_soa_step<<<grid_sh1, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh1().data()),
+      thrust::raw_pointer_cast(m_sh1_first_second.data()),
+      thrust::raw_pointer_cast(m_gaussian_steps.data()),
+      9 * n, n, m_adam_params, m_params, m_params.shs_lr * 0.05f * m_global_lr, gradient_scale);
+    maybe_sync(stream);
+  }
+
+  // SH2 - degree 2 (5 coeffs, 15*N elements), lr = shs_lr * 0.05
+  {
+    int grid_sh2 = (15 * n + 255) / 256;
+    adamw_sh_soa_step<<<grid_sh2, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh2().data()),
+      thrust::raw_pointer_cast(m_sh2_first_second.data()),
+      thrust::raw_pointer_cast(m_gaussian_steps.data()),
+      15 * n, n, m_adam_params, m_params, m_params.shs_lr * 0.05f * m_global_lr, gradient_scale);
+    maybe_sync(stream);
+  }
+
+  // SH3 - degree 3 (7 coeffs, 21*N elements), lr = shs_lr * 0.05
+  {
+    int grid_sh3 = (21 * n + 255) / 256;
+    adamw_sh_soa_step<<<grid_sh3, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh3().data()),
+      thrust::raw_pointer_cast(m_sh3_first_second.data()),
+      thrust::raw_pointer_cast(m_gaussian_steps.data()),
+      21 * n, n, m_adam_params, m_params, m_params.shs_lr * 0.05f * m_global_lr, gradient_scale);
     maybe_sync(stream);
   }
 }
@@ -421,7 +460,7 @@ AdamW::AdamW(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussi
   AdamW::reset();
 }
 
-__global__ void copy_optimizer_state(
+__global__ void copy_optimizer_base_state(
   const vec3 * __restrict__ src_means,
   vec3 * __restrict__ dst_means,
   const float * __restrict__ src_opacities,
@@ -430,10 +469,6 @@ __global__ void copy_optimizer_state(
   vec4 * __restrict__ dst_rotations,
   const vec3 * __restrict__ src_scales,
   vec3 * __restrict__ dst_scales,
-  const vec3 * __restrict__ src_sh_coefficient_0,
-  vec3 * __restrict__ dst_sh_coefficient_0,
-  const vec3 * __restrict__ src_sh_coefficients_rest,
-  vec3 * __restrict__ dst_sh_coefficients_rest,
   const uint32_t* __restrict__ src_gaussian_steps,
   uint32_t* __restrict__ dst_gaussian_steps,
   const uint * __restrict__ mapping,
@@ -460,76 +495,8 @@ __global__ void copy_optimizer_state(
   dst_scales[idx * 2] = src_scales[src_idx * 2];
   dst_scales[idx * 2 + 1] = src_scales[src_idx * 2 + 1];
 
-  // Copy first/second moments for SH coefficient 0
-  dst_sh_coefficient_0[idx * 2] = src_sh_coefficient_0[src_idx * 2];
-  dst_sh_coefficient_0[idx * 2 + 1] = src_sh_coefficient_0[src_idx * 2 + 1];
-
   // Copy gaussian steps
   dst_gaussian_steps[idx] = src_gaussian_steps[src_idx];
-
-  // Copy first/second moments for rest SH coefficients
-  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1) * 2;
-  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1) * 2;
-  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-    dst_sh_coefficients_rest[dst_rest_start + i * 2] = src_sh_coefficients_rest[src_rest_start + i * 2];
-    dst_sh_coefficients_rest[dst_rest_start + i * 2 + 1] = src_sh_coefficients_rest[src_rest_start + i * 2 + 1];
-  }
-}
-
-// Legacy kernel for backward compatibility
-__global__ void copy_items(
-  const vec3 * __restrict__ src_means,
-  vec3 * __restrict__ dst_means,
-  const float * __restrict__ src_opacities,
-  float * __restrict__ dst_opacities,
-  const vec4 * __restrict__ src_rotations,
-  vec4 * __restrict__ dst_rotations,
-  const vec3 * __restrict__ src_scales,
-  vec3 * __restrict__ dst_scales,
-  const vec3 * __restrict__ src_sh_coefficient_0,
-  vec3 * __restrict__ dst_sh_coefficient_0,
-  const vec3 * __restrict__ src_sh_coefficients_rest,
-  vec3 * __restrict__ dst_sh_coefficients_rest,
-  const uint32_t* __restrict__ src_gaussian_steps,
-  uint32_t* __restrict__ dst_gaussian_steps,
-  const int * __restrict__ mapping,
-  int num_kept
-) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= num_kept) return;
-
-  int src_idx = mapping[idx];
-
-  // Copy first/second moments for means
-  dst_means[idx * 2] = src_means[src_idx * 2];
-  dst_means[idx * 2 + 1] = src_means[src_idx * 2 + 1];
-
-  // Copy first/second moments for opacities
-  dst_opacities[idx * 2] = src_opacities[src_idx * 2];
-  dst_opacities[idx * 2 + 1] = src_opacities[src_idx * 2 + 1];
-
-  // Copy first/second moments for rotations
-  dst_rotations[idx * 2] = src_rotations[src_idx * 2];
-  dst_rotations[idx * 2 + 1] = src_rotations[src_idx * 2 + 1];
-
-  // Copy first/second moments for scales
-  dst_scales[idx * 2] = src_scales[src_idx * 2];
-  dst_scales[idx * 2 + 1] = src_scales[src_idx * 2 + 1];
-
-  // Copy first/second moments for SH coefficient 0
-  dst_sh_coefficient_0[idx * 2] = src_sh_coefficient_0[src_idx * 2];
-  dst_sh_coefficient_0[idx * 2 + 1] = src_sh_coefficient_0[src_idx * 2 + 1];
-
-  // Copy gaussian steps
-  dst_gaussian_steps[idx] = src_gaussian_steps[src_idx];
-
-  // Copy first/second moments for rest SH coefficients
-  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1) * 2;
-  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1) * 2;
-  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-    dst_sh_coefficients_rest[dst_rest_start + i * 2] = src_sh_coefficients_rest[src_rest_start + i * 2];
-    dst_sh_coefficients_rest[dst_rest_start + i * 2 + 1] = src_sh_coefficients_rest[src_rest_start + i * 2 + 1];
-  }
 }
 
 void AdamW::remove(char* kept_flag, int num_kept) {
@@ -546,12 +513,10 @@ void AdamW::remove(char* kept_flag, int num_kept) {
   thrust::device_vector<float> opacities(2 * num_kept);
   thrust::device_vector<vec4> rotations(2 * num_kept);
   thrust::device_vector<vec3> scales(2 * num_kept);
-  thrust::device_vector<vec3> sh_coefficients_0(2 * num_kept);
-  thrust::device_vector<vec3> sh_coefficients_rest(2 * num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
   thrust::device_vector<uint32_t> gaussian_steps(num_kept);
 
   const int grid = (num_kept + 255) / 256;
-  copy_optimizer_state<<<grid, 256>>>(
+  copy_optimizer_base_state<<<grid, 256>>>(
       thrust::raw_pointer_cast(m_means_first_second.data()),
       thrust::raw_pointer_cast(means.data()),
       thrust::raw_pointer_cast(m_opacities_first_second.data()),
@@ -560,23 +525,32 @@ void AdamW::remove(char* kept_flag, int num_kept) {
       thrust::raw_pointer_cast(rotations.data()),
       thrust::raw_pointer_cast(m_scales_first_second.data()),
       thrust::raw_pointer_cast(scales.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
-      thrust::raw_pointer_cast(sh_coefficients_0.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
-      thrust::raw_pointer_cast(sh_coefficients_rest.data()),
       thrust::raw_pointer_cast(m_gaussian_steps.data()),
       thrust::raw_pointer_cast(gaussian_steps.data()),
       thrust::raw_pointer_cast(mapping.data()),
       num_kept
   );
 
+  // Gather SH buffers using SoA interleaved layout
+  thrust::device_vector<float> sh0, sh1, sh2, sh3;
+  gather_soa_interleaved_buffers(m_sh0_first_second, sh0,
+      thrust::raw_pointer_cast(mapping.data()), num_kept, 3, original_size);
+  gather_soa_interleaved_buffers(m_sh1_first_second, sh1,
+      thrust::raw_pointer_cast(mapping.data()), num_kept, 9, original_size);
+  gather_soa_interleaved_buffers(m_sh2_first_second, sh2,
+      thrust::raw_pointer_cast(mapping.data()), num_kept, 15, original_size);
+  gather_soa_interleaved_buffers(m_sh3_first_second, sh3,
+      thrust::raw_pointer_cast(mapping.data()), num_kept, 21, original_size);
+
   m_means_first_second = std::move(means);
   m_opacities_first_second = std::move(opacities);
   m_rotations_first_second = std::move(rotations);
   m_scales_first_second = std::move(scales);
-  m_sh_coefficient_0_first_second = std::move(sh_coefficients_0);
+  m_sh0_first_second = std::move(sh0);
+  m_sh1_first_second = std::move(sh1);
+  m_sh2_first_second = std::move(sh2);
+  m_sh3_first_second = std::move(sh3);
   m_gaussian_steps = std::move(gaussian_steps);
-  m_sh_coefficients_rest_first_second = std::move(sh_coefficients_rest);
 }
 
 __global__ static void duplicate_optimizer_state_kernel(
@@ -588,16 +562,12 @@ __global__ static void duplicate_optimizer_state_kernel(
   vec4* __restrict__ rotations_first_second,
   // Scales
   vec3* __restrict__ scales_first_second,
-  // Spherical Harmonics
-  vec3* __restrict__ sh_coefficient_0_first_second,
-  vec3* __restrict__ sh_coefficients_rest_first_second,
   // Step counts
   uint32_t* __restrict__ gaussian_steps,
   // Indices
   const int* __restrict__ indices,
   const int* __restrict__ new_indices,
-  uint32_t num_duplicate,
-  uint32_t num_sh_rest_per_gaussian
+  uint32_t num_duplicate
 ) {
   auto idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_duplicate) return;
@@ -624,33 +594,27 @@ __global__ static void duplicate_optimizer_state_kernel(
   scales_first_second[dst_idx * 2] = scales_first_second[src_idx * 2] *= kHalf;
   scales_first_second[dst_idx * 2 + 1] = scales_first_second[src_idx * 2 + 1] *= kQuarter;
 
-  // Copy sh_coefficient_0 first and second moments
-  sh_coefficient_0_first_second[dst_idx * 2] = sh_coefficient_0_first_second[src_idx * 2] *= kHalf;
-  sh_coefficient_0_first_second[dst_idx * 2 + 1] = sh_coefficient_0_first_second[src_idx * 2 + 1] *= kQuarter;
-
-  // Copy sh_coefficients_rest first and second moments
-  for (uint32_t i = 0; i < num_sh_rest_per_gaussian; i++) {
-    const int src_sh_idx = src_idx * num_sh_rest_per_gaussian + i;
-    const int dst_sh_idx = dst_idx * num_sh_rest_per_gaussian + i;
-    sh_coefficients_rest_first_second[dst_sh_idx * 2] = sh_coefficients_rest_first_second[src_sh_idx * 2] *= kHalf;
-    sh_coefficients_rest_first_second[dst_sh_idx * 2 + 1] = sh_coefficients_rest_first_second[src_sh_idx * 2 + 1] *= kQuarter;
-  }
-
   // Copy step count: but with half the value to ensure it could be optimized efficiently.
   gaussian_steps[dst_idx] = (gaussian_steps[src_idx]);
 }
 
 void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
   if (num_duplicate == 0) return;
-  const uint32_t num_sh_rest_per_gaussian = kMaxSphericalHarmonicsCoefficients - 1;
+  int old_n = m_gaussians->size();
+  int new_n = old_n + num_duplicate;
+
   // Resize vectors to accommodate duplicated gaussians
-  m_means_first_second.resize(m_gaussians->size() * 2, vec3(0.f, 0.f, 0.f));
-  m_opacities_first_second.resize(m_gaussians->size() * 2, 0.f);
-  m_rotations_first_second.resize(m_gaussians->size() * 2, vec4(0.f, 0.f, 0.f, 0.f));
-  m_scales_first_second.resize(m_gaussians->size() * 2, vec3(0.f, 0.f, 0.f));
-  m_sh_coefficient_0_first_second.resize(m_gaussians->size() * 2, vec3(0.f, 0.f, 0.f));
-  m_sh_coefficients_rest_first_second.resize(m_gaussians->size() * 2 * num_sh_rest_per_gaussian, vec3(0.f, 0.f, 0.f));
-  m_gaussian_steps.resize(m_gaussians->size(), 0);
+  m_means_first_second.resize(new_n * 2, vec3(0.f, 0.f, 0.f));
+  m_opacities_first_second.resize(new_n * 2, 0.f);
+  m_rotations_first_second.resize(new_n * 2, vec4(0.f, 0.f, 0.f, 0.f));
+  m_scales_first_second.resize(new_n * 2, vec3(0.f, 0.f, 0.f));
+  m_gaussian_steps.resize(new_n, 0);
+
+  // Relayout SH buffers using SoA interleaved layout
+  relayout_soa_interleaved(m_sh0_first_second, old_n, new_n, 3);
+  relayout_soa_interleaved(m_sh1_first_second, old_n, new_n, 9);
+  relayout_soa_interleaved(m_sh2_first_second, old_n, new_n, 15);
+  relayout_soa_interleaved(m_sh3_first_second, old_n, new_n, 21);
 
   // TODO: This design does not provide better result. Why?
   // const int grid = (num_duplicate + 255) / 256;
@@ -659,13 +623,10 @@ void AdamW::duplicate(int* indices, int* new_indices, int num_duplicate) {
   //   thrust::raw_pointer_cast(m_opacities_first_second.data()),
   //   thrust::raw_pointer_cast(m_rotations_first_second.data()),
   //   thrust::raw_pointer_cast(m_scales_first_second.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
-  //   thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
   //   thrust::raw_pointer_cast(m_gaussian_steps.data()),
   //   indices,
   //   new_indices,
-  //   num_duplicate,
-  //   num_sh_rest_per_gaussian
+  //   num_duplicate
   // );
 }
 
@@ -676,8 +637,10 @@ void AdamW::reset() {
   m_opacities_first_second.resize(num_gaussians * 2, 0.f);
   m_rotations_first_second.resize(num_gaussians * 2, vec4(0.f));
   m_scales_first_second.resize(num_gaussians * 2, vec3(0.f));
-  m_sh_coefficient_0_first_second.resize(num_gaussians * 2, vec3(0.f));
-  m_sh_coefficients_rest_first_second.resize(num_gaussians * 2 * (kMaxSphericalHarmonicsCoefficients - 1), vec3(0.f));
+  m_sh0_first_second.assign(num_gaussians * 3 * 2, 0.f);
+  m_sh1_first_second.assign(num_gaussians * 9 * 2, 0.f);
+  m_sh2_first_second.assign(num_gaussians * 15 * 2, 0.f);
+  m_sh3_first_second.assign(num_gaussians * 21 * 2, 0.f);
   m_gaussian_steps.resize(num_gaussians, 0);
 }
 
@@ -691,9 +654,12 @@ void AdamW::reset(int* indices, int num_reset) {
       opacities_first_second = m_opacities_first_second.data(),
       rotations_first_second = m_rotations_first_second.data(),
       scales_first_second = m_scales_first_second.data(),
-      sh_coefficient_0_first_second = m_sh_coefficient_0_first_second.data(),
-      sh_coefficients_rest_first_second = m_sh_coefficients_rest_first_second.data(),
-      gaussian_steps = m_gaussian_steps.data()
+      sh0_first_second = m_sh0_first_second.data(),
+      sh1_first_second = m_sh1_first_second.data(),
+      sh2_first_second = m_sh2_first_second.data(),
+      sh3_first_second = m_sh3_first_second.data(),
+      gaussian_steps = m_gaussian_steps.data(),
+      N = static_cast<int>(num_gaussians)
     ] __device__(int idx) {
       means_first_second[idx * 2] = vec3(0.f);
       means_first_second[idx * 2 + 1] = vec3(0.f);
@@ -703,11 +669,29 @@ void AdamW::reset(int* indices, int num_reset) {
       rotations_first_second[idx * 2 + 1] = vec4(0.f);
       scales_first_second[idx * 2] = vec3(0.f);
       scales_first_second[idx * 2 + 1] = vec3(0.f);
-      sh_coefficient_0_first_second[idx * 2] = vec3(0.f);
-      sh_coefficient_0_first_second[idx * 2 + 1] = vec3(0.f);
-      for (uint32_t i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-        sh_coefficients_rest_first_second[idx * 2 * (kMaxSphericalHarmonicsCoefficients - 1) + 2 * i] = vec3(0.f);
-        sh_coefficients_rest_first_second[idx * 2 * (kMaxSphericalHarmonicsCoefficients - 1) + 2 * i + 1] = vec3(0.f);
+      // Zero SH0 (3 channels)
+      for (int c = 0; c < 3; c++) {
+        int pos = c * N + idx;
+        sh0_first_second[2 * pos] = 0.f;
+        sh0_first_second[2 * pos + 1] = 0.f;
+      }
+      // Zero SH1 (9 channels)
+      for (int c = 0; c < 9; c++) {
+        int pos = c * N + idx;
+        sh1_first_second[2 * pos] = 0.f;
+        sh1_first_second[2 * pos + 1] = 0.f;
+      }
+      // Zero SH2 (15 channels)
+      for (int c = 0; c < 15; c++) {
+        int pos = c * N + idx;
+        sh2_first_second[2 * pos] = 0.f;
+        sh2_first_second[2 * pos + 1] = 0.f;
+      }
+      // Zero SH3 (21 channels)
+      for (int c = 0; c < 21; c++) {
+        int pos = c * N + idx;
+        sh3_first_second[2 * pos] = 0.f;
+        sh3_first_second[2 * pos + 1] = 0.f;
       }
       gaussian_steps[idx] = 0;
     }
@@ -722,12 +706,10 @@ void AdamW::reorder(uint* indices) {
   thrust::device_vector<float> opacities(num_gaussians * 2);
   thrust::device_vector<vec4> rotations(num_gaussians * 2);
   thrust::device_vector<vec3> scales(num_gaussians * 2);
-  thrust::device_vector<vec3> sh_coefficients_0(num_gaussians * 2);
-  thrust::device_vector<vec3> sh_coefficients_rest(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1) * 2);
   thrust::device_vector<uint32_t> gaussian_steps(num_gaussians);
 
   const int grid = (num_gaussians + 255) / 256;
-  copy_optimizer_state<<<grid, 256>>>(
+  copy_optimizer_base_state<<<grid, 256>>>(
       thrust::raw_pointer_cast(m_means_first_second.data()),
       thrust::raw_pointer_cast(means.data()),
       thrust::raw_pointer_cast(m_opacities_first_second.data()),
@@ -736,23 +718,32 @@ void AdamW::reorder(uint* indices) {
       thrust::raw_pointer_cast(rotations.data()),
       thrust::raw_pointer_cast(m_scales_first_second.data()),
       thrust::raw_pointer_cast(scales.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0_first_second.data()),
-      thrust::raw_pointer_cast(sh_coefficients_0.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest_first_second.data()),
-      thrust::raw_pointer_cast(sh_coefficients_rest.data()),
       thrust::raw_pointer_cast(m_gaussian_steps.data()),
       thrust::raw_pointer_cast(gaussian_steps.data()),
       indices,
       num_gaussians
   );
 
+  // Gather SH buffers using SoA interleaved layout
+  thrust::device_vector<float> sh0, sh1, sh2, sh3;
+  gather_soa_interleaved_buffers(m_sh0_first_second, sh0,
+      indices, num_gaussians, 3, num_gaussians);
+  gather_soa_interleaved_buffers(m_sh1_first_second, sh1,
+      indices, num_gaussians, 9, num_gaussians);
+  gather_soa_interleaved_buffers(m_sh2_first_second, sh2,
+      indices, num_gaussians, 15, num_gaussians);
+  gather_soa_interleaved_buffers(m_sh3_first_second, sh3,
+      indices, num_gaussians, 21, num_gaussians);
+
   // Move reordered data back to member variables
   m_means_first_second = std::move(means);
   m_opacities_first_second = std::move(opacities);
   m_rotations_first_second = std::move(rotations);
   m_scales_first_second = std::move(scales);
-  m_sh_coefficient_0_first_second = std::move(sh_coefficients_0);
-  m_sh_coefficients_rest_first_second = std::move(sh_coefficients_rest);
+  m_sh0_first_second = std::move(sh0);
+  m_sh1_first_second = std::move(sh1);
+  m_sh2_first_second = std::move(sh2);
+  m_sh3_first_second = std::move(sh3);
   m_gaussian_steps = std::move(gaussian_steps);
 }
 

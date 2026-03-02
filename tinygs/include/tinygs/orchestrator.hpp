@@ -68,6 +68,12 @@ struct OrchestratorConfig {
   DataType train_data_type = DataType::Float32;
   DataType eval_data_type = DataType::Float32;
 
+  // CUDA debugging
+  bool debug_cuda_check_each_stage = false;  ///< Check CUDA error state after each train_step stage
+  bool debug_cuda_sync_each_stage = false;   ///< Synchronize stream after each train_step stage
+  size_t debug_cuda_check_every = 0;         ///< Check cadence in steps (0 = disabled)
+  bool debug_cuda_log_each_stage = false;    ///< Log stage names when debug checks run
+
   /// @brief Convert config to JSON
   json to_json() const;
   /// @brief Load config from JSON

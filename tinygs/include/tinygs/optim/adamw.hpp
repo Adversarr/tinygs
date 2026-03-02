@@ -70,8 +70,13 @@ private:
   thrust::device_vector<float> m_opacities_first_second;
   thrust::device_vector<vec4> m_rotations_first_second;
   thrust::device_vector<vec3> m_scales_first_second;
-  thrust::device_vector<vec3> m_sh_coefficient_0_first_second;
-  thrust::device_vector<vec3> m_sh_coefficients_rest_first_second;
+  /// Per-degree SH interleaved first/second moments (flat float SoA).
+  /// For each SH degree, the buffer stores [first_0, second_0, first_1, second_1, ...]
+  /// where each element is a float indexed in SoA order.
+  thrust::device_vector<float> m_sh0_first_second;   ///< size = 2 * 3 * N
+  thrust::device_vector<float> m_sh1_first_second;   ///< size = 2 * 9 * N
+  thrust::device_vector<float> m_sh2_first_second;   ///< size = 2 * 15 * N
+  thrust::device_vector<float> m_sh3_first_second;   ///< size = 2 * 21 * N
   thrust::device_vector<uint32_t> m_gaussian_steps;
 };
 

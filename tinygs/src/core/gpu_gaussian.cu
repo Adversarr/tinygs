@@ -1,6 +1,7 @@
 #include <thrust/copy.h>
 #include <thrust/execution_policy.h>
 #include <thrust/host_vector.h>
+#include <thrust/sequence.h>
 
 #include <cub/cub.cuh>
 
@@ -12,56 +13,197 @@
 
 namespace tinygs {
 
+// ============================================================================
+// AoS <-> SoA conversion kernels for SH coefficients
+// ============================================================================
+
+/// @brief Convert SH coefficients from AoS (vec3 per coeff, contiguous per Gaussian)
+///        to channel-first SoA layout: [c0_R_all, c0_G_all, c0_B_all, c1_R_all, ...]
+///
+/// AoS input layout (CPU):  For N gaussians, C coefficients:
+///   [G0_c0_RGB, G0_c1_RGB, ..., G0_c{C-1}_RGB, G1_c0_RGB, ...]
+///
+/// SoA output layout (GPU): For coefficient k, channel c, Gaussian i:
+///   index = (k * 3 + c) * N + i
+__global__ void aos_to_soa_sh_kernel(
+    const float3* __restrict__ src_aos,
+    float* __restrict__ dst_soa,
+    int N,
+    int num_coeffs) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = N * num_coeffs;
+  if (idx >= total) return;
+
+  int i = idx / num_coeffs;  // Gaussian index
+  int k = idx % num_coeffs;  // Coefficient index
+
+  float3 val = src_aos[i * num_coeffs + k];
+  dst_soa[(k * 3 + 0) * N + i] = val.x;  // R channel
+  dst_soa[(k * 3 + 1) * N + i] = val.y;  // G channel
+  dst_soa[(k * 3 + 2) * N + i] = val.z;  // B channel
+}
+
+/// @brief Convert SH coefficients from channel-first SoA layout back to AoS (vec3).
+__global__ void soa_to_aos_sh_kernel(
+    const float* __restrict__ src_soa,
+    float3* __restrict__ dst_aos,
+    int N,
+    int num_coeffs) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = N * num_coeffs;
+  if (idx >= total) return;
+
+  int i = idx / num_coeffs;  // Gaussian index
+  int k = idx % num_coeffs;  // Coefficient index
+
+  float3 val;
+  val.x = src_soa[(k * 3 + 0) * N + i];
+  val.y = src_soa[(k * 3 + 1) * N + i];
+  val.z = src_soa[(k * 3 + 2) * N + i];
+  dst_aos[i * num_coeffs + k] = val;
+}
+
+/// @brief Upload SH data from CPU AoS (vec3) to GPU SoA (float) layout.
+/// @param host_aos  Host-side AoS data: N * num_coeffs vec3 elements.
+/// @param gpu_soa   Device-side SoA buffer: num_coeffs * 3 * N floats.
+/// @param N         Number of Gaussians.
+/// @param num_coeffs Number of coefficients per Gaussian for this degree.
+static void upload_sh_aos_to_soa(
+    const std::vector<vec3>& host_aos,
+    thrust::device_vector<float>& gpu_soa,
+    int N, int num_coeffs) {
+  if (N == 0 || num_coeffs == 0) {
+    gpu_soa.clear();
+    return;
+  }
+  // Upload AoS to temporary GPU buffer
+  thrust::device_vector<float3> temp_aos(N * num_coeffs);
+  thrust::copy(
+      reinterpret_cast<const float3*>(host_aos.data()),
+      reinterpret_cast<const float3*>(host_aos.data()) + N * num_coeffs,
+      temp_aos.begin());
+
+  // Resize SoA output and convert on device
+  gpu_soa.resize(num_coeffs * 3 * N);
+  int total = N * num_coeffs;
+  int blocks = (total + 255) / 256;
+  aos_to_soa_sh_kernel<<<blocks, 256>>>(
+      thrust::raw_pointer_cast(temp_aos.data()),
+      thrust::raw_pointer_cast(gpu_soa.data()),
+      N, num_coeffs);
+  CUDA_CHECK_THROW(cudaGetLastError());
+}
+
+/// @brief Download SH data from GPU SoA (float) to CPU AoS (vec3) layout.
+static void download_sh_soa_to_aos(
+    const thrust::device_vector<float>& gpu_soa,
+    std::vector<vec3>& host_aos,
+    int N, int num_coeffs) {
+  if (N == 0 || num_coeffs == 0) {
+    host_aos.clear();
+    return;
+  }
+  // Convert SoA -> AoS on device
+  thrust::device_vector<float3> temp_aos(N * num_coeffs);
+  int total = N * num_coeffs;
+  int blocks = (total + 255) / 256;
+  soa_to_aos_sh_kernel<<<blocks, 256>>>(
+      thrust::raw_pointer_cast(gpu_soa.data()),
+      thrust::raw_pointer_cast(temp_aos.data()),
+      N, num_coeffs);
+  CUDA_CHECK_THROW(cudaGetLastError());
+
+  // Download to host
+  host_aos.resize(N * num_coeffs);
+  thrust::copy(temp_aos.begin(), temp_aos.end(),
+               reinterpret_cast<float3*>(host_aos.data()));
+}
+
+// ============================================================================
+// GPUGaussian3d: sh_degree_data() accessor
+// ============================================================================
+
+float* GPUGaussian3d::sh_degree_data(int degree) {
+  switch (degree) {
+    case 0: return thrust::raw_pointer_cast(m_sh0.data());
+    case 1: return thrust::raw_pointer_cast(m_sh1.data());
+    case 2: return thrust::raw_pointer_cast(m_sh2.data());
+    case 3: return thrust::raw_pointer_cast(m_sh3.data());
+    default: return nullptr;
+  }
+}
+
+const float* GPUGaussian3d::sh_degree_data(int degree) const {
+  switch (degree) {
+    case 0: return thrust::raw_pointer_cast(m_sh0.data());
+    case 1: return thrust::raw_pointer_cast(m_sh1.data());
+    case 2: return thrust::raw_pointer_cast(m_sh2.data());
+    case 3: return thrust::raw_pointer_cast(m_sh3.data());
+    default: return nullptr;
+  }
+}
+
+// ============================================================================
+// copy_from_host / copy_to_host: AoS <-> SoA conversion
+// ============================================================================
+
 void GPUGaussian3d::copy_from_host(const Gaussian3d& gaussians) {
   NVTX3_FUNC_RANGE();
-  const size_t num_gaussians = gaussians.means.size();
+  const int N = static_cast<int>(gaussians.means.size());
 
-  // Resize device vectors
-  m_means.resize(num_gaussians);
-  m_opacities.resize(num_gaussians);
-  m_rotations.resize(num_gaussians);
-  m_scales.resize(num_gaussians);
-  m_sh_coefficient_0.resize(num_gaussians);
-  m_sh_coefficients_rest.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
+  // Resize and copy non-SH fields (direct copy, same layout)
+  m_means.resize(N);
+  m_opacities.resize(N);
+  m_rotations.resize(N);
+  m_scales.resize(N);
 
-  // TODO: directly copy use cudaMemcpy if the input is already in pinned memory
-  // Copy directly from SoA host vectors to device vectors
   thrust::copy(gaussians.means.begin(), gaussians.means.end(), m_means.begin());
   thrust::copy(gaussians.opacities.begin(), gaussians.opacities.end(), m_opacities.begin());
   thrust::copy(gaussians.rotations.begin(), gaussians.rotations.end(), m_rotations.begin());
   thrust::copy(gaussians.scales.begin(), gaussians.scales.end(), m_scales.begin());
-  thrust::copy(gaussians.sh_coefficient_0.begin(), gaussians.sh_coefficient_0.end(), m_sh_coefficient_0.begin());
-  thrust::copy(gaussians.sh_coefficients_rest.begin(), gaussians.sh_coefficients_rest.end(), m_sh_coefficients_rest.begin());
+
+  // SH: AoS (CPU) -> SoA (GPU) conversion per degree
+  upload_sh_aos_to_soa(gaussians.sh0, m_sh0, N, 1);
+  upload_sh_aos_to_soa(gaussians.sh1, m_sh1, N, 3);
+  upload_sh_aos_to_soa(gaussians.sh2, m_sh2, N, 5);
+  upload_sh_aos_to_soa(gaussians.sh3, m_sh3, N, 7);
 }
 
 void GPUGaussian3d::copy_to_host(Gaussian3d& gaussians) {
   NVTX3_FUNC_RANGE();
-  const size_t num_gaussians = m_means.size();
+  const int N = static_cast<int>(m_means.size());
 
-  // Resize host container vectors
-  gaussians.means.resize(num_gaussians);
-  gaussians.opacities.resize(num_gaussians);
-  gaussians.rotations.resize(num_gaussians);
-  gaussians.scales.resize(num_gaussians);
-  gaussians.sh_coefficient_0.resize(num_gaussians);
-  gaussians.sh_coefficients_rest.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
+  // Resize and copy non-SH fields
+  gaussians.means.resize(N);
+  gaussians.opacities.resize(N);
+  gaussians.rotations.resize(N);
+  gaussians.scales.resize(N);
 
-  // Copy directly from device vectors to SoA host vectors
   thrust::copy(m_means.begin(), m_means.end(), gaussians.means.begin());
   thrust::copy(m_opacities.begin(), m_opacities.end(), gaussians.opacities.begin());
   thrust::copy(m_rotations.begin(), m_rotations.end(), gaussians.rotations.begin());
   thrust::copy(m_scales.begin(), m_scales.end(), gaussians.scales.begin());
-  thrust::copy(m_sh_coefficient_0.begin(), m_sh_coefficient_0.end(), gaussians.sh_coefficient_0.begin());
-  thrust::copy(m_sh_coefficients_rest.begin(), m_sh_coefficients_rest.end(), gaussians.sh_coefficients_rest.begin());
+
+  // SH: SoA (GPU) -> AoS (CPU) conversion per degree
+  download_sh_soa_to_aos(m_sh0, gaussians.sh0, N, 1);
+  download_sh_soa_to_aos(m_sh1, gaussians.sh1, N, 3);
+  download_sh_soa_to_aos(m_sh2, gaussians.sh2, N, 5);
+  download_sh_soa_to_aos(m_sh3, gaussians.sh3, N, 7);
 }
+
+// ============================================================================
+// memset
+// ============================================================================
 
 void GPUGaussian3d::memset_async(char value, cudaStream_t stream) {
   CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_means.data()), value, sizeof(float3) * m_means.size(), stream));
   CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_opacities.data()), value, sizeof(float) * m_opacities.size(), stream));
   CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_rotations.data()), value, sizeof(float4) * m_rotations.size(), stream));
   CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_scales.data()), value, sizeof(float3) * m_scales.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh_coefficient_0.data()), value, sizeof(float3) * m_sh_coefficient_0.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh_coefficients_rest.data()), value, sizeof(float3) * m_sh_coefficients_rest.size(), stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh0.data()), value, sizeof(float) * m_sh0.size(), stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh1.data()), value, sizeof(float) * m_sh1.size(), stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh2.data()), value, sizeof(float) * m_sh2.size(), stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh3.data()), value, sizeof(float) * m_sh3.size(), stream));
 }
 
 void GPUGaussian3d::memset(char value) {
@@ -69,71 +211,132 @@ void GPUGaussian3d::memset(char value) {
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_opacities.data()), value, sizeof(float) * m_opacities.size()));
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_rotations.data()), value, sizeof(float4) * m_rotations.size()));
   CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_scales.data()), value, sizeof(float3) * m_scales.size()));
-  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh_coefficient_0.data()), value, sizeof(float3) * m_sh_coefficient_0.size()));
-  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh_coefficients_rest.data()), value, sizeof(float3) * m_sh_coefficients_rest.size()));
+  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh0.data()), value, sizeof(float) * m_sh0.size()));
+  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh1.data()), value, sizeof(float) * m_sh1.size()));
+  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh2.data()), value, sizeof(float) * m_sh2.size()));
+  CUDA_CHECK_THROW(cudaMemset(thrust::raw_pointer_cast(m_sh3.data()), value, sizeof(float) * m_sh3.size()));
 }
 
-
+// ============================================================================
+// Gather kernel for non-SH fields (base Gaussian data)
+// ============================================================================
 
 template<typename IndexType>
-__global__ void copy_gaussian_items(
-  const vec3 * __restrict__ src_means,
-  vec3 * __restrict__ dst_means,
-  const float * __restrict__ src_opacities,
-  float * __restrict__ dst_opacities,
-  const vec4 * __restrict__ src_rotations,
-  vec4 * __restrict__ dst_rotations,
-  const vec3 * __restrict__ src_scales,
-  vec3 * __restrict__ dst_scales,
-  const vec3 * __restrict__ src_sh_coefficient_0,
-  vec3 * __restrict__ dst_sh_coefficient_0,
-  const vec3 * __restrict__ src_sh_coefficients_rest,
-  vec3 * __restrict__ dst_sh_coefficients_rest,
-  const IndexType * __restrict__ mapping,
-  int num_items
-) {
+__global__ void copy_gaussian_base_items(
+    const vec3* __restrict__ src_means,
+    vec3* __restrict__ dst_means,
+    const float* __restrict__ src_opacities,
+    float* __restrict__ dst_opacities,
+    const vec4* __restrict__ src_rotations,
+    vec4* __restrict__ dst_rotations,
+    const vec3* __restrict__ src_scales,
+    vec3* __restrict__ dst_scales,
+    const IndexType* __restrict__ mapping,
+    int num_items) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_items) return;
 
   IndexType src_idx = mapping[idx];
-  
-  // Copy all fields
   dst_means[idx] = src_means[src_idx];
   dst_opacities[idx] = src_opacities[src_idx];
   dst_rotations[idx] = src_rotations[src_idx];
   dst_scales[idx] = src_scales[src_idx];
-  dst_sh_coefficient_0[idx] = src_sh_coefficient_0[src_idx];
-  
-  // Copy rest SH coefficients
-  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1);
-  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
-  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-    dst_sh_coefficients_rest[dst_rest_start + i] = src_sh_coefficients_rest[src_rest_start + i];
-  }
 }
 
-// reorder_gaussian_items kernel is now replaced by the templated copy_gaussian_items
+// ============================================================================
+// Gather kernel for SoA SH buffers
+//
+// For a SH degree buffer with num_coeffs coefficients (SoA layout):
+//   src element for Gaussian src_idx, coefficient k, channel c:
+//     src[(k * 3 + c) * old_N + src_idx]
+//   dst element for Gaussian dst_idx, coefficient k, channel c:
+//     dst[(k * 3 + c) * new_N + dst_idx]
+// ============================================================================
+
+template<typename IndexType>
+__global__ void gather_soa_sh_kernel(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    const IndexType* __restrict__ mapping,
+    int new_N,
+    int old_N,
+    int num_coeffs) {
+  // One thread per (dst_gaussian, coefficient, channel)
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = new_N * num_coeffs * 3;
+  if (idx >= total) return;
+
+  int i = idx % new_N;                     // Gaussian index in dst
+  int kc = idx / new_N;                    // Combined (coeff * 3 + channel) index
+  IndexType src_idx = mapping[i];
+
+  dst[kc * new_N + i] = src[kc * old_N + src_idx];
+}
+
+// Re-layout helper for append: preserve first old_N items for each SoA channel
+// while changing channel stride from old_N to new_N.
+__global__ void relayout_soa_sh_append_kernel(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    int old_N,
+    int new_N,
+    int num_coeffs) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  int num_channels = num_coeffs * 3;
+  int total = old_N * num_channels;
+  if (idx >= total) return;
+
+  int i = idx % old_N;     // Gaussian index in old layout
+  int kc = idx / old_N;    // (coeff * 3 + channel)
+  dst[kc * new_N + i] = src[kc * old_N + i];
+}
+
+/// @brief Helper to gather a single SoA SH buffer using a mapping.
+template<typename IndexType>
+static void gather_soa_sh(
+    const thrust::device_vector<float>& src,
+    thrust::device_vector<float>& dst,
+    const IndexType* mapping,
+    int new_N, int old_N, int num_coeffs,
+    cudaStream_t stream = 0) {
+  if (num_coeffs == 0 || new_N == 0) {
+    dst.resize(num_coeffs * 3 * new_N);
+    return;
+  }
+  dst.resize(num_coeffs * 3 * new_N);
+  int total = new_N * num_coeffs * 3;
+  int blocks = (total + 255) / 256;
+  gather_soa_sh_kernel<IndexType><<<blocks, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(src.data()),
+      thrust::raw_pointer_cast(dst.data()),
+      mapping,
+      new_N, old_N, num_coeffs);
+}
+
+// ============================================================================
+// remove / append / reorder
+// ============================================================================
 
 void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
   size_t original_size = size();
-  thrust::device_vector<int> mapping(original_size); // kept[idx] = original_idx
+  thrust::device_vector<int> mapping(original_size);
 
   thrust::copy_if(
-    thrust::device,
-    thrust::make_counting_iterator<int>(0), thrust::make_counting_iterator<int>(original_size),
-    mapping.begin(), [kept_flag] __device__ (int orig) { return static_cast<bool>(kept_flag[orig]); });
+      thrust::device,
+      thrust::make_counting_iterator<int>(0),
+      thrust::make_counting_iterator<int>(original_size),
+      mapping.begin(),
+      [kept_flag] __device__(int orig) { return static_cast<bool>(kept_flag[orig]); });
 
-  // Create new vectors for all gaussian data
+  // Create new vectors for base gaussian data
   thrust::device_vector<vec3> means(num_kept);
   thrust::device_vector<float> opacities(num_kept);
   thrust::device_vector<vec4> rotations(num_kept);
   thrust::device_vector<vec3> scales(num_kept);
-  thrust::device_vector<vec3> sh_coefficient_0(num_kept);
-  thrust::device_vector<vec3> sh_coefficients_rest(num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
 
-  // Copy all items using the mapping
+  // Copy base items
   const int grid = (num_kept + 255) / 256;
-  copy_gaussian_items<int><<<grid, 256>>>(
+  copy_gaussian_base_items<int><<<grid, 256>>>(
       thrust::raw_pointer_cast(m_means.data()),
       thrust::raw_pointer_cast(means.data()),
       thrust::raw_pointer_cast(m_opacities.data()),
@@ -142,149 +345,192 @@ void GPUGaussian3d::remove(char* kept_flag, int num_kept) {
       thrust::raw_pointer_cast(rotations.data()),
       thrust::raw_pointer_cast(m_scales.data()),
       thrust::raw_pointer_cast(scales.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0.data()),
-      thrust::raw_pointer_cast(sh_coefficient_0.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest.data()),
-      thrust::raw_pointer_cast(sh_coefficients_rest.data()),
       thrust::raw_pointer_cast(mapping.data()),
-      num_kept
-  );
+      num_kept);
 
-  // Move the new vectors to replace the old ones
+  // Gather SH SoA buffers
+  thrust::device_vector<float> sh0_new, sh1_new, sh2_new, sh3_new;
+  const int* map_ptr = thrust::raw_pointer_cast(mapping.data());
+  gather_soa_sh(m_sh0, sh0_new, map_ptr, num_kept, (int)original_size, 1);
+  gather_soa_sh(m_sh1, sh1_new, map_ptr, num_kept, (int)original_size, 3);
+  gather_soa_sh(m_sh2, sh2_new, map_ptr, num_kept, (int)original_size, 5);
+  gather_soa_sh(m_sh3, sh3_new, map_ptr, num_kept, (int)original_size, 7);
+
+  // Move new vectors to replace old ones
   m_means = std::move(means);
   m_opacities = std::move(opacities);
   m_rotations = std::move(rotations);
   m_scales = std::move(scales);
-  m_sh_coefficient_0 = std::move(sh_coefficient_0);
-  m_sh_coefficients_rest = std::move(sh_coefficients_rest);
+  m_sh0 = std::move(sh0_new);
+  m_sh1 = std::move(sh1_new);
+  m_sh2 = std::move(sh2_new);
+  m_sh3 = std::move(sh3_new);
 }
 
 void GPUGaussian3d::append(int num_dup) {
   assert(num_dup > 0);
   const size_t target_size = this->size() + static_cast<size_t>(num_dup);
+  const size_t old_size = this->size();
+
+  // Resize base fields
   m_means.resize(target_size, vec3(0.f));
   m_opacities.resize(target_size, 0.f);
   m_rotations.resize(target_size, vec4(0.f, 0.f, 0.f, 0.f));
   m_scales.resize(target_size, vec3(0.f, 0.f, 0.f));
-  m_sh_coefficient_0.resize(target_size, vec3(0.f, 0.f, 0.f));
-  m_sh_coefficients_rest.resize(target_size * (kMaxSphericalHarmonicsCoefficients - 1), vec3(0.f, 0.f, 0.f));
+
+  // For SoA SH buffers, we need to re-layout since N changed.
+  // The old data at offsets (k*3+c)*old_N needs to move to (k*3+c)*new_N.
+  // We use an identity mapping for the old gaussians and allocate zeros for the new.
+  auto resize_soa_sh = [&](thrust::device_vector<float>& buf, int num_coeffs) {
+    if (num_coeffs == 0) return;
+    int new_total = num_coeffs * 3 * static_cast<int>(target_size);
+
+    if (old_size == 0) {
+      buf.resize(new_total, 0.f);
+      return;
+    }
+
+    thrust::device_vector<float> new_buf(new_total, 0.f);
+    int total_elems = static_cast<int>(old_size) * num_coeffs * 3;
+    int blocks = (total_elems + 255) / 256;
+    relayout_soa_sh_append_kernel<<<blocks, 256>>>(
+        thrust::raw_pointer_cast(buf.data()),
+        thrust::raw_pointer_cast(new_buf.data()),
+        static_cast<int>(old_size),
+      static_cast<int>(target_size),
+        num_coeffs);
+    CUDA_CHECK_THROW(cudaGetLastError());
+    buf = std::move(new_buf);
+  };
+
+  resize_soa_sh(m_sh0, 1);
+  resize_soa_sh(m_sh1, 3);
+  resize_soa_sh(m_sh2, 5);
+  resize_soa_sh(m_sh3, 7);
+}
+
+// ============================================================================
+// clone
+// ============================================================================
+
+/// @brief Async memcpy helper for a SoA SH buffer.
+static void copy_sh_async(
+    thrust::device_vector<float>& dst,
+    const thrust::device_vector<float>& src,
+    cudaStream_t stream) {
+  dst.resize(src.size());
+  if (src.empty()) return;
+  CUDA_CHECK_THROW(cudaMemcpyAsync(
+      thrust::raw_pointer_cast(dst.data()),
+      thrust::raw_pointer_cast(src.data()),
+      sizeof(float) * src.size(),
+      cudaMemcpyDeviceToDevice,
+      stream));
+}
+
+/// @brief Sync memcpy helper for a SoA SH buffer.
+static void copy_sh_sync(
+    thrust::device_vector<float>& dst,
+    const thrust::device_vector<float>& src) {
+  dst.resize(src.size());
+  if (src.empty()) return;
+  CUDA_CHECK_THROW(cudaMemcpy(
+      thrust::raw_pointer_cast(dst.data()),
+      thrust::raw_pointer_cast(src.data()),
+      sizeof(float) * src.size(),
+      cudaMemcpyDeviceToDevice));
 }
 
 std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {
   auto gaussians = std::make_unique<GPUGaussian3d>();
+  gaussians->m_current_sh_degree = m_current_sh_degree;
+  gaussians->m_scene_scale = m_scene_scale;
+
+  // Base fields
   gaussians->m_means.resize(m_means.size());
   gaussians->m_opacities.resize(m_opacities.size());
   gaussians->m_rotations.resize(m_rotations.size());
   gaussians->m_scales.resize(m_scales.size());
-  gaussians->m_sh_coefficient_0.resize(m_sh_coefficient_0.size());
-  gaussians->m_sh_coefficients_rest.resize(m_sh_coefficients_rest.size());
 
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_means.data()),
       thrust::raw_pointer_cast(m_means.data()),
-      sizeof(float3) * m_means.size(),
-      cudaMemcpyDeviceToDevice,
-      stream));
-
+      sizeof(float3) * m_means.size(), cudaMemcpyDeviceToDevice, stream));
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_opacities.data()),
       thrust::raw_pointer_cast(m_opacities.data()),
-      sizeof(float) * m_opacities.size(),
-      cudaMemcpyDeviceToDevice,
-      stream));
-
+      sizeof(float) * m_opacities.size(), cudaMemcpyDeviceToDevice, stream));
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_rotations.data()),
       thrust::raw_pointer_cast(m_rotations.data()),
-      sizeof(float4) * m_rotations.size(),
-      cudaMemcpyDeviceToDevice,
-      stream));
-
+      sizeof(float4) * m_rotations.size(), cudaMemcpyDeviceToDevice, stream));
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_scales.data()),
       thrust::raw_pointer_cast(m_scales.data()),
-      sizeof(float3) * m_scales.size(),
-      cudaMemcpyDeviceToDevice,
-      stream));
+      sizeof(float3) * m_scales.size(), cudaMemcpyDeviceToDevice, stream));
 
-  CUDA_CHECK_THROW(cudaMemcpyAsync(
-      thrust::raw_pointer_cast(gaussians->m_sh_coefficient_0.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0.data()),
-      sizeof(float3) * m_sh_coefficient_0.size(),
-      cudaMemcpyDeviceToDevice,
-      stream));
+  // SH buffers
+  copy_sh_async(gaussians->m_sh0, m_sh0, stream);
+  copy_sh_async(gaussians->m_sh1, m_sh1, stream);
+  copy_sh_async(gaussians->m_sh2, m_sh2, stream);
+  copy_sh_async(gaussians->m_sh3, m_sh3, stream);
 
-  CUDA_CHECK_THROW(cudaMemcpyAsync(
-      thrust::raw_pointer_cast(gaussians->m_sh_coefficients_rest.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest.data()),
-      sizeof(float3) * m_sh_coefficients_rest.size(),
-      cudaMemcpyDeviceToDevice,
-      stream));
   return gaussians;
 }
 
 std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
   auto gaussians = std::make_unique<GPUGaussian3d>();
+  gaussians->m_current_sh_degree = m_current_sh_degree;
+  gaussians->m_scene_scale = m_scene_scale;
+
+  // Base fields
   gaussians->m_means.resize(m_means.size());
   gaussians->m_opacities.resize(m_opacities.size());
   gaussians->m_rotations.resize(m_rotations.size());
   gaussians->m_scales.resize(m_scales.size());
-  gaussians->m_sh_coefficient_0.resize(m_sh_coefficient_0.size());
-  gaussians->m_sh_coefficients_rest.resize(m_sh_coefficients_rest.size());
 
   CUDA_CHECK_THROW(cudaMemcpy(
       thrust::raw_pointer_cast(gaussians->m_means.data()),
       thrust::raw_pointer_cast(m_means.data()),
-      sizeof(float3) * m_means.size(),
-      cudaMemcpyDeviceToDevice));
-
+      sizeof(float3) * m_means.size(), cudaMemcpyDeviceToDevice));
   CUDA_CHECK_THROW(cudaMemcpy(
       thrust::raw_pointer_cast(gaussians->m_opacities.data()),
       thrust::raw_pointer_cast(m_opacities.data()),
-      sizeof(float) * m_opacities.size(),
-      cudaMemcpyDeviceToDevice));
-
+      sizeof(float) * m_opacities.size(), cudaMemcpyDeviceToDevice));
   CUDA_CHECK_THROW(cudaMemcpy(
       thrust::raw_pointer_cast(gaussians->m_rotations.data()),
       thrust::raw_pointer_cast(m_rotations.data()),
-      sizeof(float4) * m_rotations.size(),
-      cudaMemcpyDeviceToDevice));
-
+      sizeof(float4) * m_rotations.size(), cudaMemcpyDeviceToDevice));
   CUDA_CHECK_THROW(cudaMemcpy(
       thrust::raw_pointer_cast(gaussians->m_scales.data()),
       thrust::raw_pointer_cast(m_scales.data()),
-      sizeof(float3) * m_scales.size(),
-      cudaMemcpyDeviceToDevice));
+      sizeof(float3) * m_scales.size(), cudaMemcpyDeviceToDevice));
 
-  CUDA_CHECK_THROW(cudaMemcpy(
-      thrust::raw_pointer_cast(gaussians->m_sh_coefficient_0.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0.data()),
-      sizeof(float3) * m_sh_coefficient_0.size(),
-      cudaMemcpyDeviceToDevice));
+  // SH buffers
+  copy_sh_sync(gaussians->m_sh0, m_sh0);
+  copy_sh_sync(gaussians->m_sh1, m_sh1);
+  copy_sh_sync(gaussians->m_sh2, m_sh2);
+  copy_sh_sync(gaussians->m_sh3, m_sh3);
 
-  CUDA_CHECK_THROW(cudaMemcpy(
-      thrust::raw_pointer_cast(gaussians->m_sh_coefficients_rest.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest.data()),
-      sizeof(float3) * m_sh_coefficients_rest.size(),
-      cudaMemcpyDeviceToDevice));
   return gaussians;
 }
 
+// ============================================================================
+// reorder
+// ============================================================================
+
 void GPUGaussian3d::reorder(uint* indices, cudaStream_t stream) {
   NVTX3_FUNC_RANGE();
-  const size_t num_gaussians = size();
-  
-  // Create temporary vectors for reordered data
-  thrust::device_vector<vec3> means(num_gaussians);
-  thrust::device_vector<float> opacities(num_gaussians);
-  thrust::device_vector<vec4> rotations(num_gaussians);
-  thrust::device_vector<vec3> scales(num_gaussians);
-  thrust::device_vector<vec3> sh_coefficient_0(num_gaussians);
-  thrust::device_vector<vec3> sh_coefficients_rest(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
+  const int N = static_cast<int>(size());
 
-  // Reorder all items using the indices
-  const int grid = (num_gaussians + 255) / 256;
-  copy_gaussian_items<uint><<<grid, 256, 0, stream>>>(
+  // Create temporary vectors for base fields
+  thrust::device_vector<vec3> means(N);
+  thrust::device_vector<float> opacities(N);
+  thrust::device_vector<vec4> rotations(N);
+  thrust::device_vector<vec3> scales(N);
+
+  const int grid = (N + 255) / 256;
+  copy_gaussian_base_items<uint><<<grid, 256, 0, stream>>>(
       thrust::raw_pointer_cast(m_means.data()),
       thrust::raw_pointer_cast(means.data()),
       thrust::raw_pointer_cast(m_opacities.data()),
@@ -293,21 +539,24 @@ void GPUGaussian3d::reorder(uint* indices, cudaStream_t stream) {
       thrust::raw_pointer_cast(rotations.data()),
       thrust::raw_pointer_cast(m_scales.data()),
       thrust::raw_pointer_cast(scales.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0.data()),
-      thrust::raw_pointer_cast(sh_coefficient_0.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest.data()),
-      thrust::raw_pointer_cast(sh_coefficients_rest.data()),
-      indices,
-      num_gaussians
-  );
+      indices, N);
 
-  // Move the reordered vectors to replace the original ones
+  // Reorder SH SoA buffers
+  thrust::device_vector<float> sh0_new, sh1_new, sh2_new, sh3_new;
+  gather_soa_sh(m_sh0, sh0_new, indices, N, N, 1, stream);
+  gather_soa_sh(m_sh1, sh1_new, indices, N, N, 3, stream);
+  gather_soa_sh(m_sh2, sh2_new, indices, N, N, 5, stream);
+  gather_soa_sh(m_sh3, sh3_new, indices, N, N, 7, stream);
+
+  // Move
   m_means = std::move(means);
   m_opacities = std::move(opacities);
   m_rotations = std::move(rotations);
   m_scales = std::move(scales);
-  m_sh_coefficient_0 = std::move(sh_coefficient_0);
-  m_sh_coefficients_rest = std::move(sh_coefficients_rest);
+  m_sh0 = std::move(sh0_new);
+  m_sh1 = std::move(sh1_new);
+  m_sh2 = std::move(sh2_new);
+  m_sh3 = std::move(sh3_new);
 }
 
 }  // namespace tinygs

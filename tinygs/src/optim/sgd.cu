@@ -4,6 +4,7 @@
 
 namespace tinygs {
 
+// Main SGD kernel for non-SH parameters (means, opacities, rotations, scales).
 __global__ void launch_gaussian_sgd_step_SoA(
   // Means
   vec3* __restrict__ means,
@@ -17,11 +18,6 @@ __global__ void launch_gaussian_sgd_step_SoA(
   // Scales
   vec3* __restrict__ scales,
   const vec3* __restrict__ scales_grad,
-  // Spherical Harmonics
-  vec3* __restrict__ sh_coefficient_0,
-  const vec3* __restrict__ sh_coefficient_0_grad,
-  vec3* __restrict__ sh_coefficients_rest,
-  const vec3* __restrict__ sh_coefficients_rest_grad,
   // other
   GaussianOptimizationParams general_p,
   uint32_t num_gaussians,
@@ -73,33 +69,35 @@ __global__ void launch_gaussian_sgd_step_SoA(
       copysign(min(abs(grad), vec3(general_p.max_grad_1)), grad) : grad;
     val -= general_p.scales_lr * global_lr * grad_clipped;
   }
+}
 
-  { // spherical harmonics - 0th coefficient
-    vec3& val = sh_coefficient_0[idx];
-    const vec3 grad = sh_coefficient_0_grad[idx] * gradient_scale;
-    const vec3 grad_clipped = general_p.max_grad_1 != 0.0f ? 
-      copysign(min(abs(grad), vec3(general_p.max_grad_1)), grad) : grad;
-    val -= general_p.shs_lr * global_lr * grad_clipped;
-  }
+// Per-element SGD step kernel for SoA SH buffers.
+// Each thread handles one float element in the SoA buffer.
+__global__ static void sgd_sh_soa_step(
+    float* __restrict__ thetas,
+    const float* __restrict__ thetas_grad,
+    int num_elements,  // total SoA floats (num_coeffs * 3 * N)
+    float lr,
+    float gradient_scale,
+    float max_grad_1
+) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    if (tid >= num_elements) return;
 
-  { // spherical harmonics - rest coefficients
-    // NOTE: They use 1/20 LR w.r.t. sh0
-    int start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
-    int end = start + (kMaxSphericalHarmonicsCoefficients - 1);
-    for (int i = start; i < end; i++) {
-      vec3& val = sh_coefficients_rest[i];
-      const vec3 grad = sh_coefficients_rest_grad[i] * gradient_scale;
-      const vec3 grad_clipped = general_p.max_grad_1 != 0.0f ? 
-        copysign(min(abs(grad), vec3(general_p.max_grad_1)), grad) : grad;
-      val -= general_p.shs_lr * 0.05f * global_lr * grad_clipped;
-    }
-  }
+    float val = thetas[tid];
+    float grad = thetas_grad[tid] * gradient_scale;
+    const float grad_clipped = max_grad_1 != 0.0f ?
+      copysignf(fminf(fabsf(grad), max_grad_1), grad) : grad;
+    val -= lr * grad_clipped;
+    thetas[tid] = val;
 }
 
 void SGD::step(float scale, cudaStream_t stream) {
   const float gradient_scale = scale;  // This is the gradient scaler, not learning rate multiplier
-  const int grid = (m_gaussians->size() + 255) / 256;
+  auto n = m_gaussians->size();
+  const int grid = (n + 255) / 256;
 
+  // Step non-SH parameters (means, opacities, rotations, scales)
   launch_gaussian_sgd_step_SoA<<<grid, 256, 0, stream>>>(
     thrust::raw_pointer_cast(m_gaussians->means().data()),
     thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
@@ -109,16 +107,56 @@ void SGD::step(float scale, cudaStream_t stream) {
     thrust::raw_pointer_cast(m_gaussians_grad->rotations().data()),
     thrust::raw_pointer_cast(m_gaussians->scales().data()),
     thrust::raw_pointer_cast(m_gaussians_grad->scales().data()),
-    thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),
-    thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficient_0().data()),
-    thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
-    thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
     m_params,
     m_gaussians->size(),
     gradient_scale,
     m_global_lr
   );
   maybe_sync(stream);
+
+  // SH0 - degree 0 (1 coeff, 3*N elements), lr = shs_lr
+  {
+    int num_elements = 3 * n;
+    int grid_sh = (num_elements + 255) / 256;
+    sgd_sh_soa_step<<<grid_sh, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh0().data()),
+      num_elements, m_params.shs_lr * m_global_lr, gradient_scale, m_params.max_grad_1);
+    maybe_sync(stream);
+  }
+
+  // SH1 - degree 1 (3 coeffs, 9*N elements), lr = shs_lr * 0.05
+  {
+    int num_elements = 9 * n;
+    int grid_sh = (num_elements + 255) / 256;
+    sgd_sh_soa_step<<<grid_sh, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh1().data()),
+      num_elements, m_params.shs_lr * 0.05f * m_global_lr, gradient_scale, m_params.max_grad_1);
+    maybe_sync(stream);
+  }
+
+  // SH2 - degree 2 (5 coeffs, 15*N elements), lr = shs_lr * 0.05
+  {
+    int num_elements = 15 * n;
+    int grid_sh = (num_elements + 255) / 256;
+    sgd_sh_soa_step<<<grid_sh, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh2().data()),
+      num_elements, m_params.shs_lr * 0.05f * m_global_lr, gradient_scale, m_params.max_grad_1);
+    maybe_sync(stream);
+  }
+
+  // SH3 - degree 3 (7 coeffs, 21*N elements), lr = shs_lr * 0.05
+  {
+    int num_elements = 21 * n;
+    int grid_sh = (num_elements + 255) / 256;
+    sgd_sh_soa_step<<<grid_sh, 256, 0, stream>>>(
+      thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh3().data()),
+      num_elements, m_params.shs_lr * 0.05f * m_global_lr, gradient_scale, m_params.max_grad_1);
+    maybe_sync(stream);
+  }
 }
 
 SGD::SGD(std::shared_ptr<GPUGaussian3d> gaussians,

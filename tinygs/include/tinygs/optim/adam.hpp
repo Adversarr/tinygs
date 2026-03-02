@@ -74,16 +74,22 @@ private:
   thrust::device_vector<float> m_opacities_first;
   thrust::device_vector<vec4> m_rotations_first;
   thrust::device_vector<vec3> m_scales_first;
-  thrust::device_vector<vec3> m_sh_coefficient_0_first;
-  thrust::device_vector<vec3> m_sh_coefficients_rest_first;
+  /// Per-degree SH first moments (flat float SoA, same layout as GPUGaussian3d SH buffers).
+  thrust::device_vector<float> m_sh0_first;   ///< size = 3 * N
+  thrust::device_vector<float> m_sh1_first;   ///< size = 9 * N
+  thrust::device_vector<float> m_sh2_first;   ///< size = 15 * N
+  thrust::device_vector<float> m_sh3_first;   ///< size = 21 * N
 
   /// Second moment estimates for each parameter type
   thrust::device_vector<vec3> m_means_second;
   thrust::device_vector<float> m_opacities_second;
   thrust::device_vector<vec4> m_rotations_second;
   thrust::device_vector<vec3> m_scales_second;
-  thrust::device_vector<vec3> m_sh_coefficient_0_second;
-  thrust::device_vector<vec3> m_sh_coefficients_rest_second;
+  /// Per-degree SH second moments (flat float SoA, same layout as GPUGaussian3d SH buffers).
+  thrust::device_vector<float> m_sh0_second;  ///< size = 3 * N
+  thrust::device_vector<float> m_sh1_second;  ///< size = 9 * N
+  thrust::device_vector<float> m_sh2_second;  ///< size = 15 * N
+  thrust::device_vector<float> m_sh3_second;  ///< size = 21 * N
 };
 
 }  // namespace tinygs

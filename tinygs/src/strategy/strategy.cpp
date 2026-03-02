@@ -1,5 +1,7 @@
 #include "tinygs/strategy/strategy.hpp"
+#include "tinygs/strategy/absgs.hpp"
 #include "tinygs/strategy/default.hpp"
+#include "tinygs/strategy/fastgs.hpp"
 #include "tinygs/strategy/mcmc.hpp"
 #include "tinygs/strategy/improved.hpp"
 #include <algorithm>
@@ -148,6 +150,10 @@ std::unique_ptr<StrategyBase> create_strategy(const std::string& strategy_type,
     return std::make_unique<MCMCStrategy>(gaussians, gaussians_grad, optimizer);
   } else if (lower_strategy_type == "improved") {
     return std::make_unique<ImprovedStrategy>(gaussians, gaussians_grad, optimizer);
+  } else if (lower_strategy_type == "absgs") {
+    return std::make_unique<AbsGSStrategy>(gaussians, gaussians_grad, optimizer);
+  } else if (lower_strategy_type == "fastgs") {
+    return std::make_unique<FastGSStrategy>(gaussians, gaussians_grad, optimizer);
   } else {
     throw std::runtime_error("Unknown strategy type: " + strategy_type);
   }

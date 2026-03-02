@@ -23,6 +23,33 @@
 #include <cub/device/device_radix_sort.cuh>
 namespace tinygs {
 
+static inline void debug_cuda_stage_check(const OrchestratorConfig& cfg,
+                                          size_t step,
+                                          cudaStream_t stream,
+                                          const char* stage_name) {
+  if (!cfg.debug_cuda_check_each_stage && !cfg.debug_cuda_sync_each_stage) {
+    return;
+  }
+  if (cfg.debug_cuda_check_every == 0 || (step % cfg.debug_cuda_check_every) != 0) {
+    return;
+  }
+
+  if (cfg.debug_cuda_log_each_stage) {
+    log_info("[CUDA-DBG] step={} stage={}", step, stage_name);
+  }
+
+  if (cfg.debug_cuda_sync_each_stage) {
+    // Device-wide sync intentionally used for debug mode so failures on auxiliary
+    // streams (e.g., async dataloader stream) are surfaced at the nearest stage.
+    CUDA_CHECK_THROW(cudaDeviceSynchronize());
+  } else {
+    CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  }
+  if (cfg.debug_cuda_check_each_stage) {
+    CUDA_CHECK_THROW(cudaPeekAtLastError());
+  }
+}
+
 static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaStream_t stream) {
   thrust::device_vector<uint> idx_in(n), idx_out(n);
   thrust::device_vector<uint> enc_in(n), enc_out(n);
@@ -128,6 +155,10 @@ json OrchestratorConfig::to_json() const {
   j["reorder_gaussians_interval"] = reorder_gaussians_interval;
   j["train_data_type"] = to_string(train_data_type);
   j["eval_data_type"] = to_string(eval_data_type);
+  j["debug_cuda_check_each_stage"] = debug_cuda_check_each_stage;
+  j["debug_cuda_sync_each_stage"] = debug_cuda_sync_each_stage;
+  j["debug_cuda_check_every"] = debug_cuda_check_every;
+  j["debug_cuda_log_each_stage"] = debug_cuda_log_each_stage;
   return j;
 }
 
@@ -192,6 +223,10 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("reorder_gaussians_interval")) reorder_gaussians_interval = j["reorder_gaussians_interval"].get<size_t>();
   if (j.contains("train_data_type")) train_data_type = from_string<DataType>(j["train_data_type"].get<std::string>());
   if (j.contains("eval_data_type")) eval_data_type = from_string<DataType>(j["eval_data_type"].get<std::string>());
+  if (j.contains("debug_cuda_check_each_stage")) debug_cuda_check_each_stage = j["debug_cuda_check_each_stage"].get<bool>();
+  if (j.contains("debug_cuda_sync_each_stage")) debug_cuda_sync_each_stage = j["debug_cuda_sync_each_stage"].get<bool>();
+  if (j.contains("debug_cuda_check_every")) debug_cuda_check_every = j["debug_cuda_check_every"].get<size_t>();
+  if (j.contains("debug_cuda_log_each_stage")) debug_cuda_log_each_stage = j["debug_cuda_log_each_stage"].get<bool>();
 }
 
 void mean(const vec3* data, size_t size, vec3& out) {
@@ -240,10 +275,12 @@ void Orchestrator::set_rasterizer(std::shared_ptr<RasterizerBase> rasterizer) {
   if (m_gaussians) {
     m_rasterizer->set_gaussians(m_gaussians);
   }
+  if (m_strategy) m_strategy->set_rasterizer(m_rasterizer);
 }
 
 void Orchestrator::set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) {
   m_dataloader = dataloader;
+  if (m_strategy) m_strategy->set_dataloader(m_dataloader);
 }
 
 void Orchestrator::set_test_dataloader(std::shared_ptr<DataLoaderBase> dataloader) {
@@ -264,6 +301,12 @@ void Orchestrator::set_pose_opt(std::shared_ptr<PoseOptBase> pose_opt) {
 
 void Orchestrator::set_strategy(std::shared_ptr<StrategyBase> strategy) {
   m_strategy = strategy;
+  // Wire rasterizer and dataloader so strategies like FastGS can render
+  // additional views for multi-view metric scoring.
+  if (m_strategy) {
+    if (m_rasterizer) m_strategy->set_rasterizer(m_rasterizer);
+    if (m_dataloader) m_strategy->set_dataloader(m_dataloader);
+  }
 }
 
 void Orchestrator::add_loss(std::shared_ptr<LossBase> loss, float weight) {
@@ -347,9 +390,11 @@ void Orchestrator::train_step() {
   }
   m_loss_buffer->memset(0);
   m_image_grad_buffer->memset(0);
+  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "clear-buffers");
 
   // Get next batch of data
   auto data = m_dataloader->next();
+  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "dataloader-next");
 
   // Update rasterization context with current data
   m_rasterize_ctx.fwd_input = data.input;
@@ -360,18 +405,22 @@ void Orchestrator::train_step() {
     w2c = m_pose_opt->query(timestamp, w2c);
     m_rasterize_ctx.fwd_input.w2c = w2c;
   }
+  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "prepare-input");
 
   // Forward pass
   m_rasterizer->forward(m_rasterize_ctx);
+  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "rasterizer-forward");
 
   // Evaluate losses and accumulate gradients
   evaluate_losses(data);
+  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "evaluate-losses");
 
   // Setup gradient output for backward pass
   m_rasterize_ctx.grad_output.image = m_loss_ctx.grad;
 
   // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
+  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "rasterizer-backward");
   auto grad_w2c = m_rasterize_ctx.grad_input.w2c;
   if (m_pose_opt && m_state.current_step >= m_config.start_pose_opt) {
     float lr = 1.0f;
@@ -379,6 +428,7 @@ void Orchestrator::train_step() {
       lr = m_lr_scheduler->get_lr();
     }
     m_pose_opt->update(m_rasterize_ctx.fwd_input.timestamp, grad_w2c, lr);
+    debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "pose-update");
   }
   
   // Determine if this step is the end of the accumulation cycle using current_step
@@ -395,6 +445,7 @@ void Orchestrator::train_step() {
     const float inv_grad_scale = 1.0f / m_config.grad_scaler;
     const float avg_scale = inv_grad_scale / static_cast<float>(m_config.accumulate_grad_steps);
     m_optimizer->step(avg_scale, m_major_stream);
+    debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "optimizer-step");
 
     // Optimizer step occurred; callbacks and checkpoints are gated above
   }
@@ -402,21 +453,25 @@ void Orchestrator::train_step() {
   // Strategy step (densification) — only after a full accumulation cycle completes
   if (is_cycle_end && m_strategy) {
     m_strategy->step(m_rasterize_ctx);
+    debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "strategy-step");
   }
 
   if (m_state.current_step > 0) {
     if (m_config.scene_scale_recompute_interval > 0 &&
         m_state.current_step % m_config.scene_scale_recompute_interval == 0) {
       recompute_scene_scale();
+      debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "recompute-scene-scale");
     }
     if (m_config.reorder_gaussians_interval > 0 &&
         m_state.current_step % m_config.reorder_gaussians_interval == 0) {
       reorder_gaussians();
+      debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "reorder-gaussians");
     }
   }
 
   // Update spherical harmonics degree
   update_sh_degree();
+  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "update-sh-degree");
 
   // Post-step callback (for logging, visualization, etc.)
   if (m_post_step_callback) {

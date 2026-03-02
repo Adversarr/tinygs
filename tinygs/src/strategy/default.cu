@@ -236,6 +236,8 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
                            (float)0.0, (float)1.0);
 
   // Do the duplicate and split.
+  // After on_duplicate, SH buffers are in SoA layout with stride N_new = num_gaussians + num_grows.
+  const int n_new = static_cast<int>(m_gaussians->size());
   thrust::for_each(exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_grows),
@@ -244,8 +246,11 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
      scales3d = thrust::raw_pointer_cast(m_gaussians->scales().data()),
      opacities = thrust::raw_pointer_cast(m_gaussians->opacities().data()),
      rotations = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
-     sh0 = thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),
-     sh_rest = thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
+     sh0_data = thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+     sh1_data = thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+     sh2_data = thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+     sh3_data = thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+     n_new,
      device_scales = thrust::raw_pointer_cast(device_scales.data())
      ] __device__(int i) {
       int src_idx = d_grow_indices_src[i];
@@ -253,9 +258,18 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
       if (d_grow_flags[src_idx] == 0) return;
 
       rotations[target_idx] = rotations[src_idx];
-      sh0[target_idx] = sh0[src_idx];
-      for (int c = 0; c < 15; c++) {
-        sh_rest[target_idx * 15 + c] = sh_rest[src_idx * 15 + c];
+      // Copy SH data per-degree in SoA layout: for each channel, copy src→target at stride n_new
+      for (int ch = 0; ch < 1 * 3; ch++) {  // sh0: 1 coeff * 3 channels
+        sh0_data[ch * n_new + target_idx] = sh0_data[ch * n_new + src_idx];
+      }
+      for (int ch = 0; ch < 3 * 3; ch++) {  // sh1: 3 coeffs * 3 channels
+        sh1_data[ch * n_new + target_idx] = sh1_data[ch * n_new + src_idx];
+      }
+      for (int ch = 0; ch < 5 * 3; ch++) {  // sh2: 5 coeffs * 3 channels
+        sh2_data[ch * n_new + target_idx] = sh2_data[ch * n_new + src_idx];
+      }
+      for (int ch = 0; ch < 7 * 3; ch++) {  // sh3: 7 coeffs * 3 channels
+        sh3_data[ch * n_new + target_idx] = sh3_data[ch * n_new + src_idx];
       }
       if (d_grow_flags[src_idx] == kDuplicate) {
         // keep everything same as src gs

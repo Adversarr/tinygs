@@ -7,9 +7,11 @@
 #include "tinygs/optim/adam.hpp"
 #include <cooperative_groups.h>
 #include <cooperative_groups/memcpy_async.h>
+#include <thrust/sequence.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/functional.h>
 #include <cstdio>
+#include <cstdlib>
 
 #include "../helper_math.h"
 
@@ -344,6 +346,112 @@ __global__ static void adamw(
   thetas_second[idx] = v;
 }
 
+template <typename DecayFunc = NoDecay>
+static inline void launch_adam_mixed(
+    float* theta,
+    const float* theta_grad,
+    float* theta_first,
+    float* theta_second,
+    const AdamParameters& adam_p,
+    float lr,
+    uint32_t num_elements,
+    float gradient_scale,
+    float bias_correction1,
+    float bias_correction2_sqrt,
+    float max_grad_1,
+    cudaStream_t stream,
+    DecayFunc decay = DecayFunc()) {
+  if (num_elements == 0) return;
+
+  const uint32_t vec4_elems = num_elements / 4;
+  const uint32_t vec4_span = vec4_elems * 4;
+  if (vec4_elems > 0) {
+    adam_f32x4<<<div_round_up<uint>(vec4_elems, block_size), block_size, 0, stream>>>(
+        reinterpret_cast<float4*>(theta),
+        reinterpret_cast<const float4*>(theta_grad),
+        reinterpret_cast<float4*>(theta_first),
+        reinterpret_cast<float4*>(theta_second),
+        adam_p,
+        lr,
+        vec4_span,
+        gradient_scale,
+        bias_correction1,
+        bias_correction2_sqrt,
+        max_grad_1,
+        decay);
+  }
+
+  const uint32_t remain = num_elements - vec4_span;
+  if (remain > 0) {
+    adam<<<div_round_up<uint>(remain, block_size), block_size, 0, stream>>>(
+        theta + vec4_span,
+        theta_grad + vec4_span,
+        theta_first + vec4_span,
+        theta_second + vec4_span,
+        adam_p,
+        lr,
+        remain,
+        gradient_scale,
+        bias_correction1,
+        bias_correction2_sqrt,
+        max_grad_1,
+        decay);
+  }
+}
+
+template <typename DecayFunc = NoDecay>
+static inline void launch_adamw_mixed(
+    float* theta,
+    const float* theta_grad,
+    float* theta_first,
+    float* theta_second,
+    const AdamParameters& adam_p,
+    float lr,
+    uint32_t num_elements,
+    float gradient_scale,
+    float bias_correction1,
+    float bias_correction2_sqrt,
+    float max_grad_1,
+    cudaStream_t stream,
+    DecayFunc decay = DecayFunc()) {
+  if (num_elements == 0) return;
+
+  const uint32_t vec4_elems = num_elements / 4;
+  const uint32_t vec4_span = vec4_elems * 4;
+  if (vec4_elems > 0) {
+    adamw_f32x4<<<div_round_up<uint>(vec4_elems, block_size), block_size, 0, stream>>>(
+        reinterpret_cast<float4*>(theta),
+        reinterpret_cast<const float4*>(theta_grad),
+        reinterpret_cast<float4*>(theta_first),
+        reinterpret_cast<float4*>(theta_second),
+        adam_p,
+        lr,
+        vec4_span,
+        gradient_scale,
+        bias_correction1,
+        bias_correction2_sqrt,
+        max_grad_1,
+        decay);
+  }
+
+  const uint32_t remain = num_elements - vec4_span;
+  if (remain > 0) {
+    adamw<<<div_round_up<uint>(remain, block_size), block_size, 0, stream>>>(
+        theta + vec4_span,
+        theta_grad + vec4_span,
+        theta_first + vec4_span,
+        theta_second + vec4_span,
+        adam_p,
+        lr,
+        remain,
+        gradient_scale,
+        bias_correction1,
+        bias_correction2_sqrt,
+        max_grad_1,
+        decay);
+  }
+}
+
 struct Adam_domain {
   static constexpr char const *name{"optim"};
 };
@@ -359,6 +467,21 @@ namespace {
 // Configurable (via JSON) logging intervals
 int g_momentum_log_interval = 1000;
 int g_gradient_log_interval = 100;
+
+bool optimizer_kernel_debug_enabled() {
+  static int enabled = []() {
+    const char* v = std::getenv("TINYGS_DEBUG_OPTIMIZER_KERNELS");
+    return (v && (std::string(v) == "1" || std::string(v) == "true" || std::string(v) == "TRUE")) ? 1 : 0;
+  }();
+  return enabled != 0;
+}
+
+inline void debug_optimizer_kernel(cudaStream_t stream, uint64_t step, const char* name) {
+  if (!optimizer_kernel_debug_enabled()) return;
+  CUDA_CHECK_THROW(cudaPeekAtLastError());
+  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  log_info("[Adam-DBG] step={} kernel={}", step, name);
+}
 
 // Functors for L1 accumulation
 struct Vec3AbsSum {
@@ -420,8 +543,8 @@ void Adam::step(float scale, cudaStream_t stream) {
       m_opacities_l1 = l1_vec(m_opacities_first, FloatAbs{});
       m_rot_l1       = l1_vec(m_rotations_first, Vec4AbsSum{});
       m_scales_l1    = l1_vec(m_scales_first, Vec3AbsSum{});
-      m_sh0_l1       = l1_vec(m_sh_coefficient_0_first, Vec3AbsSum{});
-      m_shrest_l1    = l1_vec(m_sh_coefficients_rest_first, Vec3AbsSum{});
+      m_sh0_l1       = l1_vec(m_sh0_first, FloatAbs{});
+      m_shrest_l1    = 0.f; // TODO: aggregate per-degree SH logging
     }
 
     // Gradient L1
@@ -431,8 +554,8 @@ void Adam::step(float scale, cudaStream_t stream) {
       g_opacities_l1 = l1_vec(m_gaussians_grad->opacities(), FloatAbs{});
       g_rot_l1       = l1_vec(m_gaussians_grad->rotations(), Vec4AbsSum{});
       g_scales_l1    = l1_vec(m_gaussians_grad->scales(), Vec3AbsSum{});
-      g_sh0_l1       = l1_vec(m_gaussians_grad->sh_coefficient_0(), Vec3AbsSum{});
-      g_shrest_l1    = l1_vec(m_gaussians_grad->sh_coefficients_rest(), Vec3AbsSum{});
+      g_sh0_l1       = l1_vec(m_gaussians_grad->sh0(), FloatAbs{});
+      g_shrest_l1    = 0.f; // TODO: aggregate per-degree SH logging
     }
 
     // Ensure reductions complete before host printf
@@ -484,19 +607,20 @@ void Adam::step_adam(float scale, cudaStream_t stream) {
     auto msg = regstr::get<m_step>();
     nvtx3::event_attributes attr(msg, nvtx3::payload{n});
     range range(attr);
-    adam_f32x4<<<div_round_up<uint>((n * 3 + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->means().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
-      (float4*) thrust::raw_pointer_cast(m_means_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_means_second.data()),
+    launch_adam_mixed(
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians_grad->means().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_means_first.data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_means_second.data())),
       m_adam_params,
       m_params.means_lr * scene_scale * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1
-    );
+      m_params.max_grad_1,
+      stream);
+    debug_optimizer_kernel(stream, m_global_steps, "means");
 
     // Opacities
     adam<<<div_round_up<uint>(n, block_size), block_size, 0, stream>>>(
@@ -513,28 +637,30 @@ void Adam::step_adam(float scale, cudaStream_t stream) {
       m_params.max_grad_1,
       OpacityDecay(m_params.opacities_l1 * g_scale)
     );
+    debug_optimizer_kernel(stream, m_global_steps, "opacities");
 
     // Rotations
-    adam_f32x4<<<div_round_up<uint>((n * 4 + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->rotations().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->rotations().data()),
-      (float4*) thrust::raw_pointer_cast(m_rotations_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_rotations_second.data()),
+    launch_adam_mixed(
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians_grad->rotations().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_rotations_first.data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_rotations_second.data())),
       m_adam_params,
       m_params.rotations_lr * m_global_lr,
       n * 4,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1
-    );
+      m_params.max_grad_1,
+      stream);
+    debug_optimizer_kernel(stream, m_global_steps, "rotations");
 
     // Scales
-    adam_f32x4<<<div_round_up<uint>((n * 3 + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->scales().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->scales().data()),
-      (float4*) thrust::raw_pointer_cast(m_scales_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_scales_second.data()),
+    launch_adam_mixed(
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians_grad->scales().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_scales_first.data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_scales_second.data())),
       m_adam_params,
       m_params.scales_lr * m_global_lr,
       n * 3,
@@ -542,39 +668,73 @@ void Adam::step_adam(float scale, cudaStream_t stream) {
       bias_correction1,
       bias_correction2_sqrt,
       m_params.max_grad_1,
-      ScaleDecay(m_params.scales_l1 * g_scale)
-    );
+      stream,
+      ScaleDecay(m_params.scales_l1 * g_scale));
+    debug_optimizer_kernel(stream, m_global_steps, "scales");
 
-    // SH Coefficient 0
-    adam_f32x4<<<div_round_up<uint>((n * 3 + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficient_0().data()),
-      (float4*) thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
+    // SH degree 0 (1 coefficient, 3*N floats)
+    launch_adam_mixed(
+      thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh0().data()),
+      thrust::raw_pointer_cast(m_sh0_first.data()),
+      thrust::raw_pointer_cast(m_sh0_second.data()),
       m_adam_params,
       m_params.shs_lr * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1
-    );
+      m_params.max_grad_1,
+      stream);
+    debug_optimizer_kernel(stream, m_global_steps, "sh0");
 
-    // SH Coefficients Rest
-    const int sh_rest_size = n * (kMaxSphericalHarmonicsCoefficients - 1) * 3;
-    adam_f32x4<<<div_round_up<uint>((sh_rest_size + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
-      (float4*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
+    // SH degree 1 (3 coefficients, 9*N floats)
+    launch_adam_mixed(
+      thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh1().data()),
+      thrust::raw_pointer_cast(m_sh1_first.data()),
+      thrust::raw_pointer_cast(m_sh1_second.data()),
       m_adam_params,
       m_params.shs_lr * kShRestScale * m_global_lr,
-      sh_rest_size,
+      n * 9,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1
-    );
+      m_params.max_grad_1,
+      stream);
+    debug_optimizer_kernel(stream, m_global_steps, "sh1");
+
+    // SH degree 2 (5 coefficients, 15*N floats)
+    launch_adam_mixed(
+      thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh2().data()),
+      thrust::raw_pointer_cast(m_sh2_first.data()),
+      thrust::raw_pointer_cast(m_sh2_second.data()),
+      m_adam_params,
+      m_params.shs_lr * kShRestScale * m_global_lr,
+      n * 15,
+      gradient_scale,
+      bias_correction1,
+      bias_correction2_sqrt,
+      m_params.max_grad_1,
+      stream);
+    debug_optimizer_kernel(stream, m_global_steps, "sh2");
+
+    // SH degree 3 (7 coefficients, 21*N floats)
+    launch_adam_mixed(
+      thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh3().data()),
+      thrust::raw_pointer_cast(m_sh3_first.data()),
+      thrust::raw_pointer_cast(m_sh3_second.data()),
+      m_adam_params,
+      m_params.shs_lr * kShRestScale * m_global_lr,
+      n * 21,
+      gradient_scale,
+      bias_correction1,
+      bias_correction2_sqrt,
+      m_params.max_grad_1,
+      stream);
+    debug_optimizer_kernel(stream, m_global_steps, "sh3");
     maybe_sync(stream);
   }
 }
@@ -611,19 +771,19 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
     auto msg = regstr::get<m_step>();
     nvtx3::event_attributes attr(msg, nvtx3::payload{n});
     range range(attr);
-    adamw_f32x4<<<div_round_up<uint>((n * 3 + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->means().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->means().data()),
-      (float4*) thrust::raw_pointer_cast(m_means_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_means_second.data()),
+    launch_adamw_mixed(
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians_grad->means().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_means_first.data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_means_second.data())),
       m_adam_params,
       m_params.means_lr * scene_scale * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1
-    );
+      m_params.max_grad_1,
+      stream);
 
     // Opacities
     adamw<<<div_round_up<uint>(n, block_size), block_size, 0, stream>>>(
@@ -642,26 +802,26 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
     );
 
     // Rotations
-    adamw_f32x4<<<div_round_up<uint>((n * 4 + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->rotations().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->rotations().data()),
-      (float4*) thrust::raw_pointer_cast(m_rotations_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_rotations_second.data()),
+    launch_adamw_mixed(
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians_grad->rotations().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_rotations_first.data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_rotations_second.data())),
       m_adam_params,
       m_params.rotations_lr * m_global_lr,
       n * 4,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1
-    );
+      m_params.max_grad_1,
+      stream);
 
     // Scales
-    adamw_f32x4<<<div_round_up<uint>((n * 3 + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->scales().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->scales().data()),
-      (float4*) thrust::raw_pointer_cast(m_scales_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_scales_second.data()),
+    launch_adamw_mixed(
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians_grad->scales().data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_scales_first.data())),
+      reinterpret_cast<float*>(thrust::raw_pointer_cast(m_scales_second.data())),
       m_adam_params,
       m_params.scales_lr * m_global_lr,
       n * 3,
@@ -669,39 +829,68 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       bias_correction1,
       bias_correction2_sqrt,
       m_params.max_grad_1,
-      ScaleDecay(m_params.scales_l1 * g_scale)
-    );
+      stream,
+      ScaleDecay(m_params.scales_l1 * g_scale));
 
-    // SH Coefficient 0
-    adamw_f32x4<<<div_round_up<uint>((n * 3 + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->sh_coefficient_0().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficient_0().data()),
-      (float4*) thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
+    // SH degree 0 (1 coefficient, 3*N floats)
+    launch_adamw_mixed(
+      thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh0().data()),
+      thrust::raw_pointer_cast(m_sh0_first.data()),
+      thrust::raw_pointer_cast(m_sh0_second.data()),
       m_adam_params,
       m_params.shs_lr * m_global_lr,
       n * 3,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1
-    );
+      m_params.max_grad_1,
+      stream);
 
-    // SH Coefficients Rest
-    const int sh_rest_size = n * (kMaxSphericalHarmonicsCoefficients - 1) * 3;
-    adamw_f32x4<<<div_round_up<uint>((sh_rest_size + 3) / 4, block_size), block_size, 0, stream>>>(
-      (float4*) thrust::raw_pointer_cast(m_gaussians->sh_coefficients_rest().data()),
-      (float4*) thrust::raw_pointer_cast(m_gaussians_grad->sh_coefficients_rest().data()),
-      (float4*) thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
-      (float4*) thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
+    // SH degree 1 (3 coefficients, 9*N floats)
+    launch_adamw_mixed(
+      thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh1().data()),
+      thrust::raw_pointer_cast(m_sh1_first.data()),
+      thrust::raw_pointer_cast(m_sh1_second.data()),
       m_adam_params,
       m_params.shs_lr * kShRestScale * m_global_lr,
-      sh_rest_size,
+      n * 9,
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1
-    );
+      m_params.max_grad_1,
+      stream);
+
+    // SH degree 2 (5 coefficients, 15*N floats)
+    launch_adamw_mixed(
+      thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh2().data()),
+      thrust::raw_pointer_cast(m_sh2_first.data()),
+      thrust::raw_pointer_cast(m_sh2_second.data()),
+      m_adam_params,
+      m_params.shs_lr * kShRestScale * m_global_lr,
+      n * 15,
+      gradient_scale,
+      bias_correction1,
+      bias_correction2_sqrt,
+      m_params.max_grad_1,
+      stream);
+
+    // SH degree 3 (7 coefficients, 21*N floats)
+    launch_adamw_mixed(
+      thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+      thrust::raw_pointer_cast(m_gaussians_grad->sh3().data()),
+      thrust::raw_pointer_cast(m_sh3_first.data()),
+      thrust::raw_pointer_cast(m_sh3_second.data()),
+      m_adam_params,
+      m_params.shs_lr * kShRestScale * m_global_lr,
+      n * 21,
+      gradient_scale,
+      bias_correction1,
+      bias_correction2_sqrt,
+      m_params.max_grad_1,
+      stream);
     maybe_sync(stream);
   }
 }
@@ -713,7 +902,77 @@ Adam::Adam(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian
   Adam::reset();
 }
 
-__global__ void copy_optimizer_state(
+// SoA float gather for optimizer momentum buffers.
+// Copies: dst[ch * num_items + item_idx] = src[ch * src_stride + mapping[item_idx]]
+// for all items and channels.
+__global__ static void gather_soa_optim(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    const uint* __restrict__ mapping,
+    int num_items,
+    int num_channels,
+    int src_stride
+) {
+  int tid = blockIdx.x * blockDim.x + threadIdx.x;
+  if (tid >= num_items * num_channels) return;
+  int item_idx = tid % num_items;
+  int channel = tid / num_items;
+  dst[channel * num_items + item_idx] = src[channel * src_stride + mapping[item_idx]];
+}
+
+// Host helper: gather SoA optimizer momentum buffers (first and second moments) for one SH degree.
+static void gather_soa_optim_buffers(
+    const thrust::device_vector<float>& src_first,
+    const thrust::device_vector<float>& src_second,
+    thrust::device_vector<float>& dst_first,
+    thrust::device_vector<float>& dst_second,
+    const uint* mapping,
+    int num_items,
+    int num_channels,
+    int src_stride
+) {
+  int total = num_items * num_channels;
+  dst_first.resize(total, 0.f);
+  dst_second.resize(total, 0.f);
+  if (total == 0) return;
+  const int grid = (total + block_size - 1) / block_size;
+  gather_soa_optim<<<grid, block_size>>>(
+      thrust::raw_pointer_cast(src_first.data()),
+      thrust::raw_pointer_cast(dst_first.data()),
+      mapping, num_items, num_channels, src_stride);
+  gather_soa_optim<<<grid, block_size>>>(
+      thrust::raw_pointer_cast(src_second.data()),
+      thrust::raw_pointer_cast(dst_second.data()),
+      mapping, num_items, num_channels, src_stride);
+}
+
+// Host helper: re-layout a SoA optimizer momentum buffer when the Gaussian count changes.
+// Preserves the first old_n items per channel, zero-fills the rest.
+static void relayout_soa_optim(
+    thrust::device_vector<float>& buf,
+    int old_n,
+    int new_n,
+    int num_channels
+) {
+  if (old_n == 0 || new_n == 0) {
+    buf.assign(new_n * num_channels, 0.f);
+    return;
+  }
+  thrust::device_vector<uint> identity(old_n);
+  thrust::sequence(identity.begin(), identity.end());
+  thrust::device_vector<float> new_buf(new_n * num_channels, 0.f);
+  int total = old_n * num_channels;
+  const int grid = (total + block_size - 1) / block_size;
+  gather_soa_optim<<<grid, block_size>>>(
+      thrust::raw_pointer_cast(buf.data()),
+      thrust::raw_pointer_cast(new_buf.data()),
+      thrust::raw_pointer_cast(identity.data()),
+      old_n, num_channels, old_n);
+  buf = std::move(new_buf);
+}
+
+// Gather non-SH optimizer state (means, opacities, rotations, scales) using a mapping.
+__global__ void copy_optimizer_base_state(
   const vec3 * __restrict__ src_means_first,
   const vec3 * __restrict__ src_means_second,
   vec3 * __restrict__ dst_means_first,
@@ -730,14 +989,6 @@ __global__ void copy_optimizer_state(
   const vec3 * __restrict__ src_scales_second,
   vec3 * __restrict__ dst_scales_first,
   vec3 * __restrict__ dst_scales_second,
-  const vec3 * __restrict__ src_sh_coefficient_0_first,
-  const vec3 * __restrict__ src_sh_coefficient_0_second,
-  vec3 * __restrict__ dst_sh_coefficient_0_first,
-  vec3 * __restrict__ dst_sh_coefficient_0_second,
-  const vec3 * __restrict__ src_sh_coefficients_rest_first,
-  const vec3 * __restrict__ src_sh_coefficients_rest_second,
-  vec3 * __restrict__ dst_sh_coefficients_rest_first,
-  vec3 * __restrict__ dst_sh_coefficients_rest_second,
   const uint * __restrict__ mapping,
   int num_items
 ) {
@@ -761,93 +1012,19 @@ __global__ void copy_optimizer_state(
   // Copy first/second moments for scales
   dst_scales_first[idx] = src_scales_first[src_idx];
   dst_scales_second[idx] = src_scales_second[src_idx];
-
-  // Copy first/second moments for SH coefficient 0
-  dst_sh_coefficient_0_first[idx] = src_sh_coefficient_0_first[src_idx];
-  dst_sh_coefficient_0_second[idx] = src_sh_coefficient_0_second[src_idx];
-
-  // Copy first/second moments for rest SH coefficients
-  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1);
-  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
-  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-    dst_sh_coefficients_rest_first[dst_rest_start + i] = src_sh_coefficients_rest_first[src_rest_start + i];
-    dst_sh_coefficients_rest_second[dst_rest_start + i] = src_sh_coefficients_rest_second[src_rest_start + i];
-  }
-}
-
-// Legacy kernel for backward compatibility
-__global__ void copy_items(
-  const vec3 * __restrict__ src_means_first,
-  const vec3 * __restrict__ src_means_second,
-  vec3 * __restrict__ dst_means_first,
-  vec3 * __restrict__ dst_means_second,
-  const float * __restrict__ src_opacities_first,
-  const float * __restrict__ src_opacities_second,
-  float * __restrict__ dst_opacities_first,
-  float * __restrict__ dst_opacities_second,
-  const vec4 * __restrict__ src_rotations_first,
-  const vec4 * __restrict__ src_rotations_second,
-  vec4 * __restrict__ dst_rotations_first,
-  vec4 * __restrict__ dst_rotations_second,
-  const vec3 * __restrict__ src_scales_first,
-  const vec3 * __restrict__ src_scales_second,
-  vec3 * __restrict__ dst_scales_first,
-  vec3 * __restrict__ dst_scales_second,
-  const vec3 * __restrict__ src_sh_coefficient_0_first,
-  const vec3 * __restrict__ src_sh_coefficient_0_second,
-  vec3 * __restrict__ dst_sh_coefficient_0_first,
-  vec3 * __restrict__ dst_sh_coefficient_0_second,
-  const vec3 * __restrict__ src_sh_coefficients_rest_first,
-  const vec3 * __restrict__ src_sh_coefficients_rest_second,
-  vec3 * __restrict__ dst_sh_coefficients_rest_first,
-  vec3 * __restrict__ dst_sh_coefficients_rest_second,
-  const int * __restrict__ mapping,
-  int num_kept
-) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= num_kept) return;
-
-  int src_idx = mapping[idx];
-
-  // Copy first/second moments for means
-  dst_means_first[idx] = src_means_first[src_idx];
-  dst_means_second[idx] = src_means_second[src_idx];
-
-  // Copy first/second moments for opacities
-  dst_opacities_first[idx] = src_opacities_first[src_idx];
-  dst_opacities_second[idx] = src_opacities_second[src_idx];
-
-  // Copy first/second moments for rotations
-  dst_rotations_first[idx] = src_rotations_first[src_idx];
-  dst_rotations_second[idx] = src_rotations_second[src_idx];
-
-  // Copy first/second moments for scales
-  dst_scales_first[idx] = src_scales_first[src_idx];
-  dst_scales_second[idx] = src_scales_second[src_idx];
-
-  // Copy first/second moments for SH coefficient 0
-  dst_sh_coefficient_0_first[idx] = src_sh_coefficient_0_first[src_idx];
-  dst_sh_coefficient_0_second[idx] = src_sh_coefficient_0_second[src_idx];
-
-  // Copy first/second moments for rest SH coefficients
-  int src_rest_start = src_idx * (kMaxSphericalHarmonicsCoefficients - 1);
-  int dst_rest_start = idx * (kMaxSphericalHarmonicsCoefficients - 1);
-  for (int i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-    dst_sh_coefficients_rest_first[dst_rest_start + i] = src_sh_coefficients_rest_first[src_rest_start + i];
-    dst_sh_coefficients_rest_second[dst_rest_start + i] = src_sh_coefficients_rest_second[src_rest_start + i];
-  }
 }
 
 void Adam::remove(char* kept_flag, int num_kept) {
   // filters the gaussians' first second.
-  size_t original_size = m_gaussians->size();
+  size_t original_size = m_means_first.size();
   thrust::device_vector<uint> mapping(original_size); // mapping[idx] = original_idx
 
-  thrust::copy_if(
+  auto end_it = thrust::copy_if(
     thrust::device,
     thrust::make_counting_iterator<uint>(0), thrust::make_counting_iterator<uint>(original_size),
     mapping.begin(), [kept_flag] __device__ (uint orig) { return static_cast<bool>(kept_flag[orig]); });
 
+  // Gather non-SH optimizer state
   thrust::device_vector<vec3> means_first(num_kept);
   thrust::device_vector<vec3> means_second(num_kept);
   thrust::device_vector<float> opacities_first(num_kept);
@@ -856,13 +1033,9 @@ void Adam::remove(char* kept_flag, int num_kept) {
   thrust::device_vector<vec4> rotations_second(num_kept);
   thrust::device_vector<vec3> scales_first(num_kept);
   thrust::device_vector<vec3> scales_second(num_kept);
-  thrust::device_vector<vec3> sh_coefficients_0_first(num_kept);
-  thrust::device_vector<vec3> sh_coefficients_0_second(num_kept);
-  thrust::device_vector<vec3> sh_coefficients_rest_first(num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
-  thrust::device_vector<vec3> sh_coefficients_rest_second(num_kept * (kMaxSphericalHarmonicsCoefficients - 1));
 
   const int grid = (num_kept + block_size - 1) / block_size;
-  copy_optimizer_state<<<grid, block_size>>>(
+  copy_optimizer_base_state<<<grid, block_size>>>(
       thrust::raw_pointer_cast(m_means_first.data()),
       thrust::raw_pointer_cast(m_means_second.data()),
       thrust::raw_pointer_cast(means_first.data()),
@@ -879,14 +1052,6 @@ void Adam::remove(char* kept_flag, int num_kept) {
       thrust::raw_pointer_cast(m_scales_second.data()),
       thrust::raw_pointer_cast(scales_first.data()),
       thrust::raw_pointer_cast(scales_second.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
-      thrust::raw_pointer_cast(sh_coefficients_0_first.data()),
-      thrust::raw_pointer_cast(sh_coefficients_0_second.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
-      thrust::raw_pointer_cast(sh_coefficients_rest_first.data()),
-      thrust::raw_pointer_cast(sh_coefficients_rest_second.data()),
       thrust::raw_pointer_cast(mapping.data()),
       num_kept
   );
@@ -899,50 +1064,83 @@ void Adam::remove(char* kept_flag, int num_kept) {
   m_rotations_second = std::move(rotations_second);
   m_scales_first = std::move(scales_first);
   m_scales_second = std::move(scales_second);
-  m_sh_coefficient_0_first = std::move(sh_coefficients_0_first);
-  m_sh_coefficient_0_second = std::move(sh_coefficients_0_second);
-  m_sh_coefficients_rest_first = std::move(sh_coefficients_rest_first);
-  m_sh_coefficients_rest_second = std::move(sh_coefficients_rest_second);
+
+  // Gather per-degree SoA SH optimizer momentum buffers
+  const uint* map_ptr = thrust::raw_pointer_cast(mapping.data());
+  const int old_n = static_cast<int>(original_size);
+  thrust::device_vector<float> sh0_f, sh0_s, sh1_f, sh1_s, sh2_f, sh2_s, sh3_f, sh3_s;
+  gather_soa_optim_buffers(m_sh0_first, m_sh0_second, sh0_f, sh0_s, map_ptr, num_kept,
+                           GPUGaussian3d::sh_degree_num_coeffs(0) * 3, old_n);
+  gather_soa_optim_buffers(m_sh1_first, m_sh1_second, sh1_f, sh1_s, map_ptr, num_kept,
+                           GPUGaussian3d::sh_degree_num_coeffs(1) * 3, old_n);
+  gather_soa_optim_buffers(m_sh2_first, m_sh2_second, sh2_f, sh2_s, map_ptr, num_kept,
+                           GPUGaussian3d::sh_degree_num_coeffs(2) * 3, old_n);
+  gather_soa_optim_buffers(m_sh3_first, m_sh3_second, sh3_f, sh3_s, map_ptr, num_kept,
+                           GPUGaussian3d::sh_degree_num_coeffs(3) * 3, old_n);
+  m_sh0_first = std::move(sh0_f); m_sh0_second = std::move(sh0_s);
+  m_sh1_first = std::move(sh1_f); m_sh1_second = std::move(sh1_s);
+  m_sh2_first = std::move(sh2_f); m_sh2_second = std::move(sh2_s);
+  m_sh3_first = std::move(sh3_f); m_sh3_second = std::move(sh3_s);
 }
 
 void Adam::duplicate(int* indices, int* new_indices, int num_duplicate) {
   if (num_duplicate == 0) return;
-  const uint32_t num_sh_rest_per_gaussian = kMaxSphericalHarmonicsCoefficients - 1;
-  // Resize vectors to accommodate duplicated gaussians
-  m_means_first.resize(m_gaussians->size(), vec3(0.f, 0.f, 0.f));
-  m_means_second.resize(m_gaussians->size(), vec3(0.f, 0.f, 0.f));
-  m_opacities_first.resize(m_gaussians->size(), 0.f);
-  m_opacities_second.resize(m_gaussians->size(), 0.f);
-  m_rotations_first.resize(m_gaussians->size(), vec4(0.f, 0.f, 0.f, 0.f));
-  m_rotations_second.resize(m_gaussians->size(), vec4(0.f, 0.f, 0.f, 0.f));
-  m_scales_first.resize(m_gaussians->size(), vec3(0.f, 0.f, 0.f));
-  m_scales_second.resize(m_gaussians->size(), vec3(0.f, 0.f, 0.f));
-  m_sh_coefficient_0_first.resize(m_gaussians->size(), vec3(0.f, 0.f, 0.f));
-  m_sh_coefficient_0_second.resize(m_gaussians->size(), vec3(0.f, 0.f, 0.f));
-  m_sh_coefficients_rest_first.resize(m_gaussians->size() * num_sh_rest_per_gaussian, vec3(0.f, 0.f, 0.f));
-  m_sh_coefficients_rest_second.resize(m_gaussians->size() * num_sh_rest_per_gaussian, vec3(0.f, 0.f, 0.f));
+
+  // Save old Gaussian count before resize (SoA stride changes)
+  const int old_n = static_cast<int>(m_means_first.size());
+  const int new_n = static_cast<int>(m_gaussians->size());
+
+  // Non-SH fields: simple resize with zero-fill (contiguous per-Gaussian, no stride change)
+  m_means_first.resize(new_n, vec3(0.f, 0.f, 0.f));
+  m_means_second.resize(new_n, vec3(0.f, 0.f, 0.f));
+  m_opacities_first.resize(new_n, 0.f);
+  m_opacities_second.resize(new_n, 0.f);
+  m_rotations_first.resize(new_n, vec4(0.f, 0.f, 0.f, 0.f));
+  m_rotations_second.resize(new_n, vec4(0.f, 0.f, 0.f, 0.f));
+  m_scales_first.resize(new_n, vec3(0.f, 0.f, 0.f));
+  m_scales_second.resize(new_n, vec3(0.f, 0.f, 0.f));
+
+  // SH fields: SoA layout means the stride (N) changes, so we must re-layout.
+  // New Gaussians get zero momentum.
+  for (int deg = 0; deg < 4; deg++) {
+    int nc = GPUGaussian3d::sh_degree_num_coeffs(deg) * 3; // num SoA channels
+    auto relayout_pair = [&](thrust::device_vector<float>& first, thrust::device_vector<float>& second) {
+      relayout_soa_optim(first, old_n, new_n, nc);
+      relayout_soa_optim(second, old_n, new_n, nc);
+    };
+    switch (deg) {
+      case 0: relayout_pair(m_sh0_first, m_sh0_second); break;
+      case 1: relayout_pair(m_sh1_first, m_sh1_second); break;
+      case 2: relayout_pair(m_sh2_first, m_sh2_second); break;
+      case 3: relayout_pair(m_sh3_first, m_sh3_second); break;
+    }
+  }
 }
 
 void Adam::reset() {
   size_t num_gaussians = m_gaussians->size();
   m_global_steps = 0;
 
-  m_means_first.resize(num_gaussians, vec3(0.f));
-  m_means_second.resize(num_gaussians, vec3(0.f));
-  m_opacities_first.resize(num_gaussians, 0.f);
-  m_opacities_second.resize(num_gaussians, 0.f);
-  m_rotations_first.resize(num_gaussians, vec4(0.f));
-  m_rotations_second.resize(num_gaussians, vec4(0.f));
-  m_scales_first.resize(num_gaussians, vec3(0.f));
-  m_scales_second.resize(num_gaussians, vec3(0.f));
-  m_sh_coefficient_0_first.resize(num_gaussians, vec3(0.f));
-  m_sh_coefficient_0_second.resize(num_gaussians, vec3(0.f));
-  m_sh_coefficients_rest_first.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1), vec3(0.f));
-  m_sh_coefficients_rest_second.resize(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1), vec3(0.f));
+  m_means_first.assign(num_gaussians, vec3(0.f));
+  m_means_second.assign(num_gaussians, vec3(0.f));
+  m_opacities_first.assign(num_gaussians, 0.f);
+  m_opacities_second.assign(num_gaussians, 0.f);
+  m_rotations_first.assign(num_gaussians, vec4(0.f));
+  m_rotations_second.assign(num_gaussians, vec4(0.f));
+  m_scales_first.assign(num_gaussians, vec3(0.f));
+  m_scales_second.assign(num_gaussians, vec3(0.f));
+  m_sh0_first.assign(num_gaussians * 3, 0.f);
+  m_sh0_second.assign(num_gaussians * 3, 0.f);
+  m_sh1_first.assign(num_gaussians * 9, 0.f);
+  m_sh1_second.assign(num_gaussians * 9, 0.f);
+  m_sh2_first.assign(num_gaussians * 15, 0.f);
+  m_sh2_second.assign(num_gaussians * 15, 0.f);
+  m_sh3_first.assign(num_gaussians * 21, 0.f);
+  m_sh3_second.assign(num_gaussians * 21, 0.f);
 }
 
 void Adam::reset(int* indices, int num_reset) {
-  size_t num_gaussians = m_gaussians->size();
+  const int n = static_cast<int>(m_gaussians->size());
   thrust::for_each(
     thrust::device_ptr<int>(indices),
     thrust::device_ptr<int>(indices) + num_reset,
@@ -955,10 +1153,15 @@ void Adam::reset(int* indices, int num_reset) {
       rotations_second = m_rotations_second.data(),
       scales_first = m_scales_first.data(),
       scales_second = m_scales_second.data(),
-      sh_coefficient_0_first = m_sh_coefficient_0_first.data(),
-      sh_coefficient_0_second = m_sh_coefficient_0_second.data(),
-      sh_coefficients_rest_first = m_sh_coefficients_rest_first.data(),
-      sh_coefficients_rest_second = m_sh_coefficients_rest_second.data()
+      sh0_first = thrust::raw_pointer_cast(m_sh0_first.data()),
+      sh0_second = thrust::raw_pointer_cast(m_sh0_second.data()),
+      sh1_first = thrust::raw_pointer_cast(m_sh1_first.data()),
+      sh1_second = thrust::raw_pointer_cast(m_sh1_second.data()),
+      sh2_first = thrust::raw_pointer_cast(m_sh2_first.data()),
+      sh2_second = thrust::raw_pointer_cast(m_sh2_second.data()),
+      sh3_first = thrust::raw_pointer_cast(m_sh3_first.data()),
+      sh3_second = thrust::raw_pointer_cast(m_sh3_second.data()),
+      n
     ] __device__(int idx) {
       means_first[idx] = vec3(0.f);
       means_second[idx] = vec3(0.f);
@@ -968,12 +1171,11 @@ void Adam::reset(int* indices, int num_reset) {
       rotations_second[idx] = vec4(0.f);
       scales_first[idx] = vec3(0.f);
       scales_second[idx] = vec3(0.f);
-      sh_coefficient_0_first[idx] = vec3(0.f);
-      sh_coefficient_0_second[idx] = vec3(0.f);
-      for (uint32_t i = 0; i < kMaxSphericalHarmonicsCoefficients - 1; i++) {
-        sh_coefficients_rest_first[idx * (kMaxSphericalHarmonicsCoefficients - 1) + i] = vec3(0.f);
-        sh_coefficients_rest_second[idx * (kMaxSphericalHarmonicsCoefficients - 1) + i] = vec3(0.f);
-      }
+      // Zero per-degree SoA SH moments: data[ch * N + idx] = 0 for all channels
+      for (int ch = 0; ch < 1 * 3; ch++) { sh0_first[ch * n + idx] = 0.f; sh0_second[ch * n + idx] = 0.f; }
+      for (int ch = 0; ch < 3 * 3; ch++) { sh1_first[ch * n + idx] = 0.f; sh1_second[ch * n + idx] = 0.f; }
+      for (int ch = 0; ch < 5 * 3; ch++) { sh2_first[ch * n + idx] = 0.f; sh2_second[ch * n + idx] = 0.f; }
+      for (int ch = 0; ch < 7 * 3; ch++) { sh3_first[ch * n + idx] = 0.f; sh3_second[ch * n + idx] = 0.f; }
     }
   );
 }
@@ -1036,8 +1238,8 @@ void AdamParameters::from_json(const json& config) {
 /// @brief Reorder Gaussians based on provided indices
 void Adam::reorder(uint* indices) {
   int num_gaussians = m_means_first.size();
-  
-  // Create temporary vectors for reordered data
+
+  // Gather non-SH optimizer state
   thrust::device_vector<vec3> means_first(num_gaussians);
   thrust::device_vector<vec3> means_second(num_gaussians);
   thrust::device_vector<float> opacities_first(num_gaussians);
@@ -1046,13 +1248,9 @@ void Adam::reorder(uint* indices) {
   thrust::device_vector<vec4> rotations_second(num_gaussians);
   thrust::device_vector<vec3> scales_first(num_gaussians);
   thrust::device_vector<vec3> scales_second(num_gaussians);
-  thrust::device_vector<vec3> sh_coefficients_0_first(num_gaussians);
-  thrust::device_vector<vec3> sh_coefficients_0_second(num_gaussians);
-  thrust::device_vector<vec3> sh_coefficients_rest_first(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
-  thrust::device_vector<vec3> sh_coefficients_rest_second(num_gaussians * (kMaxSphericalHarmonicsCoefficients - 1));
 
   const int grid = (num_gaussians + block_size - 1) / block_size;
-  copy_optimizer_state<<<grid, block_size>>>(
+  copy_optimizer_base_state<<<grid, block_size>>>(
       thrust::raw_pointer_cast(m_means_first.data()),
       thrust::raw_pointer_cast(m_means_second.data()),
       thrust::raw_pointer_cast(means_first.data()),
@@ -1069,19 +1267,11 @@ void Adam::reorder(uint* indices) {
       thrust::raw_pointer_cast(m_scales_second.data()),
       thrust::raw_pointer_cast(scales_first.data()),
       thrust::raw_pointer_cast(scales_second.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0_first.data()),
-      thrust::raw_pointer_cast(m_sh_coefficient_0_second.data()),
-      thrust::raw_pointer_cast(sh_coefficients_0_first.data()),
-      thrust::raw_pointer_cast(sh_coefficients_0_second.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest_first.data()),
-      thrust::raw_pointer_cast(m_sh_coefficients_rest_second.data()),
-      thrust::raw_pointer_cast(sh_coefficients_rest_first.data()),
-      thrust::raw_pointer_cast(sh_coefficients_rest_second.data()),
       indices,
       num_gaussians
   );
 
-  // Move reordered data back to member variables
+  // Move reordered non-SH data back to member variables
   m_means_first = std::move(means_first);
   m_means_second = std::move(means_second);
   m_opacities_first = std::move(opacities_first);
@@ -1090,10 +1280,21 @@ void Adam::reorder(uint* indices) {
   m_rotations_second = std::move(rotations_second);
   m_scales_first = std::move(scales_first);
   m_scales_second = std::move(scales_second);
-  m_sh_coefficient_0_first = std::move(sh_coefficients_0_first);
-  m_sh_coefficient_0_second = std::move(sh_coefficients_0_second);
-  m_sh_coefficients_rest_first = std::move(sh_coefficients_rest_first);
-  m_sh_coefficients_rest_second = std::move(sh_coefficients_rest_second);
+
+  // Gather per-degree SoA SH optimizer momentum buffers (stride == num_gaussians for reorder)
+  thrust::device_vector<float> sh0_f, sh0_s, sh1_f, sh1_s, sh2_f, sh2_s, sh3_f, sh3_s;
+  gather_soa_optim_buffers(m_sh0_first, m_sh0_second, sh0_f, sh0_s, indices, num_gaussians,
+                           GPUGaussian3d::sh_degree_num_coeffs(0) * 3, num_gaussians);
+  gather_soa_optim_buffers(m_sh1_first, m_sh1_second, sh1_f, sh1_s, indices, num_gaussians,
+                           GPUGaussian3d::sh_degree_num_coeffs(1) * 3, num_gaussians);
+  gather_soa_optim_buffers(m_sh2_first, m_sh2_second, sh2_f, sh2_s, indices, num_gaussians,
+                           GPUGaussian3d::sh_degree_num_coeffs(2) * 3, num_gaussians);
+  gather_soa_optim_buffers(m_sh3_first, m_sh3_second, sh3_f, sh3_s, indices, num_gaussians,
+                           GPUGaussian3d::sh_degree_num_coeffs(3) * 3, num_gaussians);
+  m_sh0_first = std::move(sh0_f); m_sh0_second = std::move(sh0_s);
+  m_sh1_first = std::move(sh1_f); m_sh1_second = std::move(sh1_s);
+  m_sh2_first = std::move(sh2_f); m_sh2_second = std::move(sh2_s);
+  m_sh3_first = std::move(sh3_f); m_sh3_second = std::move(sh3_s);
 }
 
 } // namespace tinygs

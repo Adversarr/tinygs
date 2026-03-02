@@ -49,20 +49,21 @@ int main(int argc, char** argv) {
   gaussian.rotations.push_back(/* glm::normalize */(vec4{-1.0f, 0.0f, 1.0f, 1.0f} * 3.0f));
   // Use partial opacity to allow blending
   gaussian.opacities.push_back(opacity1);
-  gaussian.sh_coefficient_0.push_back({0.0f, 0.0f, 1.0f});
-  for (int i = 0; i < 15; ++i) {
-    gaussian.sh_coefficients_rest.push_back({0.0f, 0.0f, 0.0f});
-  }
+  gaussian.sh0.push_back({0.0f, 0.0f, 1.0f});
+  // Initialize per-degree SH rest to zero (3 + 5 + 7 = 15 coefficients)
+  for (int i = 0; i < kSHDegreeNumCoeffs[1]; ++i) gaussian.sh1.push_back({0.0f, 0.0f, 0.0f});
+  for (int i = 0; i < kSHDegreeNumCoeffs[2]; ++i) gaussian.sh2.push_back({0.0f, 0.0f, 0.0f});
+  for (int i = 0; i < kSHDegreeNumCoeffs[3]; ++i) gaussian.sh3.push_back({0.0f, 0.0f, 0.0f});
 
   // Second Gaussian: slightly behind the first and different color
   gaussian.means.push_back({0.5f, 0.3f, 0.1f});
   gaussian.scales.push_back({scale2, -scale2, 0.3f * scale2});
   gaussian.rotations.push_back(/* glm::normalize */(vec4{1.0f, 1.0f, 0.0f, -1.0f} * 3.0f));
   gaussian.opacities.push_back(opacity2);
-  gaussian.sh_coefficient_0.push_back({1.0f, 0.0f, 0.0f});
-  for (int i = 0; i < 15; ++i) {
-    gaussian.sh_coefficients_rest.push_back({0.0f, 0.0f, 0.0f});
-  }
+  gaussian.sh0.push_back({1.0f, 0.0f, 0.0f});
+  for (int i = 0; i < kSHDegreeNumCoeffs[1]; ++i) gaussian.sh1.push_back({0.0f, 0.0f, 0.0f});
+  for (int i = 0; i < kSHDegreeNumCoeffs[2]; ++i) gaussian.sh2.push_back({0.0f, 0.0f, 0.0f});
+  for (int i = 0; i < kSHDegreeNumCoeffs[3]; ++i) gaussian.sh3.push_back({0.0f, 0.0f, 0.0f});
   auto gpu_gaussian = std::make_shared<GPUGaussian3d>();
   gpu_gaussian->copy_from_host(gaussian);
 
@@ -185,7 +186,7 @@ int main(int argc, char** argv) {
   const std::vector<vec3>& scales_grad = gaussian_grad.scales;
   const std::vector<vec4>& rotations_grad = gaussian_grad.rotations;
   const std::vector<float>& opacities_grad = gaussian_grad.opacities;
-  const std::vector<vec3>& sh_coefficient_0_grad = gaussian_grad.sh_coefficient_0;
+  const std::vector<vec3>& sh0_grad = gaussian_grad.sh0;
 
   // Print gradients for the two Gaussians
   std::cout << std::fixed << std::setprecision(6);
@@ -195,7 +196,7 @@ int main(int argc, char** argv) {
     const auto& s = scales_grad[i];
     const auto& r = rotations_grad[i];
     float o = opacities_grad[i];
-    const auto& c0 = sh_coefficient_0_grad[i];
+    const auto& c0 = sh0_grad[i];
 
     std::cout << "Gaussian " << i << ":" << std::endl;
     std::cout << "  dMeans: [" << m.x << ", " << m.y << ", " << m.z << "]" << std::endl;

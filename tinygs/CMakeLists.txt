@@ -66,7 +66,9 @@ set(TINYGS_SOURCES
     "src/rasterizer/rasterizer.cpp"
     
     # Strategy
+    "src/strategy/absgs.cu"
     "src/strategy/default.cu"
+    "src/strategy/fastgs.cu"
     "src/strategy/mcmc.cu"
     "src/strategy/improved.cu"
     "src/strategy/strategy.cpp"

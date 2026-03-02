@@ -322,24 +322,25 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
       opacities = m_gaussians->opacities().data(),
       scales = thrust::raw_pointer_cast(m_gaussians->scales().data()), // raw.
       rotations = m_gaussians->rotations().data(),
-      sh_coefficient_0 = m_gaussians->sh_coefficient_0().data(),
-      sh_coefficients_rest = m_gaussians->sh_coefficients_rest().data(),
-      num_gaussians
+      sh0_data = thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+      sh1_data = thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+      sh2_data = thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+      sh3_data = thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+      N = static_cast<int>(m_gaussians->size())
     ] __device__ (int idx) {
       int src = sampled_idxs[idx]; // Get the source index.
       int dst = new_indices[idx];  // Get the destination index.
-      assert(dst >= num_gaussians);
+      assert(dst >= N - (dst - src)); // basic sanity
       opacities[src] = opacities[dst] = deactivate_opacity(sampled_opacities[idx]);
       scales[src] = scales[dst] = deactivate_scale(sampled_scales[idx]);
       // other fields are not changed
       means[dst] = means[src];
       rotations[dst] = rotations[src];
-      sh_coefficient_0[dst] = sh_coefficient_0[src];
-      auto sh_coef_src = sh_coefficients_rest + src * (kMaxSphericalHarmonicsCoefficients - 1);
-      auto sh_coef_dst = sh_coefficients_rest + dst * (kMaxSphericalHarmonicsCoefficients - 1);
-      for (int i = 0; i < kMaxSphericalHarmonicsCoefficients- 1; i++) {
-        sh_coef_dst[i] = sh_coef_src[i];
-      }
+      // Copy SH in SoA layout per-degree
+      for (int ch = 0; ch < 3; ch++)   sh0_data[ch * N + dst] = sh0_data[ch * N + src];
+      for (int ch = 0; ch < 9; ch++)   sh1_data[ch * N + dst] = sh1_data[ch * N + src];
+      for (int ch = 0; ch < 15; ch++)  sh2_data[ch * N + dst] = sh2_data[ch * N + src];
+      for (int ch = 0; ch < 21; ch++)  sh3_data[ch * N + dst] = sh3_data[ch * N + src];
     }
   );
 
@@ -516,8 +517,11 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
       opacities = m_gaussians->opacities().data(),
       scales = m_gaussians->scales().data(), // raw.
       rotations = m_gaussians->rotations().data(),
-      sh_coefficient_0 = m_gaussians->sh_coefficient_0().data(),
-      sh_coefficients_rest = m_gaussians->sh_coefficients_rest().data()
+      sh0_data = thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+      sh1_data = thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+      sh2_data = thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+      sh3_data = thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+      N = static_cast<int>(m_gaussians->size())
     ] __device__ (int idx) {
       int src = sampled_idxs[idx]; // Get the source index.
       int dst = dead_idxs[idx];    // Get the destination index.
@@ -525,12 +529,11 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
       opacities[src] = opacities[dst] = deactivate_opacity(new_opacities[idx]);
       scales[src] = scales[dst] = deactivate_scale(new_scales[idx]);
       rotations[dst] = rotations[src];
-      sh_coefficient_0[dst] = sh_coefficient_0[src];
-      auto sh_coef_src = sh_coefficients_rest + src * (kMaxSphericalHarmonicsCoefficients - 1);
-      auto sh_coef_dst = sh_coefficients_rest + dst * (kMaxSphericalHarmonicsCoefficients - 1);
-      for (int i = 0; i < kMaxSphericalHarmonicsCoefficients- 1; i++) {
-        sh_coef_dst[i] = sh_coef_src[i];
-      }
+      // Copy SH in SoA layout per-degree
+      for (int ch = 0; ch < 3; ch++)   sh0_data[ch * N + dst] = sh0_data[ch * N + src];
+      for (int ch = 0; ch < 9; ch++)   sh1_data[ch * N + dst] = sh1_data[ch * N + src];
+      for (int ch = 0; ch < 15; ch++)  sh2_data[ch * N + dst] = sh2_data[ch * N + src];
+      for (int ch = 0; ch < 21; ch++)  sh3_data[ch * N + dst] = sh3_data[ch * N + src];
     }
   );
 

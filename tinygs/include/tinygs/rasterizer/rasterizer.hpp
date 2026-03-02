@@ -38,6 +38,20 @@ struct RasterizeContext {
   /// @brief Per-Gaussian densification statistics (view-space radii, accumulated
   ///        gradients, etc.) produced by forward() and consumed by Strategy.
   mutable std::shared_ptr<GPUBuffer<DensificationInfo>> densification_info;
+
+  // -- FastGS metric accumulation fields --
+
+  /// @brief When true, the forward pass also accumulates per-Gaussian metric counts
+  ///        for pixels flagged in `metric_map`. Used by FastGS strategy.
+  bool metric_mode = false;
+
+  /// @brief Per-pixel binary flag (H*W ints). Pixels with value != 0 contribute to
+  ///        metric_counts for each Gaussian that covers them.
+  mutable std::shared_ptr<GPUBuffer<int>> metric_map;
+
+  /// @brief Per-Gaussian metric counts (N ints). Incremented atomically during
+  ///        metric_mode forward for each flagged pixel a Gaussian covers.
+  mutable std::shared_ptr<GPUBuffer<int>> metric_counts;
 };
 
 /// @brief Serializable parameters common to all rasterizer implementations.
@@ -71,6 +85,12 @@ public:
   /// @brief Compute parameter gradients given image-space loss gradients.
   /// @param params Context previously used in forward(); grad_output.image must be set.
   virtual void backward(RasterizeContext& params) = 0;
+
+  /// @brief Forward pass with metric accumulation.  When ctx.metric_mode is true and
+  ///        ctx.metric_map is provided, the rasterizer atomically increments
+  ///        ctx.metric_counts for each Gaussian that covers a flagged pixel.
+  ///        Default implementation simply delegates to forward().
+  virtual void forward_metric(const RasterizeContext& params) { forward(params); }
 
   /// @brief Rebind the Gaussian data pointer (e.g. after densification resizes the buffer).
   virtual void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians);
