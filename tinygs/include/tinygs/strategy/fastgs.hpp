@@ -38,7 +38,10 @@ public:
   void set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) override;
 
   /// @brief Render M random cameras and accumulate per-Gaussian importance / pruning scores.
-  void compute_gaussian_score(const RasterizeContext& ctx);
+  /// @param ctx   The training context (used for stream, grad_scaler, etc.)
+  /// @param densify  If true, also computes importance_score (used for densification filtering).
+  ///                 If false, only computes pruning_score (used for final_prune).
+  void compute_gaussian_score(const RasterizeContext& ctx, bool densify);
 
   /// @brief Duplicate (clone + split) Gaussians selected by gradient and importance.
   void duplicate(const RasterizeContext& ctx);
@@ -68,8 +71,8 @@ public:
   float m_prune_budget_ratio = 0.5f;       ///< Fraction of standard prune candidates to remove
   float m_final_prune_score_threshold = 0.9f; ///< Pruning score above which Gaussians are removed
   float m_final_prune_opacity_threshold = 0.1f; ///< Opacity below which Gaussians are removed in final prune
-  int m_final_prune_start = 15000;         ///< First step for final pruning
-  int m_final_prune_end = 30000;           ///< Last step for final pruning
+  int m_final_prune_start = 18000;         ///< First final-prune step (>15000 and divisible by 3000)
+  int m_final_prune_end = 27000;           ///< Last final-prune step (<30000 and divisible by 3000)
   int m_final_prune_every = 3000;          ///< Interval for final pruning
   float m_opacity_reset_value = 0.8f;      ///< After densification, clip opacity to this max
 };

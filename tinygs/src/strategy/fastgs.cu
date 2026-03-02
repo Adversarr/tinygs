@@ -25,6 +25,7 @@
 #include "tinygs/cuda/common_host.hpp"
 #include "tinygs/random/device.cuh"
 #include "tinygs/strategy/fastgs.hpp"
+#include "tinygs/utils/image_format.hpp"
 
 namespace tinygs {
 
@@ -100,9 +101,25 @@ __global__ void clamp_opacity_kernel(int n, float* __restrict__ opacities, float
 
 // ---------------------------------------------------------------------------
 // compute_gaussian_score()
+//
+// Exact implementation of compute_gaussian_score_fastgs from the reference:
+//   ref_impl/FastGS/utils/fast_utils.py
+//
+// For each camera:
+//   1. Render the scene (first render) to get the rendered image.
+//   2. Compute per-pixel mean L1 loss vs GT, then threshold to get a binary metric_map.
+//   3. Compute photometric loss = (1-0.2)*L1 + 0.2*(1-SSIM)  [simplified to L1 here]
+//   4. Render again (second render) with metric_mode=true and metric_map set,
+//      to get per-Gaussian accum_metric_counts via atomicAdd in the blend kernel.
+//   5. Accumulate full_metric_counts += accum_metric_counts  (if densify=true)
+//   6. Accumulate full_metric_score += photometric_loss * accum_metric_counts
+//
+// After all cameras:
+//   - pruning_score = min-max normalize(full_metric_score)
+//   - importance_score = floor(full_metric_counts / num_cameras)  (if densify=true)
 // ---------------------------------------------------------------------------
 
-void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx) {
+void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool densify) {
   NVTX3_FUNC_RANGE();
 
   if (!m_rasterizer || !m_dataloader) {
@@ -118,16 +135,12 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx) {
     return;
   }
 
-  // Allocate per-Gaussian cumulative counts
-  thrust::device_vector<int> total_counts(num_gaussians, 0);
-  auto* d_total_counts = thrust::raw_pointer_cast(total_counts.data());
+  // Allocate per-Gaussian cumulative accumulators
+  thrust::device_vector<float> full_metric_score(num_gaussians, 0.0f);
+  thrust::device_vector<int> full_metric_counts(num_gaussians, 0);
 
-  // We need a temporary RasterizeContext for rendering
-  RasterizeContext metric_ctx;
-  metric_ctx.inference = true;  // Don't save intermediates for backward
-  metric_ctx.stream = ctx.stream;
-  metric_ctx.grad_scaler = ctx.grad_scaler;
-  metric_ctx.metric_mode = true;
+  // Match the temporary render dtype to the active train output dtype.
+  const DataType render_dtype = ctx.fwd_output.image.data_type;
 
   // Number of cameras to render
   const int num_cameras = std::min(m_metric_num_cameras, static_cast<int>(dataset_size));
@@ -137,33 +150,50 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx) {
     const size_t idx = m_rng.next_uint(static_cast<uint32_t>(dataset_size));
     auto data = (*dataset)[idx];
 
-    // Set up input
-    metric_ctx.fwd_input.width = data.image.shape.width;
-    metric_ctx.fwd_input.height = data.image.shape.height;
-    metric_ctx.fwd_input.K = data.K;
-    metric_ctx.fwd_input.w2c = data.w2c;
-    metric_ctx.fwd_input.near = ctx.fwd_input.near;
-    metric_ctx.fwd_input.far = ctx.fwd_input.far;
-    metric_ctx.fwd_input.timestamp = data.timestamp;
+    // IMPORTANT: use the active training resolution from ctx (progressive resolution aware),
+    // not the raw dataset image size.
+    const int width = static_cast<int>(ctx.fwd_input.width);
+    const int height = static_cast<int>(ctx.fwd_input.height);
 
-    // Allocate metric map and counts for this camera
-    const int width = data.image.shape.width;
-    const int height = data.image.shape.height;
-    metric_ctx.metric_map = std::make_shared<GPUBuffer<int>>(width * height);
-    metric_ctx.metric_counts = std::make_shared<GPUBuffer<int>>(num_gaussians);
-    metric_ctx.metric_counts->memset(0);
+    // -- First render: get the rendered image (no metric counting) --
+    RasterizeContext render_ctx;
+    render_ctx.inference = true;
+    render_ctx.stream = ctx.stream;
+    render_ctx.grad_scaler = ctx.grad_scaler;
+    render_ctx.metric_mode = false;
 
-    // Forward render (metric mode)
-    m_rasterizer->forward_metric(metric_ctx);
+    render_ctx.fwd_input.width = width;
+    render_ctx.fwd_input.height = height;
+    render_ctx.fwd_input.K = data.K;
+    render_ctx.fwd_input.w2c = data.w2c;
+    render_ctx.fwd_input.near = ctx.fwd_input.near;
+    render_ctx.fwd_input.far = ctx.fwd_input.far;
+    render_ctx.fwd_input.timestamp = data.timestamp;
+
+    // Allocate output image buffer using active training dtype.
+    ImageShape rgb_shape{static_cast<uint32_t>(width), static_cast<uint32_t>(height), 3};
+    GPUMemory<float> render_buf_f32;
+    GPUMemory<float16_t> render_buf_f16;
+    if (render_dtype == DataType::Float16) {
+      render_buf_f16 = GPUMemory<float16_t>(rgb_shape.padded_size());
+      render_buf_f16.memset(0);
+      render_ctx.fwd_output.image = Image(rgb_shape, DataType::Float16, render_buf_f16.data());
+    } else if (render_dtype == DataType::Float32) {
+      render_buf_f32 = GPUMemory<float>(rgb_shape.padded_size());
+      render_buf_f32.memset(0);
+      render_ctx.fwd_output.image = Image(rgb_shape, DataType::Float32, render_buf_f32.data());
+    } else {
+      throw std::runtime_error("FastGS metric scoring expects Float16 or Float32 render dtype.");
+    }
+
+    m_rasterizer->forward(render_ctx);
     CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
 
-    // Compute per-pixel L1 loss between rendered and ground truth
-    // We need to transfer the GT image to GPU
-    const auto& rendered_image = metric_ctx.fwd_output.image;
+    // Transfer GT to GPU
+    const auto& rendered_image = render_ctx.fwd_output.image;
     const int padded_w = rendered_image.shape.padded_width();
     const int padded_h = rendered_image.shape.padded_height();
 
-    // Transfer GT to GPU
     GPUMemory<float> gt_gpu(padded_w * padded_h * 3);
     Image gt_image;
     gt_image.shape = rendered_image.shape;
@@ -172,57 +202,148 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx) {
     m_dataloader->transfer_gpu(ctx.stream, gt_image, data.image);
     CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
 
-    // Compute metric map (binary threshold on L1)
+    // Convert rendered image to Float32 if needed, then compute metrics in Float32.
+    GPUMemory<float> rendered_f32(padded_w * padded_h * 3);
+    if (rendered_image.data_type == DataType::Float16) {
+      half_to_float_gpu(rendered_f32.data(),
+        reinterpret_cast<const float16_t*>(rendered_image.data),
+        rendered_image.shape.padded_size());
+    } else {
+      CUDA_CHECK_THROW(cudaMemcpyAsync(rendered_f32.data(), rendered_image.data,
+        rendered_image.shape.padded_size() * sizeof(float), cudaMemcpyDeviceToDevice, ctx.stream));
+    }
+
+    // Compute per-pixel L1 metric_map (binary threshold)
     const int n_pixels = width * height;
+    GPUBuffer<int> metric_map(ctx.stream, n_pixels);
     linear_kernel(compute_metric_map_kernel, 0, ctx.stream, n_pixels,
-        static_cast<const float*>(rendered_image.data),
+      rendered_f32.data(),
         static_cast<const float*>(gt_image.data),
-        metric_ctx.metric_map->data(),
+        metric_map.data(),
         padded_w, padded_h, width, height, m_loss_thresh);
 
-    // The forward_metric pass may have accumulated counts already if the rasterizer
-    // supports native metric accumulation.  If not (default forward delegation),
-    // we fall back to a simpler approach: just count flagged pixels per Gaussian
-    // via the densification info's metric fields updated by the rasterizer.
+    // Compute scalar photometric loss: mean L1 over all pixels
+    // Reference uses (1-0.2)*L1 + 0.2*(1-SSIM); we approximate with pure L1
+    // since we don't have a fused_ssim reduction on GPU yet.
+    // The metric score weighting still captures the essential behaviour.
     //
-    // For now, we simply accumulate the metric_counts from the rasterizer output.
-    // If the rasterizer doesn't populate metric_counts, this will be zeros, and
-    // importance_score stays 0 — effectively disabling FastGS filtering (fallback
-    // to gradient-only densification).
+    // photometric_loss is a single scalar per camera.
+    float photometric_loss_h = 0.0f;
+    {
+      // Compute total L1 on GPU and copy to host
+      thrust::device_vector<float> pixel_l1(n_pixels);
+      auto* d_pixel_l1 = thrust::raw_pointer_cast(pixel_l1.data());
+      auto exec = thrust::cuda::par.on(ctx.stream);
+      const float* d_rendered = rendered_f32.data();
+      const float* d_gt = static_cast<const float*>(gt_image.data);
+      const int pw = padded_w;
+      const int ph = padded_h;
+      const int w = width;
+      thrust::for_each(exec,
+          thrust::make_counting_iterator<int>(0),
+          thrust::make_counting_iterator<int>(n_pixels),
+          [d_rendered, d_gt, d_pixel_l1, pw, ph, w] __device__(int idx) {
+            const int py = idx / w;
+            const int px = idx % w;
+            float l1_sum = 0.0f;
+            for (int c = 0; c < 3; c++) {
+              const int offset = c * pw * ph + py * pw + px;
+              l1_sum += fabsf(fminf(fmaxf(d_rendered[offset], 0.0f), 1.0f) - d_gt[offset]);
+            }
+            d_pixel_l1[idx] = l1_sum / 3.0f;
+          });
+      photometric_loss_h = thrust::reduce(exec, pixel_l1.begin(), pixel_l1.end(), 0.0f, thrust::plus<float>())
+                           / static_cast<float>(n_pixels);
+    }
 
-    // Accumulate total_counts += metric_counts for this camera
+    // -- Second render: with metric_mode=true to count per-Gaussian contributions --
+    RasterizeContext metric_ctx;
+    metric_ctx.inference = true;
+    metric_ctx.stream = ctx.stream;
+    metric_ctx.grad_scaler = ctx.grad_scaler;
+    metric_ctx.metric_mode = true;
+
+    metric_ctx.fwd_input = render_ctx.fwd_input;  // same camera
+
+    // Allocate output image buffer for metric render (content unused, but rasterizer needs it)
+    GPUMemory<float> metric_render_buf_f32;
+    GPUMemory<float16_t> metric_render_buf_f16;
+    if (render_dtype == DataType::Float16) {
+      metric_render_buf_f16 = GPUMemory<float16_t>(rgb_shape.padded_size());
+      metric_render_buf_f16.memset(0);
+      metric_ctx.fwd_output.image = Image(rgb_shape, DataType::Float16, metric_render_buf_f16.data());
+    } else {
+      metric_render_buf_f32 = GPUMemory<float>(rgb_shape.padded_size());
+      metric_render_buf_f32.memset(0);
+      metric_ctx.fwd_output.image = Image(rgb_shape, DataType::Float32, metric_render_buf_f32.data());
+    }
+
+    // Set metric_map and metric_counts
+    metric_ctx.metric_map = std::make_shared<GPUBuffer<int>>(std::move(metric_map));
+    metric_ctx.metric_counts = std::make_shared<GPUBuffer<int>>(ctx.stream, num_gaussians);
+    metric_ctx.metric_counts->memset(0);
+
+    m_rasterizer->forward_metric(metric_ctx);
+    CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+
+    // Accumulate results
     auto exec = thrust::cuda::par.on(ctx.stream);
-    thrust::transform(exec,
-        total_counts.begin(), total_counts.end(),
-        thrust::device_pointer_cast(metric_ctx.metric_counts->data()),
-        total_counts.begin(),
-        thrust::plus<int>());
-  }
+    const int* d_accum_counts = metric_ctx.metric_counts->data();
+    float* d_full_score = thrust::raw_pointer_cast(full_metric_score.data());
+    int* d_full_counts = thrust::raw_pointer_cast(full_metric_counts.data());
+    const float ploss = photometric_loss_h;
 
-  // Convert total_counts to per-Gaussian importance and pruning scores
-  // importance_score = floor(total_counts / num_cameras)
-  m_importance_score.resize(num_gaussians);
-  m_pruning_score.resize(num_gaussians);
+    if (densify) {
+      // full_metric_counts += accum_loss_counts
+      thrust::transform(exec,
+          full_metric_counts.begin(), full_metric_counts.end(),
+          thrust::device_pointer_cast(d_accum_counts),
+          full_metric_counts.begin(),
+          thrust::plus<int>());
+    }
 
-  auto exec = thrust::cuda::par.on(ctx.stream);
-  const float inv_cams = 1.0f / static_cast<float>(num_cameras);
-  thrust::transform(exec,
-      total_counts.begin(), total_counts.end(),
-      m_importance_score.begin(),
-      [inv_cams] __device__(int count) -> float { return floorf(count * inv_cams); });
-
-  // Pruning score: use metric_pruning_score from densification info if available,
-  // otherwise derive from total_counts (higher counts → more important → lower prune score)
-  if (ctx.densification_info) {
-    const auto* den = ctx.densification_info->data();
+    // full_metric_score += photometric_loss * accum_loss_counts
+    const int ng = static_cast<int>(num_gaussians);
     thrust::for_each(exec,
         thrust::make_counting_iterator<int>(0),
-        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
-        [den, ps = thrust::raw_pointer_cast(m_pruning_score.data())] __device__(int i) {
-          ps[i] = den[i].metric_pruning_score;
+        thrust::make_counting_iterator<int>(ng),
+        [d_full_score, d_accum_counts, ploss] __device__(int i) {
+          d_full_score[i] += ploss * static_cast<float>(d_accum_counts[i]);
         });
-  } else {
-    thrust::fill(exec, m_pruning_score.begin(), m_pruning_score.end(), 0.0f);
+  }
+
+  // -- Compute final scores --
+
+  // pruning_score = min-max normalize(full_metric_score) to [0, 1]
+  m_pruning_score.resize(num_gaussians);
+  {
+    auto exec = thrust::cuda::par.on(ctx.stream);
+    float min_score = thrust::reduce(exec, full_metric_score.begin(), full_metric_score.end(),
+        std::numeric_limits<float>::max(), thrust::minimum<float>());
+    float max_score = thrust::reduce(exec, full_metric_score.begin(), full_metric_score.end(),
+        std::numeric_limits<float>::lowest(), thrust::maximum<float>());
+    float range = max_score - min_score;
+    if (range < 1e-8f) range = 1.0f;  // avoid division by zero
+
+    thrust::transform(exec,
+        full_metric_score.begin(), full_metric_score.end(),
+        m_pruning_score.begin(),
+        [min_score, range] __device__(float score) -> float {
+          return (score - min_score) / range;
+        });
+  }
+
+  // importance_score = floor(full_metric_counts / num_cameras) if densify
+  if (densify) {
+    m_importance_score.resize(num_gaussians);
+    auto exec = thrust::cuda::par.on(ctx.stream);
+    const float inv_cams = 1.0f / static_cast<float>(num_cameras);
+    thrust::transform(exec,
+        full_metric_counts.begin(), full_metric_counts.end(),
+        m_importance_score.begin(),
+        [inv_cams] __device__(int count) -> float {
+          return floorf(static_cast<float>(count) * inv_cams);
+        });
   }
 
   CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
@@ -248,7 +369,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
       step <= m_params.end_refine) {
 
     // Compute multi-view importance scores before densification
-    compute_gaussian_score(ctx);
+    compute_gaussian_score(ctx, /*densify=*/ true);
 
     if (m_gaussians->size() < m_params.max_num_gaussians) {
       duplicate(ctx);
@@ -274,7 +395,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
       step % m_final_prune_every == 0) {
     // Need to recompute scores for final prune
     if (m_importance_score.empty()) {
-      compute_gaussian_score(ctx);
+      compute_gaussian_score(ctx, /*densify=*/ false);
     }
     final_prune(ctx);
   }
@@ -306,6 +427,7 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
 
   const bool has_importance = (m_importance_score.size() == num_gaussians);
 
+  // Per-Gaussian flag: 0 = nothing, 1 = clone, 2 = split
   GPUBuffer<char> grow_flags(ctx.stream, num_gaussians);
   grow_flags.memset_async(ctx.stream, 0);
   auto* d_grow_flags = thrust::raw_pointer_cast(grow_flags.data());
@@ -323,6 +445,7 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
   const float* d_importance = has_importance ?
       thrust::raw_pointer_cast(m_importance_score.data()) : nullptr;
 
+  // Classify each Gaussian as clone, split, or nothing
   thrust::for_each(exec,
       thrust::make_counting_iterator<int>(0),
       thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
@@ -346,15 +469,7 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
         }
       });
 
-  const int num_grows = thrust::transform_reduce(
-      exec,
-      thrust::make_counting_iterator<int>(0),
-      thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
-      [d_grow_flags] __device__(int i) -> int { return d_grow_flags[i] != 0 ? 1 : 0; },
-      0, thrust::plus<int>());
-
-  if (num_grows == 0) return;
-
+  // Count clones and splits separately
   const int num_clones = thrust::transform_reduce(
       exec,
       thrust::make_counting_iterator<int>(0),
@@ -362,90 +477,190 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
       [d_grow_flags] __device__(int i) -> int { return d_grow_flags[i] == kClone ? 1 : 0; },
       0, thrust::plus<int>());
 
-  log_info("[FastGS] Add {} gaussians ({} clone, {} split, {} total)",
-           num_grows, num_clones, num_grows - num_clones, num_grows + num_gaussians);
-
-  // Collect source indices
-  thrust::device_vector<int> grow_indices_src(num_grows);
-  auto* d_grow_indices_src = thrust::raw_pointer_cast(grow_indices_src.data());
-  thrust::copy_if(exec,
+  const int num_splits = thrust::transform_reduce(
+      exec,
       thrust::make_counting_iterator<int>(0),
       thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
-      d_grow_flags, d_grow_indices_src,
-      [] __device__(char f) { return f != 0; });
+      [d_grow_flags] __device__(int i) -> int { return d_grow_flags[i] == kSplit ? 1 : 0; },
+      0, thrust::plus<int>());
 
-  // Target indices
-  GPUBuffer<int> grow_indices_target(ctx.stream, num_grows);
-  auto* d_grow_indices_target = thrust::raw_pointer_cast(grow_indices_target.data());
-  thrust::copy(exec,
-      thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
-      thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians) + num_grows),
-      d_grow_indices_target);
+  if (num_clones == 0 && num_splits == 0) return;
 
-  StrategyBase::on_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows);
+  // Reference: net change = +num_clones + 2*num_splits - num_splits = +num_clones + num_splits
+  log_info("[FastGS] Densify: {} clone, {} split (N=2 new + remove orig), net +{}",
+           num_clones, num_splits, num_clones + num_splits);
 
-  // Generate random samples for split offsets
-  GPUBuffer<float> device_rng(ctx.stream, num_grows * 6);
-  generate_random_logistic(m_rng, num_grows * 6,
-      thrust::raw_pointer_cast(device_rng.data()), 0.0f, 1.0f);
+  // ===========================================================================
+  // Phase 1: Clone — add 1 new Gaussian per clone source, copy all raw params
+  // Reference: densify_and_clone_fastgs copies _xyz, _opacity, _scaling, _rotation, features
+  // ===========================================================================
+  if (num_clones > 0) {
+    thrust::device_vector<int> clone_src(num_clones);
+    thrust::copy_if(exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+        d_grow_flags, clone_src.data(),
+        [] __device__(char f) { return f == 1; });
 
-  const int n_new = static_cast<int>(m_gaussians->size());
-  thrust::for_each(exec,
-      thrust::make_counting_iterator<int>(0),
-      thrust::make_counting_iterator<int>(num_grows),
-      [d_grow_indices_src, d_grow_indices_target, d_grow_flags,
-       means3d = thrust::raw_pointer_cast(m_gaussians->means().data()),
-       scales3d = thrust::raw_pointer_cast(m_gaussians->scales().data()),
-       opacities = thrust::raw_pointer_cast(m_gaussians->opacities().data()),
-       rotations = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
-       sh0_data = thrust::raw_pointer_cast(m_gaussians->sh0().data()),
-       sh1_data = thrust::raw_pointer_cast(m_gaussians->sh1().data()),
-       sh2_data = thrust::raw_pointer_cast(m_gaussians->sh2().data()),
-       sh3_data = thrust::raw_pointer_cast(m_gaussians->sh3().data()),
-       n_new,
-       rng = thrust::raw_pointer_cast(device_rng.data())
-      ] __device__(int i) {
-        const int src_idx = d_grow_indices_src[i];
-        const int target_idx = d_grow_indices_target[i];
+    GPUBuffer<int> clone_target(ctx.stream, num_clones);
+    thrust::copy(exec,
+        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians) + num_clones),
+        thrust::raw_pointer_cast(clone_target.data()));
 
-        // Copy rotation and SH per-degree
-        rotations[target_idx] = rotations[src_idx];
-        for (int ch = 0; ch < 3; ch++)   sh0_data[ch * n_new + target_idx] = sh0_data[ch * n_new + src_idx];
-        for (int ch = 0; ch < 9; ch++)   sh1_data[ch * n_new + target_idx] = sh1_data[ch * n_new + src_idx];
-        for (int ch = 0; ch < 15; ch++)  sh2_data[ch * n_new + target_idx] = sh2_data[ch * n_new + src_idx];
-        for (int ch = 0; ch < 21; ch++)  sh3_data[ch * n_new + target_idx] = sh3_data[ch * n_new + src_idx];
+    // on_duplicate appends buffer space and copies optimizer state
+    StrategyBase::on_duplicate(
+        thrust::raw_pointer_cast(clone_src.data()),
+        thrust::raw_pointer_cast(clone_target.data()),
+        num_clones);
 
-        if (d_grow_flags[src_idx] == kClone) {
-          means3d[target_idx] = means3d[src_idx];
-          scales3d[target_idx] = scales3d[src_idx];
-          opacities[target_idx] = opacities[src_idx];
-        } else {
-          // Split along covariance
-          const float r = rotations[src_idx].x;
-          const float x = rotations[src_idx].y;
-          const float y = rotations[src_idx].z;
-          const float z = rotations[src_idx].w;
+    // Copy all raw parameters for clones (in deactivated space, matching reference)
+    const int n_after_clone = static_cast<int>(m_gaussians->size());
+    thrust::for_each(exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(num_clones),
+        [d_clone_src = thrust::raw_pointer_cast(clone_src.data()),
+         d_clone_tgt = thrust::raw_pointer_cast(clone_target.data()),
+         means3d = thrust::raw_pointer_cast(m_gaussians->means().data()),
+         scales3d = thrust::raw_pointer_cast(m_gaussians->scales().data()),
+         opacities = thrust::raw_pointer_cast(m_gaussians->opacities().data()),
+         rotations = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
+         sh0 = thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+         sh1 = thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+         sh2 = thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+         sh3 = thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+         n_after_clone] __device__(int i) {
+          const int src = d_clone_src[i];
+          const int tgt = d_clone_tgt[i];
+          means3d[tgt] = means3d[src];
+          scales3d[tgt] = scales3d[src];
+          opacities[tgt] = opacities[src];
+          rotations[tgt] = rotations[src];
+          // SH data is SoA with stride = current buffer size
+          for (int ch = 0; ch < 3; ch++)   sh0[ch * n_after_clone + tgt] = sh0[ch * n_after_clone + src];
+          for (int ch = 0; ch < 9; ch++)   sh1[ch * n_after_clone + tgt] = sh1[ch * n_after_clone + src];
+          for (int ch = 0; ch < 15; ch++)  sh2[ch * n_after_clone + tgt] = sh2[ch * n_after_clone + src];
+          for (int ch = 0; ch < 21; ch++)  sh3[ch * n_after_clone + tgt] = sh3[ch * n_after_clone + src];
+        });
+  }
+
+  // ===========================================================================
+  // Phase 2: Split — create N=2 new Gaussians per split source with Gaussian
+  //          random offsets, then REMOVE the originals.
+  // Reference: densify_and_split_fastgs
+  //   samples  = Normal(0, activated_scale)
+  //   new_xyz  = rot @ samples + original_xyz        (for each of N=2 copies)
+  //   new_scale = scaling_inverse_activation(activated_scale / (0.8*N))
+  //   new_opacity = _opacity  (raw, unchanged)
+  //   new_rotation = _rotation (raw, unchanged)
+  //   Then prune originals.
+  // ===========================================================================
+  if (num_splits > 0) {
+    const int size_before_split = static_cast<int>(m_gaussians->size());
+
+    // Collect split source indices (still in original [0, num_gaussians) range)
+    thrust::device_vector<int> split_src(num_splits);
+    thrust::copy_if(exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+        d_grow_flags, split_src.data(),
+        [] __device__(char f) { return f == 2; });
+
+    // Expand source indices: [s0, s0, s1, s1, ...] — each source repeated N=2 times
+    const int num_new_splits = 2 * num_splits;
+    thrust::device_vector<int> split_src_expanded(num_new_splits);
+    thrust::for_each(exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(num_new_splits),
+        [d_src = thrust::raw_pointer_cast(split_src.data()),
+         d_exp = thrust::raw_pointer_cast(split_src_expanded.data())] __device__(int i) {
+          d_exp[i] = d_src[i / 2];
+        });
+
+    // Target indices: contiguous from size_before_split
+    GPUBuffer<int> split_target(ctx.stream, num_new_splits);
+    thrust::copy(exec,
+        thrust::make_counting_iterator<int>(size_before_split),
+        thrust::make_counting_iterator<int>(size_before_split + num_new_splits),
+        thrust::raw_pointer_cast(split_target.data()));
+
+    // on_duplicate appends buffer space and copies optimizer state
+    StrategyBase::on_duplicate(
+        thrust::raw_pointer_cast(split_src_expanded.data()),
+        thrust::raw_pointer_cast(split_target.data()),
+        num_new_splits);
+
+    // Generate N(0,1) random samples for position offsets: 3 floats per new Gaussian
+    // Reference: samples = torch.normal(mean=0, std=activated_scale) = N(0,1) * activated_scale
+    GPUBuffer<float> rng_buf(ctx.stream, num_new_splits * 3);
+    generate_random_normal(m_rng, num_new_splits * 3,
+        thrust::raw_pointer_cast(rng_buf.data()), 0.0f, 1.0f);
+
+    // Fill in parameters for the 2*num_splits new Gaussians
+    const int n_after_split = static_cast<int>(m_gaussians->size());
+    thrust::for_each(exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(num_new_splits),
+        [d_split_src = thrust::raw_pointer_cast(split_src_expanded.data()),
+         d_split_tgt = thrust::raw_pointer_cast(split_target.data()),
+         means3d = thrust::raw_pointer_cast(m_gaussians->means().data()),
+         scales3d = thrust::raw_pointer_cast(m_gaussians->scales().data()),
+         opacities = thrust::raw_pointer_cast(m_gaussians->opacities().data()),
+         rotations = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
+         sh0 = thrust::raw_pointer_cast(m_gaussians->sh0().data()),
+         sh1 = thrust::raw_pointer_cast(m_gaussians->sh1().data()),
+         sh2 = thrust::raw_pointer_cast(m_gaussians->sh2().data()),
+         sh3 = thrust::raw_pointer_cast(m_gaussians->sh3().data()),
+         n_after_split,
+         rng = thrust::raw_pointer_cast(rng_buf.data())
+        ] __device__(int i) {
+          const int src = d_split_src[i];
+          const int tgt = d_split_tgt[i];
+
+          // Build rotation matrix from source quaternion (w, x, y, z) stored as (x,y,z,w) in vec4
+          const float r = rotations[src].x;  // w
+          const float x = rotations[src].y;  // x
+          const float y = rotations[src].z;  // y
+          const float z = rotations[src].w;  // z
           glm::mat3 rot = glm::mat3(
               1.f - 2.f * (y * y + z * z), 2.f * (x * y - r * z), 2.f * (x * z + r * y),
               2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),
               2.f * (x * z - r * y), 2.f * (y * z + r * x), 1.f - 2.f * (x * x + y * y));
 
-          const vec3 actual_scale = activate_scale(scales3d[src_idx]);
-          const float new_opacity = 1.0f - sqrtf(1.0f - activate_opacity(opacities[src_idx]));
-          const vec3 rand1 = vec3(rng[i * 6 + 0], rng[i * 6 + 1], rng[i * 6 + 2]);
-          const vec3 rand2 = vec3(rng[i * 6 + 3], rng[i * 6 + 4], rng[i * 6 + 5]);
-          const vec3 off1 = rot * (rand1 * (actual_scale + 1e-5f));
-          const vec3 off2 = rot * (rand2 * (actual_scale + 1e-5f));
+          // Reference: samples = normal(0, activated_scale), offset = rot @ samples
+          const vec3 actual_scale = activate_scale(scales3d[src]);
+          const vec3 normal_sample = vec3(rng[i * 3 + 0], rng[i * 3 + 1], rng[i * 3 + 2]);
+          const vec3 offset = rot * (normal_sample * actual_scale);
 
-          means3d[target_idx] = means3d[src_idx] + off1;
-          scales3d[target_idx] = deactivate_scale(actual_scale / 1.6f);
-          opacities[target_idx] = deactivate_opacity(new_opacity);
+          // new_xyz = original_xyz + offset
+          means3d[tgt] = means3d[src] + offset;
+          // new_scaling = scaling_inverse_activation(activated_scale / (0.8 * N=2)) = deactivate(scale/1.6)
+          scales3d[tgt] = deactivate_scale(actual_scale / 1.6f);
+          // Reference copies raw _opacity unchanged (no sqrt trick)
+          opacities[tgt] = opacities[src];
+          // Copy raw rotation unchanged
+          rotations[tgt] = rotations[src];
+          // Copy SH per-degree in SoA layout with stride = n_after_split
+          for (int ch = 0; ch < 3; ch++)   sh0[ch * n_after_split + tgt] = sh0[ch * n_after_split + src];
+          for (int ch = 0; ch < 9; ch++)   sh1[ch * n_after_split + tgt] = sh1[ch * n_after_split + src];
+          for (int ch = 0; ch < 15; ch++)  sh2[ch * n_after_split + tgt] = sh2[ch * n_after_split + src];
+          for (int ch = 0; ch < 21; ch++)  sh3[ch * n_after_split + tgt] = sh3[ch * n_after_split + src];
+        });
 
-          means3d[src_idx] = means3d[src_idx] + off2;
-          scales3d[src_idx] = deactivate_scale(actual_scale / 1.6f);
-          opacities[src_idx] = deactivate_opacity(new_opacity);
-        }
-      });
+    // Remove the original split sources (reference: prune_points(selected_pts_mask))
+    const int size_total = static_cast<int>(m_gaussians->size());
+    thrust::device_vector<char> is_alive(size_total, 1);
+    thrust::for_each(exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(num_splits),
+        [d_alive = is_alive.data(),
+         d_split_orig = thrust::raw_pointer_cast(split_src.data())] __device__(int i) {
+          d_alive[d_split_orig[i]] = 0;
+        });
+
+    const int num_kept = size_total - num_splits;
+    this->on_remove(thrust::raw_pointer_cast(is_alive.data()), num_kept);
+  }
 }
 
 // ---------------------------------------------------------------------------

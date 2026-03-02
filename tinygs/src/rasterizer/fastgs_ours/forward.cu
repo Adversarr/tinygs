@@ -49,7 +49,10 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
     char* zero_copy,
     cudaEvent_t memset_per_tile_done,
     cudaEvent_t copy_n_instances_done,
-    cudaEvent_t preprocess_done)
+    cudaEvent_t preprocess_done,
+    bool metric_mode,
+    const int* metric_map,
+    int* metric_counts)
 {
     using namespace gs_nvtx;
     GS_FUNC_RANGE(); // 顶层函数范围（domain=fast_gs）
@@ -265,23 +268,47 @@ std::tuple<int, int, int, int, int> fast_gs::rasterization::forward(
 
     {
         GS_RANGE_SCOPE(m_blend, C_RED, catK(), n_buckets);
-        kernels::forward::blend_cu<<<grid, block, 0, major_stream>>>(
-            per_tile_buffers.instance_ranges,
-            per_tile_buffers.bucket_offsets,
-            per_instance_buffers.primitive_indices.Current(),
-            per_primitive_buffers.mean2d,
-            per_primitive_buffers.conic_opacity,
-            per_primitive_buffers.color,
-            image,
-            alpha,
-            per_tile_buffers.max_n_contributions,
-            per_tile_buffers.n_contributions,
-            per_bucket_buffers.tile_index,
-            per_bucket_buffers.color_transmittance,
-            width,
-            height,
-            grid_width,
-            n_tiles);
+        if (metric_mode) {
+            kernels::forward::blend_cu<true><<<grid, block, 0, major_stream>>>(
+                per_tile_buffers.instance_ranges,
+                per_tile_buffers.bucket_offsets,
+                per_instance_buffers.primitive_indices.Current(),
+                per_primitive_buffers.mean2d,
+                per_primitive_buffers.conic_opacity,
+                per_primitive_buffers.color,
+                image,
+                alpha,
+                per_tile_buffers.max_n_contributions,
+                per_tile_buffers.n_contributions,
+                per_bucket_buffers.tile_index,
+                per_bucket_buffers.color_transmittance,
+                width,
+                height,
+                grid_width,
+                n_tiles,
+                metric_map,
+                metric_counts);
+        } else {
+            kernels::forward::blend_cu<false><<<grid, block, 0, major_stream>>>(
+                per_tile_buffers.instance_ranges,
+                per_tile_buffers.bucket_offsets,
+                per_instance_buffers.primitive_indices.Current(),
+                per_primitive_buffers.mean2d,
+                per_primitive_buffers.conic_opacity,
+                per_primitive_buffers.color,
+                image,
+                alpha,
+                per_tile_buffers.max_n_contributions,
+                per_tile_buffers.n_contributions,
+                per_bucket_buffers.tile_index,
+                per_bucket_buffers.color_transmittance,
+                width,
+                height,
+                grid_width,
+                n_tiles,
+                nullptr,
+                nullptr);
+        }
         CHECK_CUDA(config::debug, "blend");
         tinygs::maybe_sync(major_stream);
     }

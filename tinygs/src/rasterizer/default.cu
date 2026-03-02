@@ -215,10 +215,13 @@ void DefaultRasterizer::forward(const RasterizeContext& ctx) {
       /* antialiasing */ false,
       /* radii */  thrust::raw_pointer_cast(m_impl->radii.data()),
 #ifdef NDEBUG
-      false
+      false,
 #else
-      /* debug */ true
+      /* debug */ true,
 #endif
+      /* metric_mode */ ctx.metric_mode,
+      /* metric_map */ ctx.metric_map ? ctx.metric_map->data() : nullptr,
+      /* metric_counts */ ctx.metric_counts ? ctx.metric_counts->data() : nullptr
   );
   m_impl->num_buckets = num_buckets;
   m_impl->num_rendered = num_rendered;

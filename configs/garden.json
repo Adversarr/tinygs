@@ -86,7 +86,7 @@
     "noise_lr_init": 8.0,
     "split_distance": 0.45,
     "opacity_reduction": 0.6,
-    "type": "improved"
+    "type": "fastgs"
   },
   "trainer": {
     "accumulate_grad_steps": 1,
@@ -100,7 +100,7 @@
     "grad_scaler": 128.0,
     "log_interval": 100,
     "max_sh_degree": 3,
-    "max_steps": 30000,
+    "max_steps": 5000,
     "near_plane": 0.01,
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,

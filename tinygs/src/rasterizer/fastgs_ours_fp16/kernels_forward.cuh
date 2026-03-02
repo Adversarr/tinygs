@@ -692,7 +692,6 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu(
      * 2. Replace the global memory IO to a more efficient, vectorized version.
      * 3. Replace the __half constants to their ushort16 version.
      */
-    constexpr int block_size_total = config::tile_width * config::tile_width; // 256
     constexpr int block_size_launch = config::block_size_blend / 2; // 128
 
     // SIMD acceleration for ushort2.
@@ -877,7 +876,6 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu(
         }
     }
 
-    const int pixel_idx = width * pixel_coords.y + pixel_coords.x; // logical.
     const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
         /* row */ pixel_coords.y,
         /* col */ pixel_coords.x,
@@ -914,6 +912,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu(
 }
 
 // launch as 128, get 256 throughput, 2 pixel per thread.
+template <bool METRIC_MODE>
 __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     const uint2* __restrict__ tile_instance_ranges,
     const uint* __restrict__ tile_bucket_offsets,
@@ -929,8 +928,9 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     const uint width,
     const uint height,
     const uint grid_width,
-    const uint n_tiles) {
-    constexpr int block_size_total = config::tile_width * config::tile_width; // 256
+    const uint n_tiles,
+    const int* __restrict__ metric_map,
+    int* __restrict__ metric_counts) {
     constexpr int block_size_launch = config::block_size_blend / 2; // 128
 
     // SIMD acceleration for ushort2.
@@ -951,7 +951,6 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
     const __half2 h0_5_2 = make_half2(h0_5, h0_5);
     const __half2 h0_2 = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
     const float2 anchor = make_float2(group_index.x, group_index.y);
-    constexpr uint32_t one_u162 = 0x00010001u;
     const __half2 one_h2 = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
     const __half2 least_acceptable_transmittance_h2 = make_half2(__float2half_rd(config::transmittance_threshold * TINYGS_SCALE_FULL),
                                                                  __float2half_rd(config::transmittance_threshold * TINYGS_SCALE_FULL));
@@ -1116,6 +1115,25 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
             TINYGS_HALF2_TO_CUI(next_transmittance_h),
             enable_this_mask);
 
+                    if constexpr (METRIC_MODE) {
+                        if (metric_map != nullptr && metric_counts != nullptr) {
+                            const int fetched_base = tile_range.x + (n_points_total - n_points_remaining);
+                            const uint prim_idx = instance_primitive_indices[fetched_base + j];
+                            if ((enable_this_mask & 0x0000FFFFu) && pixel_coords.x < width && pixel_coords.y < height) {
+                                const int pix0 = width * pixel_coords.y + pixel_coords.x;
+                                if (metric_map[pix0] != 0) {
+                                    atomicAdd(&metric_counts[prim_idx], 1);
+                                }
+                            }
+                            if ((enable_this_mask & 0xFFFF0000u) && pixel_coords.x + 1 < width && pixel_coords.y < height) {
+                                const int pix1 = width * pixel_coords.y + pixel_coords.x + 1;
+                                if (metric_map[pix1] != 0) {
+                                    atomicAdd(&metric_counts[prim_idx], 1);
+                                }
+                            }
+                        }
+          }
+
           //? we set max_contributions to 0xFFFF (for each ushort). We increase
           //the value by 1 everytime ? Therefore, no overflow will be caused.
           n_contributions.data_u32 = __vaddus2(n_contributions.data_u32, unfinished.data_u32);
@@ -1131,7 +1149,6 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
       }
     }
 
-    const int pixel_idx = width * pixel_coords.y + pixel_coords.x; // logical.
     const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
         /* row */ pixel_coords.y,
         /* col */ pixel_coords.x,

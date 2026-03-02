@@ -53,7 +53,10 @@ namespace CudaRasterizer
 			float* depth,
 			bool antialiasing,
 			int* radii = nullptr,
-			bool debug = false);
+			bool debug = false,
+			bool metric_mode = false,
+			const int* metric_map = nullptr,
+			int* metric_counts = nullptr);
 
 		static void backward(
 			const int P, int D, int M, int R, int B,

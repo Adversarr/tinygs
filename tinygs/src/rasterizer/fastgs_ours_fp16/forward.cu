@@ -49,13 +49,15 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
     char* zero_copy,
     cudaEvent_t memset_per_tile_done,
     cudaEvent_t copy_n_instances_done,
-    cudaEvent_t preprocess_done)
+    cudaEvent_t preprocess_done,
+    bool metric_mode,
+    const int* metric_map,
+    int* metric_counts)
 {
     using namespace gs_nvtx;
     GS_FUNC_RANGE(); // 顶层函数范围（domain=fast_gs）
 
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_width), 1);
-    const dim3 block(config::tile_width, config::tile_width, 1);
     const int n_tiles = grid.x * grid.y;
     const int grid_width = grid.x;
 
@@ -263,23 +265,45 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
     {
         const dim3 block2(config::tile_width / 2, config::tile_width, 1);
         GS_RANGE_SCOPE(m_blend, C_RED, catK(), n_buckets);
-        // kernels::forward::blend_cu<<<grid, block, 0, major_stream>>>(
-        kernels::forward::blend_cu2<<<grid, block2, 0, major_stream>>>(
-            per_tile_buffers.instance_ranges,
-            per_tile_buffers.bucket_offsets,
-            per_instance_buffers.primitive_indices.Current(),
-            per_primitive_buffers.mean2d,
-            per_primitive_buffers.primitive_infos,
-            image,
-            alpha,
-            per_tile_buffers.max_n_contributions,
-            per_tile_buffers.n_contributions,
-            per_bucket_buffers.tile_index,
-            per_bucket_buffers.color_transmittance,
-            width,
-            height,
-            grid_width,
-            n_tiles);
+        if (metric_mode) {
+            kernels::forward::blend_cu2<true><<<grid, block2, 0, major_stream>>>(
+                per_tile_buffers.instance_ranges,
+                per_tile_buffers.bucket_offsets,
+                per_instance_buffers.primitive_indices.Current(),
+                per_primitive_buffers.mean2d,
+                per_primitive_buffers.primitive_infos,
+                image,
+                alpha,
+                per_tile_buffers.max_n_contributions,
+                per_tile_buffers.n_contributions,
+                per_bucket_buffers.tile_index,
+                per_bucket_buffers.color_transmittance,
+                width,
+                height,
+                grid_width,
+                n_tiles,
+                metric_map,
+                metric_counts);
+        } else {
+            kernels::forward::blend_cu2<false><<<grid, block2, 0, major_stream>>>(
+                per_tile_buffers.instance_ranges,
+                per_tile_buffers.bucket_offsets,
+                per_instance_buffers.primitive_indices.Current(),
+                per_primitive_buffers.mean2d,
+                per_primitive_buffers.primitive_infos,
+                image,
+                alpha,
+                per_tile_buffers.max_n_contributions,
+                per_tile_buffers.n_contributions,
+                per_bucket_buffers.tile_index,
+                per_bucket_buffers.color_transmittance,
+                width,
+                height,
+                grid_width,
+                n_tiles,
+                nullptr,
+                nullptr);
+        }
         CHECK_CUDA(config::debug, "blend");
         tinygs::maybe_sync(major_stream);
     }

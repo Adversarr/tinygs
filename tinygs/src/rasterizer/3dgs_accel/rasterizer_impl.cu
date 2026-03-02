@@ -389,7 +389,10 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 	float* invdepth,
 	bool antialiasing,
 	int* radii,
-	bool debug)
+	bool debug,
+	bool metric_mode,
+	const int* metric_map,
+	int* metric_counts)
 {
 	const float focal_y = height / (2.0f * tan_fovy);
 	const float focal_x = width / (2.0f * tan_fovx);
@@ -517,7 +520,10 @@ std::tuple<int,int> CudaRasterizer::Rasterizer::forward(
 		background,
 		imgState.pixel_colors,
 		geomState.depths,
-		invdepth), debug)
+		invdepth,
+		metric_mode,
+		metric_map,
+		metric_counts), debug)
 
 	// CHECK_CUDA(cudaMemcpy(imgState.pixel_colors, out_color, sizeof(float) * width * height * NUM_CHANNELS_3DGS, cudaMemcpyDeviceToDevice), debug);
 	convert_to_tiled<<<(width * height * 3 + 255) / 256, 256>>>(

@@ -269,7 +269,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 // Main rasterization method. Collaboratively works on one tile per
 // block, each thread treats one pixel. Alternates between fetching 
 // and rasterizing data.
-template <uint32_t CHANNELS>
+template <uint32_t CHANNELS, bool METRIC_MODE>
 __global__ void __launch_bounds__(BLOCK_X * BLOCK_Y)
 renderCUDA(
 	const uint2* __restrict__ ranges,
@@ -286,7 +286,9 @@ renderCUDA(
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
 	const float* __restrict__ depths,
-	float* __restrict__ invdepth)
+	float* __restrict__ invdepth,
+	const int* __restrict__ metric_map,
+	int* __restrict__ metric_counts)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -395,6 +397,12 @@ renderCUDA(
 
 			expected_invdepth += (1.f / depths[collected_id[j]]) * alpha * T;
 
+			if constexpr (METRIC_MODE) {
+				if (metric_map != nullptr && metric_counts != nullptr && inside && metric_map[pix_id] != 0) {
+					atomicAdd(&metric_counts[collected_id[j]], 1);
+				}
+			}
+
 			T = test_T;
 
 			// Keep track of last range entry to update this
@@ -440,24 +448,50 @@ void FORWARD::render(
 	const float* bg_color,
 	float* out_color,
 	float* depths,
-	float* depth)
+	float* depth,
+	bool metric_mode,
+	const int* metric_map,
+	int* metric_counts)
 {
-	renderCUDA<NUM_CHANNELS_3DGS> <<<grid, block >>> (
-		ranges,
-		point_list,
-		per_tile_bucket_offset, bucket_to_tile,
-		sampled_T, sampled_ar, sampled_ard,
-		W, H,
-		means2D,
-		colors,
-		conic_opacity,
-		final_T,
-		n_contrib,
-		max_contrib,
-		bg_color,
-		out_color,
-		depths,
-		depth);
+	if (metric_mode) {
+		renderCUDA<NUM_CHANNELS_3DGS, true> <<<grid, block >>> (
+			ranges,
+			point_list,
+			per_tile_bucket_offset, bucket_to_tile,
+			sampled_T, sampled_ar, sampled_ard,
+			W, H,
+			means2D,
+			colors,
+			conic_opacity,
+			final_T,
+			n_contrib,
+			max_contrib,
+			bg_color,
+			out_color,
+			depths,
+			depth,
+			metric_map,
+			metric_counts);
+	} else {
+		renderCUDA<NUM_CHANNELS_3DGS, false> <<<grid, block >>> (
+			ranges,
+			point_list,
+			per_tile_bucket_offset, bucket_to_tile,
+			sampled_T, sampled_ar, sampled_ard,
+			W, H,
+			means2D,
+			colors,
+			conic_opacity,
+			final_T,
+			n_contrib,
+			max_contrib,
+			bg_color,
+			out_color,
+			depths,
+			depth,
+			nullptr,
+			nullptr);
+	}
 }
 
 void FORWARD::preprocess(int P, int D, int M,

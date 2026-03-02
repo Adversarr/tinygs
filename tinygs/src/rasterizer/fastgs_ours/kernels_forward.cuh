@@ -566,6 +566,7 @@ __global__ void extract_bucket_counts(
     tile_n_buckets[tile_idx] = n_buckets;
 }
 
+template <bool METRIC_MODE>
 __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     const uint2* tile_instance_ranges,
     const uint* tile_bucket_offsets,
@@ -582,7 +583,9 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
     const uint width,
     const uint height,
     const uint grid_width,
-    const uint n_tiles) {
+    const uint n_tiles,
+    const int* __restrict__ metric_map,
+    int* __restrict__ metric_counts) {
     auto block = cg::this_thread_block();
     const dim3 group_index = block.group_index();
     const dim3 thread_index = block.thread_index();
@@ -669,6 +672,16 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
                 continue;
             }
             color_pixel += transmittance * alpha * collected_color[j];
+            if constexpr (METRIC_MODE) {
+                if (metric_map != nullptr && metric_counts != nullptr) {
+                    const int pixel_idx = width * pixel_coords.y + pixel_coords.x;
+                    if (metric_map[pixel_idx] != 0) {
+                        const int fetched_base = tile_range.x + (n_points_total - n_points_remaining);
+                        const uint primitive_idx = instance_primitive_indices[fetched_base + j];
+                        atomicAdd(&metric_counts[primitive_idx], 1);
+                    }
+                }
+            }
             transmittance = next_transmittance;
             n_contributions = n_possible_contributions;
         }
@@ -681,7 +694,6 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
         }
     }
     if (inside) {
-        const int pixel_idx = width * pixel_coords.y + pixel_coords.x; // logical.
         const uint physical_pixel_idx = tinygs::get_linear_index_tiled(
                 /* row */ pixel_coords.y,
                 /* col */ pixel_coords.x,

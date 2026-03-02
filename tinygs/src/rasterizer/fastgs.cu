@@ -204,7 +204,10 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
               /* zero_copy */ m_impl->zero_copy,
               /* memset_per_tile_done */ m_impl->memset_per_tile_done,
               /* copy_n_instances_done */ m_impl->copy_n_instances_done,
-              /* preprocess_done */ m_impl->preprocess_done);
+              /* preprocess_done */ m_impl->preprocess_done,
+              /* metric_mode */ ctx.metric_mode,
+              /* metric_map */ ctx.metric_map ? ctx.metric_map->data() : nullptr,
+              /* metric_counts */ ctx.metric_counts ? ctx.metric_counts->data() : nullptr);
       m_impl->n_visible_primitives = n_visible_primitives;
       m_impl->n_instances = n_instances;
       m_impl->n_buckets = n_buckets;
@@ -250,7 +253,10 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
               /* zero_copy */ m_impl->zero_copy,
               /* memset_per_tile_done */ m_impl->memset_per_tile_done,
               /* copy_n_instances_done */ m_impl->copy_n_instances_done,
-              /* preprocess_done */ m_impl->preprocess_done);
+              /* preprocess_done */ m_impl->preprocess_done,
+              /* metric_mode */ ctx.metric_mode,
+              /* metric_map */ ctx.metric_map ? ctx.metric_map->data() : nullptr,
+              /* metric_counts */ ctx.metric_counts ? ctx.metric_counts->data() : nullptr);
       m_impl->n_visible_primitives = n_visible_primitives;
       m_impl->n_instances = n_instances;
       m_impl->n_buckets = n_buckets;

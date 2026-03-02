@@ -65,7 +65,10 @@ namespace FORWARD
 		const float* bg_color,
 		float* out_color,
 		float* depths,
-		float* depth);
+		float* depth,
+		bool metric_mode = false,
+		const int* metric_map = nullptr,
+		int* metric_counts = nullptr);
 }
 
 

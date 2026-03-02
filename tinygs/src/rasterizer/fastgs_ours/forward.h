@@ -42,6 +42,9 @@ namespace fast_gs::rasterization {
         char* zero_copy,
         cudaEvent_t memset_per_tile_done,
         cudaEvent_t copy_n_instances_done,
-        cudaEvent_t preprocess_done);
+        cudaEvent_t preprocess_done,
+        bool metric_mode = false,
+        const int* metric_map = nullptr,
+        int* metric_counts = nullptr);
 
 }
