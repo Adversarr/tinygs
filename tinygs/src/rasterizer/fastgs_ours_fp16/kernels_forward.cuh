@@ -207,7 +207,7 @@ __device__ uint compute_exact_n_touched_tiles(
     uint mask = remaining_threads;
     while (mask) {
         const uint current_lane = __ffs(mask) - 1;  // [0,31]
-        mask &= (mask - 1);                          // 清掉最低位的置位
+        mask &= (mask - 1);                          // Clear the lowest set bit
 
         const uint4 screen_bounds_coop = make_uint4(
             __shfl_sync(0xffffffffu, screen_bounds.x, current_lane),

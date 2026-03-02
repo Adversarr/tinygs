@@ -524,10 +524,10 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     float3 dL_dcolor_accum = {0.0f, 0.0f, 0.0f};
 
     union union_per_pixel {
-      PerPixel full; // 完整 16B 结构
+      PerPixel full; // Full 16B structure
       struct {
-        PerPixel_Upper upper; // 前 8B
-        PerPixel_Lower lower; // 后 8B
+        PerPixel_Upper upper; // First 8B
+        PerPixel_Lower lower; // Last 8B
       } parts;
 
       uint4 as_uint4; // also 16B

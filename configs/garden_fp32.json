@@ -6,14 +6,14 @@
   "dataset": {
     "root_path": "/data/gaussian-splatting/360_v2_converted/garden/train/",
     "extension": "JPG",
-    "resolution": 2,
+    "resolution": -1,
     "resolution_scale": 1.0,
     "type": "image"
   },
   "test_dataset": {
     "root_path": "/data/gaussian-splatting/360_v2_converted/garden/val/",
     "extension": "JPG",
-    "resolution": 2,
+    "resolution": -1,
     "resolution_scale": 1.0,
     "type": "image"
   },
@@ -82,7 +82,7 @@
     "max_screen_size": 10,
     "pruning_opacity_threshold": 0.005,
     "pruning_scale_threshold": 0.1,
-    "refine_every": 100,
+    "refine_every": 500,
     "reset_every": 3000,
     "reset_reset_optimizer": false,
     "seed": 42,
@@ -90,7 +90,7 @@
     "noise_lr_init": 8.0,
     "split_distance": 0.45,
     "opacity_reduction": 0.6,
-    "type": "improved"
+    "type": "fastgs"
   },
   "trainer": {
     "accumulate_grad_steps": 1,
@@ -101,10 +101,10 @@
     "early_stopping_threshold": 1.0e-6,
     "enable_early_stopping": false,
     "far_plane": 100.0,
-    "grad_scaler": 128.0,
+    "grad_scaler": 1.0,
     "log_interval": 100,
     "max_sh_degree": 3,
-    "max_steps": 30000,
+    "max_steps": 5000,
     "near_plane": 0.01,
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,

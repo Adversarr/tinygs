@@ -33,7 +33,7 @@ inline ncat const& catC()  { return ncat::get<cat_cub>(); }
 inline ncat const& catM()  { return ncat::get<cat_mem>(); }
 inline ncat const& catCp() { return ncat::get<cat_copy>(); }
 
-// Common registered message tags (可按需扩展)
+// Common registered message tags (can be extended as needed)
 struct m_preprocess          { static constexpr char const* message{"preprocess"}; };
 struct m_sort_depth          { static constexpr char const* message{"sort_depth"}; };
 struct m_apply_depth_order   { static constexpr char const* message{"apply_depth_ordering"}; };

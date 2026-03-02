@@ -148,7 +148,7 @@ void load4a(const packed_half2x2* src, __half2& x, __half2& y, __half2& z, __hal
   w = ui32ashalf2(u.w);
 }
 
-// 从每 3 位中提取一位并压缩回原始 10-bit 值
+// Extract one bit from every 3 bits and compress back to original 10-bit value
 __host__ __device__ inline uint32_t compact_bits(uint32_t v) {
     v &= 0x49249249u;                     // keep bits at positions 0,3,6,...
     v = (v | (v >> 2)) & 0xC30C30C3u;
@@ -158,13 +158,13 @@ __host__ __device__ inline uint32_t compact_bits(uint32_t v) {
     return v;
 }
 __host__ __device__ inline uint32_t morton3D_invert_x(uint32_t code) {
-    return compact_bits(code);            // x 位位于 0,3,6,...
+    return compact_bits(code);            // x bits at positions 0,3,6,...
 }
 __host__ __device__ inline uint32_t morton3D_invert_y(uint32_t code) {
-    return compact_bits(code >> 1);       // y 位位于 1,4,7,...
+    return compact_bits(code >> 1);       // y bits at positions 1,4,7,...
 }
 __host__ __device__ inline uint32_t morton3D_invert_z(uint32_t code) {
-    return compact_bits(code >> 2);       // z 位位于 2,5,8,...
+    return compact_bits(code >> 2);       // z bits at positions 2,5,8,...
 }
 
 __device__ __forceinline__ uint2 morton2d_invert(uint32_t lin) {

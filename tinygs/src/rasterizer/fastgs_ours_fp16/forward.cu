@@ -56,7 +56,7 @@ std::tuple<int, int, int, int, int> tinygs::fast_gs_fp16::forward(
     int* metric_counts)
 {
     using namespace gs_nvtx;
-    GS_FUNC_RANGE(); // 顶层函数范围（domain=fast_gs）
+    GS_FUNC_RANGE(); // Top-level function scope (domain=fast_gs)
 
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_width), 1);
     const int n_tiles = grid.x * grid.y;
