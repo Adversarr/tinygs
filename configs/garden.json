@@ -78,7 +78,7 @@
     "max_screen_size": 10,
     "pruning_opacity_threshold": 0.005,
     "pruning_scale_threshold": 0.1,
-    "refine_every": 100,
+    "refine_every": 500,
     "reset_every": 3000,
     "reset_reset_optimizer": false,
     "seed": 42,

@@ -33,7 +33,11 @@ FastGSStrategy::FastGSStrategy(
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer)
-    : StrategyBase(gaussians, gaussians_grad, optimizer) {}
+    : StrategyBase(gaussians, gaussians_grad, optimizer) {
+  // Reference FastGS training defaults (ref_impl/FastGS/train_base.sh)
+  // use densification every 500 iterations.
+  m_params.refine_every = 500;
+}
 
 FastGSStrategy::~FastGSStrategy() = default;
 
