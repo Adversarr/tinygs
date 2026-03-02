@@ -209,6 +209,15 @@ target_compile_definitions(tinygs PRIVATE
     $<$<COMPILE_LANGUAGE:CUDA>:__CUDA_NO_BFLOAT16_CONVERSIONS__>
 )
 
+
+# Manually set NDEBUG if Release/RelWithDebInfo
+target_compile_definitions(tinygs
+    PRIVATE
+        $<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>>:NDEBUG>
+)
+
+
+
 if (TINYGS_ENABLE_PROFILE)
     target_compile_options(tinygs PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>

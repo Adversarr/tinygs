@@ -66,9 +66,16 @@ public:
   float m_absgrad_threshold = 0.0012f;     ///< Split abs gradient threshold
   float m_percent_dense = 0.001f;          ///< Clone/split scale boundary
   float m_loss_thresh = 0.1f;             ///< Per-pixel L1 threshold for metric map
+  bool m_normalize_metric_l1 = true;       ///< Min-max normalize per-pixel L1 before thresholding
   int m_metric_num_cameras = 10;           ///< Number of random cameras for scoring
+  bool m_sample_cameras_without_replacement = true; ///< Sample metric cameras without replacement
+  float m_photometric_l1_weight = 0.8f;    ///< Photometric L1 mixture weight
+  float m_photometric_ssim_weight = 0.2f;  ///< Photometric SSIM-loss mixture weight (1 - SSIM)
+  bool m_sanitize_nan_gradients = true;    ///< Replace non-finite grad stats with zero
   float m_importance_threshold = 5.0f;     ///< Minimum importance score for densification
   float m_prune_budget_ratio = 0.5f;       ///< Fraction of standard prune candidates to remove
+  bool m_use_multinomial_pruning = true;   ///< Use stochastic multinomial pruning (without replacement)
+  bool m_prune_degenerate_rotation = false; ///< Prune degenerate rotation quaternions
   float m_final_prune_score_threshold = 0.9f; ///< Pruning score above which Gaussians are removed
   float m_final_prune_opacity_threshold = 0.1f; ///< Opacity below which Gaussians are removed in final prune
   int m_final_prune_start = 18000;         ///< First final-prune step (>15000 and divisible by 3000)

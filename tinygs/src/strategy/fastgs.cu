@@ -20,10 +20,18 @@
 #include <thrust/sequence.h>
 #include <thrust/sort.h>
 #include <nvtx3/nvtx3.hpp>
+#include <algorithm>
+#include <cmath>
+#include <limits>
+#include <numeric>
+#include <vector>
 
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/loss/fused_ssim.hpp"
+#include "tinygs/loss/l1.hpp"
 #include "tinygs/random/device.cuh"
+#include "tinygs/random/multinomial.hpp"
 #include "tinygs/strategy/fastgs.hpp"
 #include "tinygs/utils/image_format.hpp"
 
@@ -53,19 +61,17 @@ void FastGSStrategy::set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) 
 // CUDA kernels
 // ---------------------------------------------------------------------------
 
-/// @brief Compute per-pixel mean L1 loss across 3 channels and produce a binary metric map.
-///        metric_map[pixel] = 1 if mean_L1 > loss_thresh, 0 otherwise.
+/// @brief Compute per-pixel mean L1 loss across 3 channels.
 ///        Supports Float32 (CHW padded) images.
-__global__ void compute_metric_map_kernel(
+__global__ void compute_l1_map_kernel(
     int n_pixels,
     const float* __restrict__ rendered,    // CHW padded image (rendered)
     const float* __restrict__ gt,          // CHW padded image (ground truth)
-    int* __restrict__ metric_map,          // H*W output binary map
+  float* __restrict__ l1_map,            // H*W output mean-L1 map
     int padded_w,                          // padded width (pixels per row per channel)
     int padded_h,                          // padded height
     int width,                             // actual width
-    int height,                            // actual height
-    float loss_thresh) {
+  int height) {                          // actual height
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= n_pixels) return;
   const int py = idx / width;
@@ -78,7 +84,27 @@ __global__ void compute_metric_map_kernel(
     const int offset = c * padded_w * padded_h + py * padded_w + px;
     l1_sum += fabsf(fminf(fmaxf(rendered[offset], 0.0f), 1.0f) - gt[offset]);
   }
-  metric_map[idx] = (l1_sum / 3.0f > loss_thresh) ? 1 : 0;
+  l1_map[idx] = l1_sum / 3.0f;
+}
+
+/// @brief Threshold per-pixel L1 map to a binary metric map.
+///        Optionally min-max normalizes L1 values to [0,1] before thresholding.
+__global__ void threshold_metric_map_kernel(
+    int n_pixels,
+    const float* __restrict__ l1_map,
+    int* __restrict__ metric_map,
+    float loss_thresh,
+    float min_l1,
+    float inv_range,
+    bool normalize_l1) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= n_pixels) return;
+  float value = l1_map[idx];
+  if (normalize_l1) {
+    value = (value - min_l1) * inv_range;
+    value = fminf(fmaxf(value, 0.0f), 1.0f);
+  }
+  metric_map[idx] = (value > loss_thresh) ? 1 : 0;
 }
 
 /// @brief Accumulate importance and pruning scores from densification info.
@@ -111,8 +137,9 @@ __global__ void clamp_opacity_kernel(int n, float* __restrict__ opacities, float
 //
 // For each camera:
 //   1. Render the scene (first render) to get the rendered image.
-//   2. Compute per-pixel mean L1 loss vs GT, then threshold to get a binary metric_map.
-//   3. Compute photometric loss = (1-0.2)*L1 + 0.2*(1-SSIM)  [simplified to L1 here]
+//   2. Compute per-pixel mean L1 loss vs GT, min-max normalize to [0,1], then threshold
+//      to get a binary metric_map.
+//   3. Compute photometric loss = l1_weight*L1 + ssim_weight*(1-SSIM)
 //   4. Render again (second render) with metric_mode=true and metric_map set,
 //      to get per-Gaussian accum_metric_counts via atomicAdd in the blend kernel.
 //   5. Accumulate full_metric_counts += accum_metric_counts  (if densify=true)
@@ -149,9 +176,32 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   // Number of cameras to render
   const int num_cameras = std::min(m_metric_num_cameras, static_cast<int>(dataset_size));
 
+  // Build sampled camera indices.
+  std::vector<size_t> sampled_indices(static_cast<size_t>(num_cameras), 0);
+  if (m_sample_cameras_without_replacement) {
+    std::vector<size_t> all_indices(dataset_size);
+    std::iota(all_indices.begin(), all_indices.end(), size_t{0});
+    for (int i = 0; i < num_cameras; ++i) {
+      const size_t remaining = dataset_size - static_cast<size_t>(i);
+      const size_t j = static_cast<size_t>(i) +
+          static_cast<size_t>(m_rng.next_uint(static_cast<uint32_t>(remaining)));
+      std::swap(all_indices[static_cast<size_t>(i)], all_indices[j]);
+      sampled_indices[static_cast<size_t>(i)] = all_indices[static_cast<size_t>(i)];
+    }
+  } else {
+    for (int i = 0; i < num_cameras; ++i) {
+      sampled_indices[static_cast<size_t>(i)] =
+          static_cast<size_t>(m_rng.next_uint(static_cast<uint32_t>(dataset_size)));
+    }
+  }
+
+  // Photometric losses reused per camera.
+  L1Loss l1_loss;
+  FusedSSIMLoss ssim_loss;
+
   for (int cam_i = 0; cam_i < num_cameras; cam_i++) {
-    // Pick a random camera
-    const size_t idx = m_rng.next_uint(static_cast<uint32_t>(dataset_size));
+    // Pick a sampled camera
+    const size_t idx = sampled_indices[static_cast<size_t>(cam_i)];
     auto data = (*dataset)[idx];
 
     // IMPORTANT: use the active training resolution from ctx (progressive resolution aware),
@@ -211,53 +261,79 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     if (rendered_image.data_type == DataType::Float16) {
       half_to_float_gpu(rendered_f32.data(),
         reinterpret_cast<const float16_t*>(rendered_image.data),
-        rendered_image.shape.padded_size());
+        rendered_image.shape.padded_size(),
+        ctx.stream);
     } else {
       CUDA_CHECK_THROW(cudaMemcpyAsync(rendered_f32.data(), rendered_image.data,
         rendered_image.shape.padded_size() * sizeof(float), cudaMemcpyDeviceToDevice, ctx.stream));
     }
 
-    // Compute per-pixel L1 metric_map (binary threshold)
+    // Compute per-pixel L1 map and threshold into binary metric map.
     const int n_pixels = width * height;
+    GPUBuffer<float> l1_map(ctx.stream, n_pixels);
     GPUBuffer<int> metric_map(ctx.stream, n_pixels);
-    linear_kernel(compute_metric_map_kernel, 0, ctx.stream, n_pixels,
+    linear_kernel(compute_l1_map_kernel, 0, ctx.stream, n_pixels,
       rendered_f32.data(),
         static_cast<const float*>(gt_image.data),
-        metric_map.data(),
-        padded_w, padded_h, width, height, m_loss_thresh);
+        l1_map.data(),
+        padded_w, padded_h, width, height);
 
-    // Compute scalar photometric loss: mean L1 over all pixels
-    // Reference uses (1-0.2)*L1 + 0.2*(1-SSIM); we approximate with pure L1
-    // since we don't have a fused_ssim reduction on GPU yet.
-    // The metric score weighting still captures the essential behaviour.
-    //
-    // photometric_loss is a single scalar per camera.
+    auto exec = thrust::cuda::par.on(ctx.stream);
+    auto l1_begin = thrust::device_pointer_cast(l1_map.data());
+    auto l1_end = l1_begin + n_pixels;
+    float min_l1 = thrust::reduce(exec, l1_begin, l1_end,
+        std::numeric_limits<float>::max(), thrust::minimum<float>());
+    float max_l1 = thrust::reduce(exec, l1_begin, l1_end,
+        std::numeric_limits<float>::lowest(), thrust::maximum<float>());
+    float range = max_l1 - min_l1;
+    if (range < 1e-8f) {
+      range = 1.0f;
+      min_l1 = 0.0f;
+    }
+    const float inv_range = 1.0f / range;
+
+    linear_kernel(threshold_metric_map_kernel, 0, ctx.stream, n_pixels,
+        l1_map.data(),
+        metric_map.data(),
+        m_loss_thresh,
+        min_l1,
+        inv_range,
+        m_normalize_metric_l1);
+
+    // Compute scalar photometric loss:
+    //   l1_weight * mean(L1) + ssim_weight * mean(1 - SSIM)
     float photometric_loss_h = 0.0f;
     {
-      // Compute total L1 on GPU and copy to host
-      thrust::device_vector<float> pixel_l1(n_pixels);
-      auto* d_pixel_l1 = thrust::raw_pointer_cast(pixel_l1.data());
-      auto exec = thrust::cuda::par.on(ctx.stream);
-      const float* d_rendered = rendered_f32.data();
-      const float* d_gt = static_cast<const float*>(gt_image.data);
-      const int pw = padded_w;
-      const int ph = padded_h;
-      const int w = width;
-      thrust::for_each(exec,
-          thrust::make_counting_iterator<int>(0),
-          thrust::make_counting_iterator<int>(n_pixels),
-          [d_rendered, d_gt, d_pixel_l1, pw, ph, w] __device__(int idx) {
-            const int py = idx / w;
-            const int px = idx % w;
-            float l1_sum = 0.0f;
-            for (int c = 0; c < 3; c++) {
-              const int offset = c * pw * ph + py * pw + px;
-              l1_sum += fabsf(fminf(fmaxf(d_rendered[offset], 0.0f), 1.0f) - d_gt[offset]);
-            }
-            d_pixel_l1[idx] = l1_sum / 3.0f;
-          });
-      photometric_loss_h = thrust::reduce(exec, pixel_l1.begin(), pixel_l1.end(), 0.0f, thrust::plus<float>())
-                           / static_cast<float>(n_pixels);
+      ImageShape loss_shape{static_cast<uint32_t>(width), static_cast<uint32_t>(height), 3};
+      GPUMemory<float> l1_loss_buf(loss_shape.padded_size());
+      l1_loss_buf.memset(0);
+      GPUMemory<float> ssim_loss_buf(loss_shape.padded_size());
+      ssim_loss_buf.memset(0);
+
+      LossContext l1_ctx;
+      l1_ctx.pred = Image(loss_shape, DataType::Float32, rendered_f32.data());
+      l1_ctx.target = gt_image;
+      l1_ctx.loss = Image(loss_shape, DataType::Float32, l1_loss_buf.data());
+      l1_ctx.grad = Image();
+      l1_ctx.stream = ctx.stream;
+      l1_loss.evaluate(l1_ctx, 1.0f);
+
+      LossContext ssim_ctx;
+      ssim_ctx.pred = Image(loss_shape, DataType::Float32, rendered_f32.data());
+      ssim_ctx.target = gt_image;
+      ssim_ctx.loss = Image(loss_shape, DataType::Float32, ssim_loss_buf.data());
+      ssim_ctx.grad = Image();
+      ssim_ctx.stream = ctx.stream;
+      ssim_loss.evaluate(ssim_ctx, 1.0f);
+
+      auto l1_loss_begin = thrust::device_pointer_cast(l1_loss_buf.data());
+      auto l1_loss_end = l1_loss_begin + static_cast<int>(loss_shape.padded_size());
+      auto ssim_loss_begin = thrust::device_pointer_cast(ssim_loss_buf.data());
+      auto ssim_loss_end = ssim_loss_begin + static_cast<int>(loss_shape.padded_size());
+      const float l1_term = thrust::reduce(exec, l1_loss_begin, l1_loss_end, 0.0f, thrust::plus<float>());
+      const float ssim_term = thrust::reduce(exec, ssim_loss_begin, ssim_loss_end, 0.0f, thrust::plus<float>());
+      photometric_loss_h = m_photometric_l1_weight * l1_term +
+                           m_photometric_ssim_weight * ssim_term;
     }
 
     // -- Second render: with metric_mode=true to count per-Gaussian contributions --
@@ -291,7 +367,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
 
     // Accumulate results
-    auto exec = thrust::cuda::par.on(ctx.stream);
+    exec = thrust::cuda::par.on(ctx.stream);
     const int* d_accum_counts = metric_ctx.metric_counts->data();
     float* d_full_score = thrust::raw_pointer_cast(full_metric_score.data());
     int* d_full_counts = thrust::raw_pointer_cast(full_metric_counts.data());
@@ -454,10 +530,15 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
       thrust::make_counting_iterator<int>(0),
       thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
       [d_densification_info, d_scale, d_grow_flags, d_importance,
-       clone_thresh, split_thresh, scale_boundary, importance_thresh] __device__(int i) {
+       clone_thresh, split_thresh, scale_boundary, importance_thresh,
+       sanitize_non_finite = m_sanitize_nan_gradients] __device__(int i) {
         const float counter = fmaxf(d_densification_info[i].accum_counter, 1.0f);
-        const float grad = d_densification_info[i].accum_grad_mean2d / counter;
-        const float absgrad = d_densification_info[i].accum_absgrad_mean2d / counter;
+        float grad = d_densification_info[i].accum_grad_mean2d / counter;
+        float absgrad = d_densification_info[i].accum_absgrad_mean2d / counter;
+        if (sanitize_non_finite) {
+          if (!isfinite(grad)) grad = 0.0f;
+          if (!isfinite(absgrad)) absgrad = 0.0f;
+        }
         const float max_scale = max(activate_scale(d_scale[i]));
 
         // FastGS: importance score filtering
@@ -689,6 +770,7 @@ void FastGSStrategy::prune(const RasterizeContext& ctx) {
        scale = thrust::raw_pointer_cast(m_gaussians->scales().data()),
        scene_scale = m_gaussians->scene_scale(),
        rotation = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
+        prune_degenerate_rotation = m_prune_degenerate_rotation,
        pruning_scale_threshold = m_params.pruning_scale_threshold,
        prune_large = this_step() > m_params.reset_every,
        max_radii_threshold = abs_ss_threshold,
@@ -700,9 +782,10 @@ void FastGSStrategy::prune(const RasterizeContext& ctx) {
                             deninfo[i].max_radii_screen < max_radii_threshold;
         bool not_transparent = activate_opacity(d_opacity[i]) > min_opacity;
         bool not_degenerate = sum(abs(rotation[i])) > FLT_EPSILON;
+        bool degen_ok = !prune_degenerate_rotation || not_degenerate;
 
         // Mark Gaussians that SHOULD be pruned = 1
-        if (!(not_transparent && ((not_large_ws && not_large_ss) || !prune_large) && not_degenerate)) {
+        if (!(not_transparent && ((not_large_ws && not_large_ss) || !prune_large) && degen_ok)) {
           d_prune[i] = 1;
         }
       });
@@ -728,7 +811,7 @@ void FastGSStrategy::prune(const RasterizeContext& ctx) {
   thrust::device_vector<char> is_alive(num_gaussians, 1);
   const bool has_pruning_scores = (m_pruning_score.size() == num_gaussians);
 
-  if (has_pruning_scores && budget < num_standard_candidates) {
+  if (has_pruning_scores && m_use_multinomial_pruning && budget < num_standard_candidates) {
     // Collect candidate indices
     thrust::device_vector<int> candidate_indices(num_standard_candidates);
     thrust::copy_if(exec,
@@ -746,28 +829,71 @@ void FastGSStrategy::prune(const RasterizeContext& ctx) {
         candidate_indices.begin(), candidate_indices.end(),
         prune_weights.begin(),
         [d_ps] __device__(int i) -> float {
-          return 1.0f / (1e-6f + 1.0f - d_ps[i]);
+        float score = d_ps[i];
+        if (!isfinite(score)) score = 0.0f;
+        score = fminf(fmaxf(score, 0.0f), 1.0f);
+        return 1.0f / (1e-6f + 1.0f - score);
         });
 
-    // Sort candidates by weight (descending) and take top `budget`
-    // This approximates multinomial sampling deterministically
-    thrust::device_vector<int> sorted_indices(num_standard_candidates);
-    thrust::sequence(exec, sorted_indices.begin(), sorted_indices.end());
-    thrust::sort_by_key(exec, prune_weights.begin(), prune_weights.end(),
-        sorted_indices.begin(), thrust::greater<float>());
+    // Sample candidate positions by weight, without replacement.
+    const int seed = static_cast<int>(m_rng.next_uint());
+    GPUBuffer<int> sampled_positions = multinomial_cuda_cpu_without_replacement(
+      thrust::raw_pointer_cast(prune_weights.data()),
+      num_standard_candidates,
+      budget,
+      seed,
+      ctx.stream);
 
-    // Mark the top `budget` as dead
-    const int actual_prune = std::min(budget, num_standard_candidates);
+    // Mark sampled candidates as dead.
+    const int actual_prune = sampled_positions.size();
     thrust::for_each(exec,
         thrust::make_counting_iterator<int>(0),
         thrust::make_counting_iterator<int>(actual_prune),
         [d_is_alive = is_alive.data(),
          d_candidate = thrust::raw_pointer_cast(candidate_indices.data()),
-         d_sorted = thrust::raw_pointer_cast(sorted_indices.data())] __device__(int i) {
-          const int candidate_idx = d_sorted[i];  // index into candidate_indices
+       d_sampled = sampled_positions.data()] __device__(int i) {
+        const int candidate_idx = d_sampled[i];  // index into candidate_indices
           const int gaussian_idx = d_candidate[candidate_idx];
           d_is_alive[gaussian_idx] = 0;
         });
+    } else if (has_pruning_scores && !m_use_multinomial_pruning && budget < num_standard_candidates) {
+    // Deterministic fallback: sort candidates by weight and take top budget.
+    thrust::device_vector<int> candidate_indices(num_standard_candidates);
+    thrust::copy_if(exec,
+      thrust::make_counting_iterator<int>(0),
+      thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+      standard_prune.begin(),
+      candidate_indices.begin(),
+      [] __device__(char p) { return p == 1; });
+
+    thrust::device_vector<float> prune_weights(num_standard_candidates);
+    const float* d_ps = thrust::raw_pointer_cast(m_pruning_score.data());
+    thrust::transform(exec,
+      candidate_indices.begin(), candidate_indices.end(),
+      prune_weights.begin(),
+      [d_ps] __device__(int i) -> float {
+        float score = d_ps[i];
+        if (!isfinite(score)) score = 0.0f;
+        score = fminf(fmaxf(score, 0.0f), 1.0f);
+        return 1.0f / (1e-6f + 1.0f - score);
+      });
+
+    thrust::device_vector<int> sorted_indices(num_standard_candidates);
+    thrust::sequence(exec, sorted_indices.begin(), sorted_indices.end());
+    thrust::sort_by_key(exec, prune_weights.begin(), prune_weights.end(),
+      sorted_indices.begin(), thrust::greater<float>());
+
+    const int actual_prune = std::min(budget, num_standard_candidates);
+    thrust::for_each(exec,
+      thrust::make_counting_iterator<int>(0),
+      thrust::make_counting_iterator<int>(actual_prune),
+      [d_is_alive = is_alive.data(),
+       d_candidate = thrust::raw_pointer_cast(candidate_indices.data()),
+       d_sorted = thrust::raw_pointer_cast(sorted_indices.data())] __device__(int i) {
+        const int candidate_idx = d_sorted[i];
+        const int gaussian_idx = d_candidate[candidate_idx];
+        d_is_alive[gaussian_idx] = 0;
+      });
   } else {
     // No pruning scores or budget >= candidates: prune all standard candidates
     thrust::for_each(exec,
@@ -834,9 +960,17 @@ void FastGSStrategy::set_params(const json& config) {
   if (config.contains("absgrad_threshold"))      m_absgrad_threshold = config["absgrad_threshold"].get<float>();
   if (config.contains("percent_dense"))          m_percent_dense = config["percent_dense"].get<float>();
   if (config.contains("loss_thresh"))            m_loss_thresh = config["loss_thresh"].get<float>();
+  if (config.contains("normalize_metric_l1"))    m_normalize_metric_l1 = config["normalize_metric_l1"].get<bool>();
   if (config.contains("metric_num_cameras"))     m_metric_num_cameras = config["metric_num_cameras"].get<int>();
+  if (config.contains("sample_cameras_without_replacement"))
+    m_sample_cameras_without_replacement = config["sample_cameras_without_replacement"].get<bool>();
+  if (config.contains("photometric_l1_weight"))  m_photometric_l1_weight = config["photometric_l1_weight"].get<float>();
+  if (config.contains("photometric_ssim_weight")) m_photometric_ssim_weight = config["photometric_ssim_weight"].get<float>();
+  if (config.contains("sanitize_nan_gradients")) m_sanitize_nan_gradients = config["sanitize_nan_gradients"].get<bool>();
   if (config.contains("importance_threshold"))   m_importance_threshold = config["importance_threshold"].get<float>();
   if (config.contains("prune_budget_ratio"))     m_prune_budget_ratio = config["prune_budget_ratio"].get<float>();
+  if (config.contains("use_multinomial_pruning")) m_use_multinomial_pruning = config["use_multinomial_pruning"].get<bool>();
+  if (config.contains("prune_degenerate_rotation")) m_prune_degenerate_rotation = config["prune_degenerate_rotation"].get<bool>();
   if (config.contains("final_prune_score_threshold"))
     m_final_prune_score_threshold = config["final_prune_score_threshold"].get<float>();
   if (config.contains("final_prune_opacity_threshold"))
@@ -845,6 +979,17 @@ void FastGSStrategy::set_params(const json& config) {
   if (config.contains("final_prune_end"))        m_final_prune_end = config["final_prune_end"].get<int>();
   if (config.contains("final_prune_every"))      m_final_prune_every = config["final_prune_every"].get<int>();
   if (config.contains("opacity_reset_value"))    m_opacity_reset_value = config["opacity_reset_value"].get<float>();
+
+  const float photometric_sum = m_photometric_l1_weight + m_photometric_ssim_weight;
+  if (!(photometric_sum > 0.0f) || !std::isfinite(photometric_sum)) {
+    log_warning("[FastGS] Invalid photometric weights (l1={}, ssim={}); resetting to 0.8/0.2.",
+        m_photometric_l1_weight, m_photometric_ssim_weight);
+    m_photometric_l1_weight = 0.8f;
+    m_photometric_ssim_weight = 0.2f;
+  } else {
+    m_photometric_l1_weight /= photometric_sum;
+    m_photometric_ssim_weight /= photometric_sum;
+  }
 }
 
 json FastGSStrategy::get_params() const {
@@ -853,9 +998,16 @@ json FastGSStrategy::get_params() const {
   params["absgrad_threshold"] = m_absgrad_threshold;
   params["percent_dense"] = m_percent_dense;
   params["loss_thresh"] = m_loss_thresh;
+  params["normalize_metric_l1"] = m_normalize_metric_l1;
   params["metric_num_cameras"] = m_metric_num_cameras;
+  params["sample_cameras_without_replacement"] = m_sample_cameras_without_replacement;
+  params["photometric_l1_weight"] = m_photometric_l1_weight;
+  params["photometric_ssim_weight"] = m_photometric_ssim_weight;
+  params["sanitize_nan_gradients"] = m_sanitize_nan_gradients;
   params["importance_threshold"] = m_importance_threshold;
   params["prune_budget_ratio"] = m_prune_budget_ratio;
+  params["use_multinomial_pruning"] = m_use_multinomial_pruning;
+  params["prune_degenerate_rotation"] = m_prune_degenerate_rotation;
   params["final_prune_score_threshold"] = m_final_prune_score_threshold;
   params["final_prune_opacity_threshold"] = m_final_prune_opacity_threshold;
   params["final_prune_start"] = m_final_prune_start;

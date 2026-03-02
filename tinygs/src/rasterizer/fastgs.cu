@@ -240,6 +240,23 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
       m_impl->primitive_primitive_indices_selector = primitive_primitive_indices_selector;
       m_impl->instance_primitive_indices_selector = instance_primitive_indices_selector;
     }
+    const auto n_gaussians = m_gaussians->size();
+    if (m_impl->grad_mean2d_helper.size() < n_gaussians) {
+      m_impl->grad_mean2d_helper = GPUBuffer<float2>(m_impl->helper_stream, n_gaussians);
+    }
+    if (m_impl->grad_conic_helper.size() < n_gaussians) {
+      m_impl->grad_conic_helper = GPUBuffer<float3>(m_impl->helper_stream, n_gaussians);
+    }
+    if (m_impl->grad_color.size() < n_gaussians) {
+      m_impl->grad_color = GPUBuffer<float3>(m_impl->helper_stream, n_gaussians);
+    }
+    if (m_impl->absgrad_mean2d_helper.size() < n_gaussians) {
+      m_impl->absgrad_mean2d_helper = GPUBuffer<float2>(m_impl->helper_stream, n_gaussians);
+    }
+    m_impl->grad_mean2d_helper.memset_async(m_impl->helper_stream, 0);
+    m_impl->grad_conic_helper.memset_async(m_impl->helper_stream, 0);
+    m_impl->grad_color.memset_async(m_impl->helper_stream, 0);
+    m_impl->absgrad_mean2d_helper.memset_async(m_impl->helper_stream, 0);
 }
 
 void FastGSRasterizer::backward(RasterizeContext &ctx) {
@@ -269,9 +286,9 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
   float4* grad_w2c_per_gs = nullptr;
   if (m_params.enable_pose_opt) {
     if (m_impl->grad_w2c_per_gs.size() < 4 * n_gaussians) {
-      m_impl->grad_w2c_per_gs = GPUBuffer<float4>(ctx.stream, 4 * n_gaussians);
+      m_impl->grad_w2c_per_gs = GPUBuffer<float4>(m_impl->helper_stream, 4 * n_gaussians);
     }
-    m_impl->grad_w2c_per_gs.memset_async(ctx.stream, 0);
+    m_impl->grad_w2c_per_gs.memset_async(m_impl->helper_stream, 0);
     grad_w2c_per_gs = m_impl->grad_w2c_per_gs.data();
   }
 
@@ -318,22 +335,7 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
       /* stream */ ctx.stream
     );
   } else {
-    if (m_impl->grad_mean2d_helper.size() < n_gaussians) {
-      m_impl->grad_mean2d_helper = GPUBuffer<float2>(ctx.stream, n_gaussians);
-    }
-    if (m_impl->grad_conic_helper.size() < n_gaussians) {
-      m_impl->grad_conic_helper = GPUBuffer<float3>(ctx.stream, n_gaussians);
-    }
-    if (m_impl->grad_color.size() < n_gaussians) {
-      m_impl->grad_color = GPUBuffer<float3>(ctx.stream, n_gaussians);
-    }
-    if (m_impl->absgrad_mean2d_helper.size() < n_gaussians) {
-      m_impl->absgrad_mean2d_helper = GPUBuffer<float2>(ctx.stream, n_gaussians);
-    }
-    m_impl->grad_mean2d_helper.memset_async(ctx.stream, 0);
-    m_impl->grad_conic_helper.memset_async(ctx.stream, 0);
-    m_impl->grad_color.memset_async(ctx.stream, 0);
-    m_impl->absgrad_mean2d_helper.memset_async(ctx.stream, 0);
+    CUDA_CHECK_THROW(cudaStreamSynchronize(m_impl->helper_stream)); // ensure forward's preparing is done.
     fast_gs::rasterization::backward(
       /* grad_image */ static_cast<float*>(ctx.grad_output.image.data),
       /* image */ static_cast<float*>(ctx.fwd_output.image.data),

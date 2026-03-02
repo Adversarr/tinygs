@@ -303,7 +303,7 @@ Array of metric names:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `type` | string | - | `default`, `improved`, `mcmc` |
+| `type` | string | - | `default`, `improved`, `mcmc`, `fastgs` |
 | `refine_every` | int | 100 | Refinement interval |
 | `start_refine` | int | 500 | Start refinement step |
 | `end_refine` | int | 15000 | End refinement step |
@@ -313,6 +313,30 @@ Array of metric names:
 | `reset_every` | int | 3000 | Opacity reset interval |
 | `absgrad` | bool | false | Use absolute gradient |
 | `seed` | int | 42 | Random seed |
+
+### FastGS-specific strategy parameters
+
+When `strategy.type = "fastgs"`, the following additional fields are supported:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `loss_thresh` | float | `0.1` | Metric-map threshold. With normalized L1 enabled, threshold is in `[0,1]`. |
+| `normalize_metric_l1` | bool | `true` | Min-max normalize per-pixel L1 before thresholding (Python parity behavior). |
+| `metric_num_cameras` | int | `10` | Number of sampled cameras for FastGS metric scoring. |
+| `sample_cameras_without_replacement` | bool | `true` | Camera sampling mode for scoring; Python parity uses without replacement. |
+| `photometric_l1_weight` | float | `0.8` | Weight for L1 term in photometric score (auto-normalized with SSIM weight). |
+| `photometric_ssim_weight` | float | `0.2` | Weight for SSIM-loss term `(1 - SSIM)` in photometric score (auto-normalized). |
+| `sanitize_nan_gradients` | bool | `true` | Replaces non-finite gradient statistics with `0` during densification classification. |
+| `importance_threshold` | float | `5.0` | Minimum FastGS importance score required for clone/split candidacy. |
+| `prune_budget_ratio` | float | `0.5` | Fraction of standard prune candidates removed each densification step. |
+| `use_multinomial_pruning` | bool | `true` | Uses stochastic multinomial (without replacement) prune sampling (Python parity). |
+| `prune_degenerate_rotation` | bool | `false` | If enabled, additionally prunes Gaussians with degenerate rotations. |
+| `final_prune_score_threshold` | float | `0.9` | Hard prune threshold on normalized FastGS pruning score. |
+| `final_prune_opacity_threshold` | float | `0.1` | Hard prune threshold on activated opacity. |
+| `final_prune_start` | int | `18000` | First step to run final prune checks. |
+| `final_prune_end` | int | `27000` | Last step to run final prune checks. |
+| `final_prune_every` | int | `3000` | Step interval for final prune checks. |
+| `opacity_reset_value` | float | `0.8` | Post-densification opacity clamp maximum. |
 
 ---
 
