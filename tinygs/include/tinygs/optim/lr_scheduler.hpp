@@ -16,7 +16,9 @@ namespace tinygs {
 class LrSchedulerBase {
 public:
   /// @brief Construct scheduler with optimizer and initial learning rate
-  LrSchedulerBase(const std::shared_ptr<OptimizerBase> &optimizer, float initial_lr);
+  LrSchedulerBase(const std::shared_ptr<OptimizerBase> &optimizer,
+                  OptimParamGroup group,
+                  float initial_lr);
 
   virtual ~LrSchedulerBase() = default;
 
@@ -40,6 +42,7 @@ protected:
   void update_lr(float new_lr);
 
   std::shared_ptr<OptimizerBase> m_optimizer; ///< Optimizer whose learning rate is controlled
+  OptimParamGroup m_group; ///< Target optimizer parameter group
   float m_current_lr; ///< Current learning rate value
 };
 
@@ -52,7 +55,9 @@ protected:
 class ConstantLR : public LrSchedulerBase {
 public:
   /// @brief Construct constant learning rate scheduler
-  explicit ConstantLR(const std::shared_ptr<OptimizerBase> &optimizer, float lr=1.0f);
+  explicit ConstantLR(const std::shared_ptr<OptimizerBase> &optimizer,
+                      OptimParamGroup group,
+                      float lr=1.0f);
 
   /// @brief Return the constant learning rate
   float step() override;
@@ -77,6 +82,7 @@ class ExponentialLR : public LrSchedulerBase {
 public:
   /// @brief Construct exponential decay scheduler
   explicit ExponentialLR(const std::shared_ptr<OptimizerBase> &optimizer,
+                         OptimParamGroup group,
                          float initial_lr = 1.0, float decay_rate = 0.999769f);
 
   /// @brief Apply exponential decay and return new learning rate
@@ -101,6 +107,7 @@ private:
 /// @param scheduler_type Type of scheduler to create
 /// @param optimizer Optimizer whose learning rate will be controlled
 std::unique_ptr<LrSchedulerBase> create_lr_scheduler(const std::string& scheduler_type,
-                                                     const std::shared_ptr<OptimizerBase>& optimizer);
+                                                     const std::shared_ptr<OptimizerBase>& optimizer,
+                                                     OptimParamGroup group);
 
 } // namespace tinygs

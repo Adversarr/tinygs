@@ -39,11 +39,25 @@
       "weight": 0.2
     }
   ],
-  "lr_scheduler": {
-    "decay_rate": 0.999869,
-    "initial_lr": 1.0,
-    "step_count": 0,
-    "type": "exponential"
+  "lr_schedulers": {
+    "means": {
+      "decay_rate": 0.99992325,
+      "initial_lr": 1.0,
+      "step_count": 0,
+      "type": "exponential"
+    },
+    "shs": {
+      "type": "constant"
+    },
+    "opacities": {
+      "type": "constant"
+    },
+    "scales": {
+      "type": "constant"
+    },
+    "rotations": {
+      "type": "constant"
+    }
   },
   "metrics": [
     "psnr"
@@ -93,7 +107,11 @@
     "type": "fastgs"
   },
   "trainer": {
-    "accumulate_grad_steps": 1,
+    "means_accumulate_grad_steps": 1,
+    "shs_accumulate_grad_steps": 16,
+    "opacities_accumulate_grad_steps": 1,
+    "scales_accumulate_grad_steps": 1,
+    "rotations_accumulate_grad_steps": 1,
     "train_data_type": "float32",
     "eval_data_type": "float32",
     "checkpoint_interval": 1000,
@@ -111,7 +129,13 @@
     "reorder_gaussians_interval": 1000,
     "start_pose_opt": 50000,
     "record_trajectory": false,
-    "test_steps": [3000, 5000, 7000, 10000, 15000, 30000],
+    "test_steps": [
+      3000,
+      7000,
+      10000,
+      15000,
+      30000
+    ],
     "out_dir": "outputs",
     "export_rasterized": false,
     "max_seconds": 240

@@ -1,10 +1,26 @@
 #include "tinygs/optim/adam.hpp"
-#include "tinygs/optim/adamw.hpp"
-#include "tinygs/optim/sgd.hpp"
 #include "tinygs/optim/optim.hpp"
+#include <cmath>
 #include <nlohmann/json.hpp>
 
 namespace tinygs {
+
+const char* to_string(OptimParamGroup group) {
+  switch (group) {
+    case OptimParamGroup::Means:
+      return "means";
+    case OptimParamGroup::Shs:
+      return "shs";
+    case OptimParamGroup::Opacities:
+      return "opacities";
+    case OptimParamGroup::Scales:
+      return "scales";
+    case OptimParamGroup::Rotations:
+      return "rotations";
+    default:
+      return "unknown";
+  }
+}
 
 OptimizerBase::OptimizerBase(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad) :
     m_gaussians(gaussians), m_gaussians_grad(gaussians_grad) {
@@ -20,10 +36,69 @@ json OptimizerBase::get_params() const {
 
 void OptimizerBase::set_lr(float new_lr) {
   m_global_lr = new_lr;
+  m_means_global_lr = new_lr;
+  m_shs_global_lr = new_lr;
+  m_opacities_global_lr = new_lr;
+  m_scales_global_lr = new_lr;
+  m_rotations_global_lr = new_lr;
 }
 
 float OptimizerBase::get_lr() const {
   return m_global_lr;
+}
+
+void OptimizerBase::set_lr(OptimParamGroup group, float new_lr) {
+  switch (group) {
+    case OptimParamGroup::Means:
+      m_means_global_lr = new_lr;
+      m_global_lr = new_lr;
+      break;
+    case OptimParamGroup::Shs:
+      m_shs_global_lr = new_lr;
+      break;
+    case OptimParamGroup::Opacities:
+      m_opacities_global_lr = new_lr;
+      break;
+    case OptimParamGroup::Scales:
+      m_scales_global_lr = new_lr;
+      break;
+    case OptimParamGroup::Rotations:
+      m_rotations_global_lr = new_lr;
+      break;
+  }
+}
+
+float OptimizerBase::get_lr(OptimParamGroup group) const {
+  switch (group) {
+    case OptimParamGroup::Means:
+      return m_means_global_lr;
+    case OptimParamGroup::Shs:
+      return m_shs_global_lr;
+    case OptimParamGroup::Opacities:
+      return m_opacities_global_lr;
+    case OptimParamGroup::Scales:
+      return m_scales_global_lr;
+    case OptimParamGroup::Rotations:
+      return m_rotations_global_lr;
+  }
+  return m_global_lr;
+}
+
+void OptimizerBase::step(const GroupStepConfig& step_config, cudaStream_t stream) {
+  if (!step_config.any_update()) {
+    return;
+  }
+  if (!(step_config.update_means && step_config.update_shs && step_config.update_opacities &&
+        step_config.update_scales && step_config.update_rotations)) {
+    throw std::runtime_error("This optimizer does not support selective group stepping.");
+  }
+  const float tol = 1e-7f;
+  const float s = step_config.means_scale;
+  if (std::fabs(step_config.shs_scale - s) > tol || std::fabs(step_config.opacities_scale - s) > tol ||
+      std::fabs(step_config.scales_scale - s) > tol || std::fabs(step_config.rotations_scale - s) > tol) {
+    throw std::runtime_error("This optimizer requires equal per-group scales when using grouped step().");
+  }
+  step(s, stream);
 }
 
 void OptimizerBase::reset() {
@@ -86,13 +161,10 @@ std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_typ
   std::string lower_optimizer_type = to_lower(optimizer_type);
   if (lower_optimizer_type == "adam") {
     return std::make_unique<Adam>(gaussians, gaussians_grad);
-  } else if (lower_optimizer_type == "adamw") {
-    return std::make_unique<AdamW>(gaussians, gaussians_grad);
-  } else if (lower_optimizer_type == "sgd") {
-    return std::make_unique<SGD>(gaussians, gaussians_grad);
   } else {
-    throw std::runtime_error("Unknown optimizer type: " + optimizer_type
-                             + ". Supported: adam, adamw, sgd");
+    throw std::runtime_error(
+        "Unknown optimizer type: " + optimizer_type +
+        ". Supported: adam only. Use optimizer.type='adam' with decouple_decay=true for AdamW mode.");
   }
 }
 } // namespace tinygs

@@ -171,7 +171,7 @@ Same structure as `dataset`, for evaluation:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `type` | string | - | `adam`, `adamw`, `sgd` |
+| `type` | string | - | `adam` |
 | `means_lr` | float | 1.6e-4 | Position learning rate |
 | `shs_lr` | float | 2.5e-3 | SH coefficients learning rate |
 | `opacities_lr` | float | 5.0e-2 | Opacity learning rate |
@@ -182,6 +182,7 @@ Same structure as `dataset`, for evaluation:
 | `opacities_l1` | float | 0.0 | L1 regularization for opacity |
 | `scales_l1` | float | 0.0 | L1 regularization for scale |
 | `epsilon` | float | 1e-8 | Adam epsilon |
+| `decouple_decay` | bool | false | Enable decoupled weight decay (AdamW mode) |
 
 ---
 

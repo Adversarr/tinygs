@@ -39,6 +39,7 @@ public:
   
   /// @brief Perform one optimization step
   void step(float scale, cudaStream_t stream) override;
+  void step(const GroupStepConfig& step_config, cudaStream_t stream) override;
   
   /// @brief Remove optimizer state for flagged gaussians
   void remove(char* kept_flag, int num_kept) override;
@@ -68,6 +69,11 @@ private:
 
   AdamParameters m_adam_params;
   uint32_t m_global_steps = 0;
+  uint32_t m_means_steps = 0;
+  uint32_t m_shs_steps = 0;
+  uint32_t m_opacities_steps = 0;
+  uint32_t m_scales_steps = 0;
+  uint32_t m_rotations_steps = 0;
 
   /// First moment estimates for each parameter type
   thrust::device_vector<vec3> m_means_first;

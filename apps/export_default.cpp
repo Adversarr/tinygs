@@ -44,7 +44,8 @@ int main(int argc, char* argv[]) {
   std::shared_ptr<OptimizerBase> opt = create_optimizer("adam", gs3d, gs3d);
   j["optimizer"] = opt->get_params();
 
-  std::shared_ptr<LrSchedulerBase> lr_scheduler = create_lr_scheduler("exponential", opt);
+  std::shared_ptr<LrSchedulerBase> lr_scheduler =
+      create_lr_scheduler("exponential", opt, OptimParamGroup::Means);
   j["lr_scheduler"] = lr_scheduler->get_params();
 
   std::shared_ptr<StrategyBase> strategy = create_strategy("default", gs3d, gs3d, opt);

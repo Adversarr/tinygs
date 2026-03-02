@@ -8,17 +8,19 @@
 namespace tinygs {
 
 // LrSchedulerBase implementation
-LrSchedulerBase::LrSchedulerBase(const std::shared_ptr<OptimizerBase> &optimizer, float initial_lr)
-  : m_optimizer(optimizer), m_current_lr(initial_lr) {
+LrSchedulerBase::LrSchedulerBase(const std::shared_ptr<OptimizerBase> &optimizer,
+                                 OptimParamGroup group,
+                                 float initial_lr)
+  : m_optimizer(optimizer), m_group(group), m_current_lr(initial_lr) {
   if (m_optimizer) {
-    m_optimizer->set_lr(initial_lr);
+    m_optimizer->set_lr(m_group, initial_lr);
   }
 }
 
 void LrSchedulerBase::update_lr(float new_lr) {
   m_current_lr = new_lr;
   if (m_optimizer) {
-    m_optimizer->set_lr(new_lr);
+    m_optimizer->set_lr(m_group, new_lr);
   } else {
     log_warning("No optimizer set.");
   }
@@ -29,8 +31,10 @@ float LrSchedulerBase::get_lr() const {
 }
 
 // ConstantLR implementation
-ConstantLR::ConstantLR(const std::shared_ptr<OptimizerBase> &optimizer, float lr)
-  : LrSchedulerBase(optimizer, lr) {}
+ConstantLR::ConstantLR(const std::shared_ptr<OptimizerBase> &optimizer,
+                       OptimParamGroup group,
+                       float lr)
+  : LrSchedulerBase(optimizer, group, lr) {}
 
 float ConstantLR::step() {
   // No change needed for constant LR, but ensure optimizer is updated
@@ -58,8 +62,9 @@ void ConstantLR::set_params(const nlohmann::json& params) {
 
 // ExponentialLR implementation
 ExponentialLR::ExponentialLR(const std::shared_ptr<OptimizerBase> &optimizer,
+                             OptimParamGroup group,
                              float initial_lr, float decay_rate)
-  : LrSchedulerBase(optimizer, initial_lr), m_initial_lr(initial_lr),
+  : LrSchedulerBase(optimizer, group, initial_lr), m_initial_lr(initial_lr),
     m_decay_rate(decay_rate), m_step_count(0) {}
 
 float ExponentialLR::step() {
@@ -101,12 +106,13 @@ void ExponentialLR::set_params(const nlohmann::json& params) {
 
 // Factory function implementation
 std::unique_ptr<LrSchedulerBase> create_lr_scheduler(const std::string& scheduler_type,
-                                                     const std::shared_ptr<OptimizerBase>& optimizer) {
+                                                     const std::shared_ptr<OptimizerBase>& optimizer,
+                                                     OptimParamGroup group) {
   std::string lower_scheduler_type = to_lower(scheduler_type);
   if (lower_scheduler_type == "constant") {
-    return std::make_unique<ConstantLR>(optimizer);
+    return std::make_unique<ConstantLR>(optimizer, group);
   } else if (lower_scheduler_type == "exponential") {
-    return std::make_unique<ExponentialLR>(optimizer);
+    return std::make_unique<ExponentialLR>(optimizer, group);
   } else {
     throw std::invalid_argument("Unknown scheduler type: " + scheduler_type);
   }

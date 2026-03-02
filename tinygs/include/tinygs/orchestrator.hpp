@@ -24,7 +24,13 @@ namespace tinygs {
 struct OrchestratorConfig {
   // Training parameters
   size_t max_steps = 30000;
+  // Deprecated: ignored at runtime, kept only for backward config compatibility.
   size_t accumulate_grad_steps = 1;
+  size_t means_accumulate_grad_steps = 1;
+  size_t shs_accumulate_grad_steps = 1;
+  size_t opacities_accumulate_grad_steps = 1;
+  size_t scales_accumulate_grad_steps = 1;
+  size_t rotations_accumulate_grad_steps = 1;
   // Time-based stopping (0 disables)
   size_t max_seconds = 0;
 
@@ -123,10 +129,10 @@ public:
   void set_strategy(std::shared_ptr<StrategyBase> strategy);
 
   /// @brief Set the learning rate scheduler
-  void set_lr_scheduler(std::shared_ptr<LrSchedulerBase> scheduler);
+  void set_lr_scheduler(OptimParamGroup group, std::shared_ptr<LrSchedulerBase> scheduler);
 
-  /// @brief Get the current learning rate scheduler
-  std::shared_ptr<LrSchedulerBase> get_lr_scheduler() const;
+  /// @brief Get the current learning rate scheduler for a parameter group
+  std::shared_ptr<LrSchedulerBase> get_lr_scheduler(OptimParamGroup group) const;
 
   /// @brief Get the current optimizer
   std::shared_ptr<OptimizerBase> get_optimizer() const;
@@ -220,7 +226,11 @@ private:
   std::shared_ptr<OptimizerBase> m_optimizer;
   std::shared_ptr<StrategyBase> m_strategy;
   std::shared_ptr<PoseOptBase> m_pose_opt;
-  std::shared_ptr<LrSchedulerBase> m_lr_scheduler; ///< Learning rate scheduler
+  std::shared_ptr<LrSchedulerBase> m_means_lr_scheduler;
+  std::shared_ptr<LrSchedulerBase> m_shs_lr_scheduler;
+  std::shared_ptr<LrSchedulerBase> m_opacities_lr_scheduler;
+  std::shared_ptr<LrSchedulerBase> m_scales_lr_scheduler;
+  std::shared_ptr<LrSchedulerBase> m_rotations_lr_scheduler;
 
   // Loss functions and metrics
   struct LossComponent {
@@ -294,6 +304,10 @@ private:
   /// @brief Reallocate GPU buffers and update contexts for a new render resolution.
   /// @param new_shape New image shape (must not exceed full dataset resolution)
   void set_render_resolution(const ImageShape& new_shape);
+
+  size_t group_accumulate_steps(OptimParamGroup group) const;
+  std::shared_ptr<LrSchedulerBase> group_scheduler(OptimParamGroup group) const;
+  bool should_step_group(OptimParamGroup group, size_t step) const;
 };
 
 }  // namespace tinygs

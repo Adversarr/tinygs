@@ -37,10 +37,8 @@ set(TINYGS_SOURCES
     
     # Optimizers
     "src/optim/adam.cu"
-    "src/optim/adamw.cu"
     "src/optim/lr_scheduler.cpp"
     "src/optim/optim.cu"
-    "src/optim/sgd.cu"
 
     # Pose Optimizers
     "src/pose_opt/pose_opt.cpp"

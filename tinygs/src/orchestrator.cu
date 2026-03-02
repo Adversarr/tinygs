@@ -3,6 +3,7 @@
 #include <opencv2/opencv.hpp>
 #include <spdlog/spdlog.h>
 #include <thrust/execution_policy.h>
+#include <thrust/fill.h>
 #include <thrust/transform_reduce.h>
 
 #include <algorithm>
@@ -130,7 +131,11 @@ static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaSt
 json OrchestratorConfig::to_json() const {
   json j;
   j["max_steps"] = max_steps;
-  j["accumulate_grad_steps"] = accumulate_grad_steps;
+  j["means_accumulate_grad_steps"] = means_accumulate_grad_steps;
+  j["shs_accumulate_grad_steps"] = shs_accumulate_grad_steps;
+  j["opacities_accumulate_grad_steps"] = opacities_accumulate_grad_steps;
+  j["scales_accumulate_grad_steps"] = scales_accumulate_grad_steps;
+  j["rotations_accumulate_grad_steps"] = rotations_accumulate_grad_steps;
   j["max_seconds"] = max_seconds;
   j["log_interval"] = log_interval;
   j["checkpoint_interval"] = checkpoint_interval;
@@ -161,7 +166,11 @@ json OrchestratorConfig::to_json() const {
 
 void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("max_steps")) max_steps = j["max_steps"].get<int>();
-  if (j.contains("accumulate_grad_steps")) accumulate_grad_steps = j["accumulate_grad_steps"].get<int>();
+  if (j.contains("means_accumulate_grad_steps")) means_accumulate_grad_steps = j["means_accumulate_grad_steps"].get<size_t>();
+  if (j.contains("shs_accumulate_grad_steps")) shs_accumulate_grad_steps = j["shs_accumulate_grad_steps"].get<size_t>();
+  if (j.contains("opacities_accumulate_grad_steps")) opacities_accumulate_grad_steps = j["opacities_accumulate_grad_steps"].get<size_t>();
+  if (j.contains("scales_accumulate_grad_steps")) scales_accumulate_grad_steps = j["scales_accumulate_grad_steps"].get<size_t>();
+  if (j.contains("rotations_accumulate_grad_steps")) rotations_accumulate_grad_steps = j["rotations_accumulate_grad_steps"].get<size_t>();
   if (j.contains("max_seconds")) max_seconds = j["max_seconds"].get<int>();
   if (j.contains("log_interval")) log_interval = j["log_interval"].get<int>();
   if (j.contains("checkpoint_interval")) checkpoint_interval = j["checkpoint_interval"].get<int>();
@@ -346,16 +355,52 @@ void Orchestrator::train_step() {
   NVTX3_FUNC_RANGE();
 
   // Pre-step callback
-  const bool is_cycle_start = (m_state.current_step % m_config.accumulate_grad_steps) == 0;
-  if (is_cycle_start && m_pre_step_callback) {
+  const bool means_cycle_start = (m_state.current_step % group_accumulate_steps(OptimParamGroup::Means)) == 0;
+  const bool shs_cycle_start = (m_state.current_step % group_accumulate_steps(OptimParamGroup::Shs)) == 0;
+  const bool opacities_cycle_start = (m_state.current_step % group_accumulate_steps(OptimParamGroup::Opacities)) == 0;
+  const bool scales_cycle_start = (m_state.current_step % group_accumulate_steps(OptimParamGroup::Scales)) == 0;
+  const bool rotations_cycle_start = (m_state.current_step % group_accumulate_steps(OptimParamGroup::Rotations)) == 0;
+  const bool any_cycle_start = means_cycle_start || shs_cycle_start || opacities_cycle_start ||
+                               scales_cycle_start || rotations_cycle_start;
+  if (any_cycle_start && m_pre_step_callback) {
     m_pre_step_callback(m_state);
   }
 
   // TODO: async, not in the major/default stream.
   // Clear gradients and buffers
-  // Gradient accumulation: clear model gradients only at the start of an accumulation cycle
-  if (is_cycle_start) {
-    m_gradients->memset(0);
+  auto clear_group_gradients = [this](OptimParamGroup group) {
+    auto exec = thrust::cuda::par.on(m_major_stream);
+    switch (group) {
+      case OptimParamGroup::Means:
+        thrust::fill(exec, m_gradients->means().begin(), m_gradients->means().end(), vec3(0.0f));
+        break;
+      case OptimParamGroup::Shs:
+        thrust::fill(exec, m_gradients->sh0().begin(), m_gradients->sh0().end(), 0.0f);
+        thrust::fill(exec, m_gradients->sh1().begin(), m_gradients->sh1().end(), 0.0f);
+        thrust::fill(exec, m_gradients->sh2().begin(), m_gradients->sh2().end(), 0.0f);
+        thrust::fill(exec, m_gradients->sh3().begin(), m_gradients->sh3().end(), 0.0f);
+        break;
+      case OptimParamGroup::Opacities:
+        thrust::fill(exec, m_gradients->opacities().begin(), m_gradients->opacities().end(), 0.0f);
+        break;
+      case OptimParamGroup::Scales:
+        thrust::fill(exec, m_gradients->scales().begin(), m_gradients->scales().end(), vec3(0.0f));
+        break;
+      case OptimParamGroup::Rotations:
+        thrust::fill(exec, m_gradients->rotations().begin(), m_gradients->rotations().end(), vec4(0.0f));
+        break;
+    }
+  };
+  if (means_cycle_start) clear_group_gradients(OptimParamGroup::Means);
+  if (shs_cycle_start) clear_group_gradients(OptimParamGroup::Shs);
+  if (opacities_cycle_start) clear_group_gradients(OptimParamGroup::Opacities);
+  if (scales_cycle_start) clear_group_gradients(OptimParamGroup::Scales);
+  if (rotations_cycle_start) clear_group_gradients(OptimParamGroup::Rotations);
+  if (!any_cycle_start) {
+    const bool clear_all_legacy = false;
+    if (clear_all_legacy) {
+      m_gradients->memset(0);
+    }
   }
   m_loss_buffer->memset(0);
   m_image_grad_buffer->memset(0);
@@ -392,35 +437,42 @@ void Orchestrator::train_step() {
   debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "rasterizer-backward");
   auto grad_w2c = m_rasterize_ctx.grad_input.w2c;
   if (m_pose_opt && m_state.current_step >= m_config.start_pose_opt) {
-    float lr = 1.0f;
-    if (m_lr_scheduler) {
-      lr = m_lr_scheduler->get_lr();
-    }
+    float lr = m_optimizer ? m_optimizer->get_lr(OptimParamGroup::Means) : 1.0f;
     m_pose_opt->update(m_rasterize_ctx.fwd_input.timestamp, grad_w2c, lr);
     debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "pose-update");
   }
-  
-  // Determine if this step is the end of the accumulation cycle using current_step
-  const bool is_cycle_end = ((m_state.current_step + 1) % m_config.accumulate_grad_steps) == 0;
 
-  if (is_cycle_end) {
-    // Step the learning rate scheduler if available
-    if (m_lr_scheduler) {
-      m_lr_scheduler->step();
-    }
+  const bool step_means = should_step_group(OptimParamGroup::Means, m_state.current_step);
+  const bool step_shs = should_step_group(OptimParamGroup::Shs, m_state.current_step);
+  const bool step_opacities = should_step_group(OptimParamGroup::Opacities, m_state.current_step);
+  const bool step_scales = should_step_group(OptimParamGroup::Scales, m_state.current_step);
+  const bool step_rotations = should_step_group(OptimParamGroup::Rotations, m_state.current_step);
 
-    // Optimizer step (learning rate already set by scheduler)
-    // Average accumulated gradients across micro-steps to keep LR consistent
+  if (step_means || step_shs || step_opacities || step_scales || step_rotations) {
+    if (step_means && m_means_lr_scheduler) m_means_lr_scheduler->step();
+    if (step_shs && m_shs_lr_scheduler) m_shs_lr_scheduler->step();
+    if (step_opacities && m_opacities_lr_scheduler) m_opacities_lr_scheduler->step();
+    if (step_scales && m_scales_lr_scheduler) m_scales_lr_scheduler->step();
+    if (step_rotations && m_rotations_lr_scheduler) m_rotations_lr_scheduler->step();
+
     const float inv_grad_scale = 1.0f / m_config.grad_scaler;
-    const float avg_scale = inv_grad_scale / static_cast<float>(m_config.accumulate_grad_steps);
-    m_optimizer->step(avg_scale, m_major_stream);
+    GroupStepConfig step_cfg;
+    step_cfg.update_means = step_means;
+    step_cfg.update_shs = step_shs;
+    step_cfg.update_opacities = step_opacities;
+    step_cfg.update_scales = step_scales;
+    step_cfg.update_rotations = step_rotations;
+    step_cfg.means_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Means));
+    step_cfg.shs_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Shs));
+    step_cfg.opacities_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Opacities));
+    step_cfg.scales_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Scales));
+    step_cfg.rotations_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Rotations));
+    m_optimizer->step(step_cfg, m_major_stream);
     debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "optimizer-step");
-
-    // Optimizer step occurred; callbacks and checkpoints are gated above
   }
 
   // Strategy step (densification) — only after a full accumulation cycle completes
-  if (is_cycle_end && m_strategy) {
+  if ((step_means || step_shs || step_opacities || step_scales || step_rotations) && m_strategy) {
     m_strategy->step(m_rasterize_ctx);
     debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "strategy-step");
   }
@@ -643,10 +695,12 @@ void Orchestrator::reset() {
   if (m_strategy) {
     m_strategy->reset();
   }
-  
-  if (m_lr_scheduler) {
-    m_lr_scheduler->reset();
-  }
+
+  if (m_means_lr_scheduler) m_means_lr_scheduler->reset();
+  if (m_shs_lr_scheduler) m_shs_lr_scheduler->reset();
+  if (m_opacities_lr_scheduler) m_opacities_lr_scheduler->reset();
+  if (m_scales_lr_scheduler) m_scales_lr_scheduler->reset();
+  if (m_rotations_lr_scheduler) m_rotations_lr_scheduler->reset();
   
   // Learning rate is now managed by the scheduler-optimizer system
 }
@@ -740,22 +794,39 @@ void Orchestrator::initialize() {
 }
 
 float Orchestrator::compute_learning_rate() const {
-  // Learning rate is now controlled by the scheduler through the optimizer
+  // Means-group learning rate is used as representative scalar.
   if (m_optimizer) {
-    return m_optimizer->get_lr();
+    return m_optimizer->get_lr(OptimParamGroup::Means);
   }
   return 0.0f;
 }
 
-void Orchestrator::set_lr_scheduler(std::shared_ptr<LrSchedulerBase> scheduler) {
-  m_lr_scheduler = scheduler;
-  if (m_lr_scheduler) {
-    m_lr_scheduler->reset();
+void Orchestrator::set_lr_scheduler(OptimParamGroup group, std::shared_ptr<LrSchedulerBase> scheduler) {
+  switch (group) {
+    case OptimParamGroup::Means:
+      m_means_lr_scheduler = scheduler;
+      break;
+    case OptimParamGroup::Shs:
+      m_shs_lr_scheduler = scheduler;
+      break;
+    case OptimParamGroup::Opacities:
+      m_opacities_lr_scheduler = scheduler;
+      break;
+    case OptimParamGroup::Scales:
+      m_scales_lr_scheduler = scheduler;
+      break;
+    case OptimParamGroup::Rotations:
+      m_rotations_lr_scheduler = scheduler;
+      break;
+  }
+  auto target = group_scheduler(group);
+  if (target) {
+    target->reset();
   }
 }
 
-std::shared_ptr<LrSchedulerBase> Orchestrator::get_lr_scheduler() const {
-  return m_lr_scheduler;
+std::shared_ptr<LrSchedulerBase> Orchestrator::get_lr_scheduler(OptimParamGroup group) const {
+  return group_scheduler(group);
 }
 
 std::shared_ptr<OptimizerBase> Orchestrator::get_optimizer() const {
@@ -898,8 +969,10 @@ void Orchestrator::validate_setup() const {
   }
 
   // Validate gradient accumulation configuration
-  if (m_config.accumulate_grad_steps < 1) {
-    throw std::runtime_error("accumulate_grad_steps must be >= 1");
+  if (m_config.means_accumulate_grad_steps < 1 || m_config.shs_accumulate_grad_steps < 1 ||
+      m_config.opacities_accumulate_grad_steps < 1 || m_config.scales_accumulate_grad_steps < 1 ||
+      m_config.rotations_accumulate_grad_steps < 1) {
+    throw std::runtime_error("All <group>_accumulate_grad_steps must be >= 1");
   }
 }
 
@@ -1005,6 +1078,43 @@ void Orchestrator::reorder_gaussians() {
                   thrust::raw_pointer_cast(idx.data()));
     m_rasterize_ctx.densification_info = new_info;
   }
+}
+
+size_t Orchestrator::group_accumulate_steps(OptimParamGroup group) const {
+  switch (group) {
+    case OptimParamGroup::Means:
+      return m_config.means_accumulate_grad_steps;
+    case OptimParamGroup::Shs:
+      return m_config.shs_accumulate_grad_steps;
+    case OptimParamGroup::Opacities:
+      return m_config.opacities_accumulate_grad_steps;
+    case OptimParamGroup::Scales:
+      return m_config.scales_accumulate_grad_steps;
+    case OptimParamGroup::Rotations:
+      return m_config.rotations_accumulate_grad_steps;
+  }
+  return 1;
+}
+
+std::shared_ptr<LrSchedulerBase> Orchestrator::group_scheduler(OptimParamGroup group) const {
+  switch (group) {
+    case OptimParamGroup::Means:
+      return m_means_lr_scheduler;
+    case OptimParamGroup::Shs:
+      return m_shs_lr_scheduler;
+    case OptimParamGroup::Opacities:
+      return m_opacities_lr_scheduler;
+    case OptimParamGroup::Scales:
+      return m_scales_lr_scheduler;
+    case OptimParamGroup::Rotations:
+      return m_rotations_lr_scheduler;
+  }
+  return nullptr;
+}
+
+bool Orchestrator::should_step_group(OptimParamGroup group, size_t step) const {
+  const size_t k = group_accumulate_steps(group);
+  return ((step + 1) % k) == 0;
 }
 
 }  // namespace tinygs

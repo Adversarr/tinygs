@@ -172,13 +172,27 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
     orchestrator->set_pose_opt(pose_opt);
   }
 
-  // lr_scheduler
-  std::shared_ptr<LrSchedulerBase> lr_scheduler;
-  if (config.contains("lr_scheduler") && config.at("lr_scheduler").is_object()) {
-    const auto& lr_scheduler_config = config.at("lr_scheduler");
-    lr_scheduler = create_lr_scheduler(lr_scheduler_config.at("type").get<std::string>(), optimizer);
-    lr_scheduler->set_params(lr_scheduler_config);
-    orchestrator->set_lr_scheduler(lr_scheduler);
+  auto maybe_set_scheduler = [&](OptimParamGroup group, const json& scheduler_config) {
+    auto scheduler_unique = create_lr_scheduler(scheduler_config.at("type").get<std::string>(), optimizer, group);
+    scheduler_unique->set_params(scheduler_config);
+    std::shared_ptr<LrSchedulerBase> scheduler = std::move(scheduler_unique);
+    orchestrator->set_lr_scheduler(group, scheduler);
+  };
+
+  if (config.contains("lr_schedulers") && config.at("lr_schedulers").is_object()) {
+    const auto& s = config.at("lr_schedulers");
+    if (s.contains("means") && s.at("means").is_object()) maybe_set_scheduler(OptimParamGroup::Means, s.at("means"));
+    if (s.contains("shs") && s.at("shs").is_object()) maybe_set_scheduler(OptimParamGroup::Shs, s.at("shs"));
+    if (s.contains("opacities") && s.at("opacities").is_object()) maybe_set_scheduler(OptimParamGroup::Opacities, s.at("opacities"));
+    if (s.contains("scales") && s.at("scales").is_object()) maybe_set_scheduler(OptimParamGroup::Scales, s.at("scales"));
+    if (s.contains("rotations") && s.at("rotations").is_object()) maybe_set_scheduler(OptimParamGroup::Rotations, s.at("rotations"));
+  } else if (config.contains("lr_scheduler") && config.at("lr_scheduler").is_object()) {
+    const auto& s = config.at("lr_scheduler");
+    maybe_set_scheduler(OptimParamGroup::Means, s);
+    maybe_set_scheduler(OptimParamGroup::Shs, s);
+    maybe_set_scheduler(OptimParamGroup::Opacities, s);
+    maybe_set_scheduler(OptimParamGroup::Scales, s);
+    maybe_set_scheduler(OptimParamGroup::Rotations, s);
   }
 
   // Losses

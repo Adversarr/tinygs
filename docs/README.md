@@ -47,6 +47,6 @@ tinygs is a lightweight C++/CUDA library for 3D Gaussian Splatting scene reconst
 - Pure C++/CUDA implementation with C++20 support
 - Fused operations for efficient training and inference
 - FP16 support for faster training (WIP)
-- Multiple optimizer implementations (Adam, AdamW, SGD)
+- Adam optimizer with optional AdamW mode (`decouple_decay=true`)
 - Multiple densification strategies (Default, Improved, MCMC)
 - Multiple rasterizer backends (Default 3DGS, FastGS)

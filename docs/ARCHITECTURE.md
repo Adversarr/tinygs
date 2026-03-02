@@ -219,7 +219,7 @@ All major components use the factory pattern for creation:
 ```cpp
 // Example: Creating components from config
 auto rasterizer = create_rasterizer("fastgs");
-auto optimizer = create_optimizer("adamw", gaussians, gradients);
+auto optimizer = create_optimizer("adam", gaussians, gradients);
 auto strategy = create_strategy("mcmc", gaussians, gradients, optimizer);
 auto dataloader = create_dataloader("async", dataset);
 auto dataset = create_dataset("image");
@@ -233,7 +233,7 @@ All components support JSON configuration via `set_params()`/`get_params()`:
 ```json
 {
   "rasterizer": { "type": "fastgs" },
-  "optimizer": { "type": "adamw", "means_lr": 0.00016 },
+   "optimizer": { "type": "adam", "means_lr": 0.00016, "decouple_decay": true },
   "strategy": { "type": "mcmc", "refine_every": 100 }
 }
 ```

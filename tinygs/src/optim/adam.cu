@@ -1,6 +1,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/sequence.h>
 #include <nvtx3/nvtx3.hpp>
+#include <cmath>
 
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/optim/adam.hpp"
@@ -175,154 +176,193 @@ void Adam::step(float scale, cudaStream_t stream) {
   }
 }
 
+void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
+  if (!step_config.any_update()) {
+    return;
+  }
+  if (m_adam_params.decouple_decay) {
+    if (!(step_config.update_means && step_config.update_shs && step_config.update_opacities &&
+          step_config.update_scales && step_config.update_rotations)) {
+      throw std::runtime_error("Adam(decouple_decay=true) does not support selective group stepping.");
+    }
+    const float s = step_config.means_scale;
+    const float tol = 1e-7f;
+    if (std::fabs(step_config.shs_scale - s) > tol || std::fabs(step_config.opacities_scale - s) > tol ||
+        std::fabs(step_config.scales_scale - s) > tol || std::fabs(step_config.rotations_scale - s) > tol) {
+      throw std::runtime_error("Adam(decouple_decay=true) requires equal group scales.");
+    }
+    step_adamw(s, stream);
+    return;
+  }
 
-void Adam::step_adam(float scale, cudaStream_t stream) {
-  NVTX3_FUNC_RANGE();
-  const float gradient_scale = scale;
   constexpr int block_size = 256;
-
   if (!m_gaussians || !m_gaussians_grad) {
     throw std::runtime_error("Adam::step: gaussians or gaussians_grad is null");
-  } else if (m_gaussians->size() != m_gaussians_grad->size()) {
+  }
+  if (m_gaussians->size() != m_gaussians_grad->size()) {
     throw std::runtime_error("Adam::step: gaussians and gaussians_grad must have same size");
   }
 
-  auto n = m_gaussians->size();
-  float g_scale = 1.0f;
-  if (m_adam_params.decay_reduction == "mean") {
-    g_scale = 1.0f / n;
-  }
-
-  m_global_steps++;
-  const float bias_correction1 = static_cast<float>(
-      1.0 - std::pow(static_cast<double>(m_adam_params.beta1),
-                     static_cast<double>(m_global_steps)));
-  const float bias_correction2_sqrt = static_cast<float>(
-      std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
-                               static_cast<double>(m_global_steps))));
-
+  const auto n = m_gaussians->size();
+  const float g_scale = (m_adam_params.decay_reduction == "mean") ? (1.0f / n) : 1.0f;
   const float scene_scale = m_gaussians->scene_scale();
-  {
-    auto msg = regstr::get<m_step>();
-    nvtx3::event_attributes attr(msg, nvtx3::payload{n});
-    range range(attr);
+  m_global_steps++;
 
-    // Means (3 floats per Gaussian)
+  if (step_config.update_means) {
+    m_means_steps++;
+    const float bc1 = static_cast<float>(1.0 - std::pow(static_cast<double>(m_adam_params.beta1),
+                                                         static_cast<double>(m_means_steps)));
+    const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
+                                                                   static_cast<double>(m_means_steps))));
     adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->means().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_means_first.data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_means_second.data())),
       m_adam_params,
-      m_params.means_lr * scene_scale * m_global_lr,
+      m_params.means_lr * scene_scale * m_means_global_lr,
       n * 3,
-      gradient_scale,
-      bias_correction1,
-      bias_correction2_sqrt,
+      step_config.means_scale,
+      bc1,
+      bc2,
       m_params.max_grad_1);
+  }
 
-    // Opacities (1 float per Gaussian)
+  if (step_config.update_opacities) {
+    m_opacities_steps++;
+    const float bc1 = static_cast<float>(1.0 - std::pow(static_cast<double>(m_adam_params.beta1),
+                                                         static_cast<double>(m_opacities_steps)));
+    const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
+                                                                   static_cast<double>(m_opacities_steps))));
     adam<<<div_round_up<uint>(n, block_size), block_size, 0, stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->opacities().data()),
       (const float*) thrust::raw_pointer_cast(m_gaussians_grad->opacities().data()),
       (float*) thrust::raw_pointer_cast(m_opacities_first.data()),
       (float*) thrust::raw_pointer_cast(m_opacities_second.data()),
       m_adam_params,
-      m_params.opacities_lr * m_global_lr,
+      m_params.opacities_lr * m_opacities_global_lr,
       n,
-      gradient_scale,
-      bias_correction1,
-      bias_correction2_sqrt,
+      step_config.opacities_scale,
+      bc1,
+      bc2,
       m_params.max_grad_1,
       OpacityDecay(m_params.opacities_l1 * g_scale));
+  }
 
-    // Rotations (4 floats per Gaussian)
+  if (step_config.update_rotations) {
+    m_rotations_steps++;
+    const float bc1 = static_cast<float>(1.0 - std::pow(static_cast<double>(m_adam_params.beta1),
+                                                         static_cast<double>(m_rotations_steps)));
+    const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
+                                                                   static_cast<double>(m_rotations_steps))));
     adam<<<div_round_up<uint>(n * 4, block_size), block_size, 0, stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->rotations().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_rotations_first.data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_rotations_second.data())),
       m_adam_params,
-      m_params.rotations_lr * m_global_lr,
+      m_params.rotations_lr * m_rotations_global_lr,
       n * 4,
-      gradient_scale,
-      bias_correction1,
-      bias_correction2_sqrt,
+      step_config.rotations_scale,
+      bc1,
+      bc2,
       m_params.max_grad_1);
+  }
 
-    // Scales (3 floats per Gaussian)
+  if (step_config.update_scales) {
+    m_scales_steps++;
+    const float bc1 = static_cast<float>(1.0 - std::pow(static_cast<double>(m_adam_params.beta1),
+                                                         static_cast<double>(m_scales_steps)));
+    const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
+                                                                   static_cast<double>(m_scales_steps))));
     adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->scales().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_scales_first.data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_scales_second.data())),
       m_adam_params,
-      m_params.scales_lr * m_global_lr,
+      m_params.scales_lr * m_scales_global_lr,
       n * 3,
-      gradient_scale,
-      bias_correction1,
-      bias_correction2_sqrt,
+      step_config.scales_scale,
+      bc1,
+      bc2,
       m_params.max_grad_1,
       ScaleDecay(m_params.scales_l1 * g_scale));
+  }
 
-    // SH degree 0 (1 coefficient, 3*N floats)
+  if (step_config.update_shs) {
+    m_shs_steps++;
+    const float bc1 = static_cast<float>(1.0 - std::pow(static_cast<double>(m_adam_params.beta1),
+                                                         static_cast<double>(m_shs_steps)));
+    const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
+                                                                   static_cast<double>(m_shs_steps))));
     adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh0().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh0().data()),
       thrust::raw_pointer_cast(m_sh0_first.data()),
       thrust::raw_pointer_cast(m_sh0_second.data()),
       m_adam_params,
-      m_params.shs_lr * m_global_lr,
+      m_params.shs_lr * m_shs_global_lr,
       n * 3,
-      gradient_scale,
-      bias_correction1,
-      bias_correction2_sqrt,
+      step_config.shs_scale,
+      bc1,
+      bc2,
       m_params.max_grad_1);
-
-    // SH degree 1 (3 coefficients, 9*N floats)
     adam<<<div_round_up<uint>(n * 9, block_size), block_size, 0, stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh1().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh1().data()),
       thrust::raw_pointer_cast(m_sh1_first.data()),
       thrust::raw_pointer_cast(m_sh1_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_global_lr,
+      m_params.shs_lr * kShRestScale * m_shs_global_lr,
       n * 9,
-      gradient_scale,
-      bias_correction1,
-      bias_correction2_sqrt,
+      step_config.shs_scale,
+      bc1,
+      bc2,
       m_params.max_grad_1);
-
-    // SH degree 2 (5 coefficients, 15*N floats)
     adam<<<div_round_up<uint>(n * 15, block_size), block_size, 0, stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh2().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh2().data()),
       thrust::raw_pointer_cast(m_sh2_first.data()),
       thrust::raw_pointer_cast(m_sh2_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_global_lr,
+      m_params.shs_lr * kShRestScale * m_shs_global_lr,
       n * 15,
-      gradient_scale,
-      bias_correction1,
-      bias_correction2_sqrt,
+      step_config.shs_scale,
+      bc1,
+      bc2,
       m_params.max_grad_1);
-
-    // SH degree 3 (7 coefficients, 21*N floats)
     adam<<<div_round_up<uint>(n * 21, block_size), block_size, 0, stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh3().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh3().data()),
       thrust::raw_pointer_cast(m_sh3_first.data()),
       thrust::raw_pointer_cast(m_sh3_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_global_lr,
+      m_params.shs_lr * kShRestScale * m_shs_global_lr,
       n * 21,
-      gradient_scale,
-      bias_correction1,
-      bias_correction2_sqrt,
+      step_config.shs_scale,
+      bc1,
+      bc2,
       m_params.max_grad_1);
-
-    maybe_sync(stream);
   }
+
+  maybe_sync(stream);
+}
+
+
+void Adam::step_adam(float scale, cudaStream_t stream) {
+  GroupStepConfig step_config;
+  step_config.update_means = true;
+  step_config.update_shs = true;
+  step_config.update_opacities = true;
+  step_config.update_scales = true;
+  step_config.update_rotations = true;
+  step_config.means_scale = scale;
+  step_config.shs_scale = scale;
+  step_config.opacities_scale = scale;
+  step_config.scales_scale = scale;
+  step_config.rotations_scale = scale;
+  step(step_config, stream);
 }
 
 
@@ -700,6 +740,11 @@ void Adam::duplicate(int* indices, int* new_indices, int num_duplicate) {
 void Adam::reset() {
   size_t num_gaussians = m_gaussians->size();
   m_global_steps = 0;
+  m_means_steps = 0;
+  m_shs_steps = 0;
+  m_opacities_steps = 0;
+  m_scales_steps = 0;
+  m_rotations_steps = 0;
 
   m_means_first.assign(num_gaussians, vec3(0.f));
   m_means_second.assign(num_gaussians, vec3(0.f));

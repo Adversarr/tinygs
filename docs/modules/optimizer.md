@@ -166,11 +166,12 @@ class ExponentialLR : public LrSchedulerBase {
 
 ```cpp
 // Via factory
-auto optimizer = create_optimizer("adamw", gaussians, gradients);
+auto optimizer = create_optimizer("adam", gaussians, gradients);
 
 // Configure
 json params = {
-    {"type", "adamw"},
+    {"type", "adam"},
+    {"decouple_decay", true},
     {"means_lr", 0.00016},
     {"shs_lr", 0.0025},
     {"opacities_lr", 0.05},
