@@ -364,8 +364,8 @@ Array of metric names:
     "out_dir": "outputs",
     "test_steps": [7000, 30000],
     "enable_progressive_resolution": false,
-    "resolution_milestones": [0, 3000, 5000],
-    "resolution_scales": [0.5, 0.75, 1.0],
+    "resolution": -1,
+    "resolution_scale": 1.0,
     "start_pose_opt": 500
   }
 }
@@ -386,9 +386,8 @@ Array of metric names:
 | `eval_data_type` | string | float32 | `float32` or `float16` |
 | `out_dir` | string | "" | Output directory |
 | `test_steps` | array | [7000, 30000] | Steps to run evaluation |
-| `enable_progressive_resolution` | bool | false | Enable progressive resolution |
-| `resolution_milestones` | array | [0, 5000, 8000] | Resolution change steps |
-| `resolution_scales` | array | [0.25, 0.5, 1.0] | Resolution scales |
+| `resolution` | int | -1 | Resolution mode: {1,2,4,8}=divisor, -1=auto (cap 1600px), >0=target width |
+| `resolution_scale` | float | 1.0 | Additional resolution scale factor (divisor) |
 | `start_pose_opt` | int | 500 | Step to start pose optimization |
 
 ---

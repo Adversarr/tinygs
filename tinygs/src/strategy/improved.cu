@@ -57,7 +57,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset(0);
+    ctx.densification_info->memset_async(ctx.stream, 0);
   }
 
   const int step = this_step();
@@ -73,7 +73,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
     // Reset densification info since indices may have changed.
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset(0);
+    ctx.densification_info->memset_async(ctx.stream, 0);
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
@@ -89,7 +89,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
                         m_optimizer->get_optimization_params().opacities_lr;
     GPUBuffer<float> noise(ctx.stream, N);
     generate_random_logistic(m_rng, N, noise.data());
-    linear_kernel(add_noise_opacity, 0, nullptr, N, noise_scale,
+    linear_kernel(add_noise_opacity, 0, ctx.stream, N, noise_scale,
                   thrust::raw_pointer_cast(m_gaussians->opacities().data()),
                   noise.data());
   }

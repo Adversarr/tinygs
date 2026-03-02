@@ -748,7 +748,6 @@ void AdamW::reorder(uint* indices) {
 }
 
 void AdamW::reset_opacity() {
-  // fxxk.
   thrust::fill(m_opacities_first_second.begin(), m_opacities_first_second.end(), 0.f);
 }
 

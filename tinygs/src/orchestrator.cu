@@ -147,9 +147,8 @@ json OrchestratorConfig::to_json() const {
   j["export_rasterized"] = export_rasterized;
   j["export_full_features"] = export_full_features;
   j["record_trajectory"] = record_trajectory;
-  j["enable_progressive_resolution"] = enable_progressive_resolution;
-  j["resolution_milestones"] = resolution_milestones;
-  j["resolution_scales"] = resolution_scales;
+  j["resolution"] = resolution;
+  j["resolution_scale"] = resolution_scale;
   j["start_pose_opt"] = start_pose_opt;
   j["scene_scale_recompute_interval"] = scene_scale_recompute_interval;
   j["reorder_gaussians_interval"] = reorder_gaussians_interval;
@@ -192,31 +191,8 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("export_rasterized")) export_rasterized = j["export_rasterized"].get<bool>();
   if (j.contains("export_full_features")) export_full_features = j["export_full_features"].get<bool>();
   if (j.contains("record_trajectory")) record_trajectory = j["record_trajectory"].get<bool>();
-  if (j.contains("enable_progressive_resolution")) enable_progressive_resolution = j["enable_progressive_resolution"].get<bool>();
-  if (j.contains("resolution_milestones")) {
-    try {
-      const json::array_t milestones = j.at("resolution_milestones");
-      std::vector<size_t> new_milestones;
-      for (const auto& milestone : milestones) {
-        new_milestones.push_back(milestone.get<size_t>());
-      }
-      resolution_milestones = new_milestones;
-    } catch (const json::exception& e) {
-      throw std::invalid_argument("Expect resolution_milestones to be array of integers.");
-    }
-  }
-  if (j.contains("resolution_scales")) {
-    try {
-      const json::array_t scales = j.at("resolution_scales");
-      std::vector<float> new_scales;
-      for (const auto& scale : scales) {
-        new_scales.push_back(scale.get<float>());
-      }
-      resolution_scales = new_scales;
-    } catch (const json::exception& e) {
-      throw std::invalid_argument("Expect resolution_scales to be array of floats.");
-    }
-  }
+  if (j.contains("resolution")) resolution = j["resolution"].get<int>();
+  if (j.contains("resolution_scale")) resolution_scale = j["resolution_scale"].get<float>();
   if (j.contains("start_pose_opt")) start_pose_opt = j["start_pose_opt"].get<size_t>();
 
   if (j.contains("scene_scale_recompute_interval")) scene_scale_recompute_interval = j["scene_scale_recompute_interval"].get<size_t>();
@@ -229,9 +205,10 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("debug_cuda_log_each_stage")) debug_cuda_log_each_stage = j["debug_cuda_log_each_stage"].get<bool>();
 }
 
-void mean(const vec3* data, size_t size, vec3& out) {
+void mean(const vec3* data, size_t size, vec3& out, cudaStream_t stream) {
+  auto exec = thrust::cuda::par.on(stream);
   out = thrust::transform_reduce(
-    thrust::device,
+    exec,
     data,
     data + size,
     [inv_s = 1.0f / static_cast<float>(size)] __device__ (const vec3& p) -> vec3 { return p * inv_s; },
@@ -247,7 +224,7 @@ void Orchestrator::recompute_scene_scale() {
 
   // avg_pc_mean
   vec3 avg_pc_mean;
-  mean(thrust::raw_pointer_cast(pc.data()), pc.size(), avg_pc_mean);
+  mean(thrust::raw_pointer_cast(pc.data()), pc.size(), avg_pc_mean, m_major_stream);
 
   float scale = 0;
   for (auto c: ds->get_camera_loader().get_camera_extrinsics()) {
@@ -371,10 +348,6 @@ TrainingState Orchestrator::train() {
 
 void Orchestrator::train_step() {
   NVTX3_FUNC_RANGE();
-  // Check and update resolution for progressive training
-  if (m_config.enable_progressive_resolution) {
-    update_resolution(m_state.current_step);
-  }
 
   // Pre-step callback
   const bool is_cycle_start = (m_state.current_step % m_config.accumulate_grad_steps) == 0;
@@ -499,18 +472,16 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
   const ImageShape current_shape{m_rasterize_ctx.fwd_input.width, m_rasterize_ctx.fwd_input.height, 3};
   const DataType current_dtype = m_active_data_type;
 
-  // Switch to eval dtype and full resolution if progressive
+  // Switch to eval dtype
   m_active_data_type = m_config.eval_data_type;
   DataLoaderBase* effective_loader = loader ? loader : m_dataloader.get();
-  ImageShape full_shape = effective_loader->get_dataset()->image_shape();
-  if (m_config.enable_progressive_resolution &&
-      (full_shape.width != current_shape.width || full_shape.height != current_shape.height)) {
-    log_info("Switching to full resolution {}x{} for evaluation", full_shape.width, full_shape.height);
-    set_render_resolution({full_shape.width, full_shape.height, 3});
-  } else {
-    // Still update buffers to match dtype
-    set_render_resolution({current_shape.width, current_shape.height, 3});
-  }
+
+  // Set eval resolution on the effective loader (test or train), not just m_dataloader
+  ImageShape eval_shape{current_shape.width, current_shape.height, 3};
+  effective_loader->set_output_shape(eval_shape);
+
+  // Update rasterizer context buffers for the eval resolution
+  set_render_resolution(eval_shape);
 
   // Switch dataloader output dtype for eval
   effective_loader->set_params(json{{"data_type", to_string(m_active_data_type)}});
@@ -611,12 +582,9 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
              m_state.current_step, metric_pair.first, mean, std);
   }
 
-  // Restore training resolution and dtype
+  // Restore training dtype and resolution
   m_active_data_type = current_dtype;
-  ImageShape training_shape = m_config.enable_progressive_resolution
-      ? scale_image_shape(m_dataloader->get_dataset()->image_shape(), calculate_resolution_scale(m_state.current_step))
-      : current_shape;
-  set_render_resolution({training_shape.width, training_shape.height, 3});
+  set_render_resolution({current_shape.width, current_shape.height, 3});
 
   // Restore dataloader dtype
   effective_loader->set_params(json{{"data_type", to_string(m_active_data_type)}});
@@ -717,16 +685,12 @@ void Orchestrator::initialize() {
   log_info("Allocated GPU buffers for full resolution {}x{} (size: {:.2f} MB)", 
            base_shape.width, base_shape.height, mb);
 
-  // Determine initial training resolution
-  ImageShape training_shape = base_shape;
-  if (m_config.enable_progressive_resolution) {
-    float initial_scale = calculate_resolution_scale(0);  // Get scale for step 0
-    training_shape = scale_image_shape(base_shape, initial_scale);
-    log_info("Starting with progressive resolution {}x{} (scale: {:.2f})", 
-             training_shape.width, training_shape.height, initial_scale);
-  } else {
-    log_info("Start from full resolution {}x{}", training_shape.width, training_shape.height);
-  }
+  // Determine training resolution using reference 3DGS semantics
+  ImageShape training_shape = compute_training_resolution(base_shape);
+  log_info("Training resolution: {}x{} (base: {}x{}, resolution={}, resolution_scale={:.2f})",
+           training_shape.width, training_shape.height,
+           base_shape.width, base_shape.height,
+           m_config.resolution, m_config.resolution_scale);
   log_info("Camera intrinsics: {}", to_string(m_dataloader->get_dataset()
                                                   ->get_camera_loader()
                                                   .get_camera_intrinsics()[0]));
@@ -939,37 +903,10 @@ void Orchestrator::validate_setup() const {
   if (m_config.accumulate_grad_steps < 1) {
     throw std::runtime_error("accumulate_grad_steps must be >= 1");
   }
-  
-  // Validate progressive resolution configuration
-  if (m_config.enable_progressive_resolution) {
-    if (m_config.resolution_milestones.empty()) {
-      throw std::runtime_error("Progressive resolution enabled but no milestones specified.");
-    }
-    if (m_config.resolution_scales.empty()) {
-      throw std::runtime_error("Progressive resolution enabled but no scales specified.");
-    }
-    if (m_config.resolution_milestones.size() != m_config.resolution_scales.size()) {
-      throw std::runtime_error("Resolution milestones and scales must have the same size.");
-    }
-    
-    // Check that milestones are in ascending order
-    for (size_t i = 1; i < m_config.resolution_milestones.size(); ++i) {
-      if (m_config.resolution_milestones[i] <= m_config.resolution_milestones[i-1]) {
-        throw std::runtime_error("Resolution milestones must be in ascending order.");
-      }
-    }
-    
-    // Check that scales are valid (between 0 and 1)
-    for (float scale : m_config.resolution_scales) {
-      if (scale <= 0.0f || scale > 1.0f) {
-        throw std::runtime_error("Resolution scales must be between 0 and 1.");
-      }
-    }
-    
-    log_info("Progressive resolution validation passed: {} milestones, scales from {:.2f} to {:.2f}", 
-             m_config.resolution_milestones.size(), 
-             m_config.resolution_scales.front(), 
-             m_config.resolution_scales.back());
+
+  // Validate resolution configuration
+  if (m_config.resolution_scale <= 0.0f) {
+    throw std::runtime_error("resolution_scale must be > 0");
   }
 }
 
@@ -1018,41 +955,45 @@ cv::Mat Orchestrator::to_opencv() const {
   return img;
 }
 
-float Orchestrator::calculate_resolution_scale(size_t current_step) const {
-  if (!m_config.enable_progressive_resolution || m_config.resolution_milestones.empty()) {
-    return 1.0f;  // Full resolution if disabled
-  }
-  
-  // Find the appropriate scale for the current step
-  float current_scale = 1.0f;
-  for (size_t i = 0; i < m_config.resolution_milestones.size(); ++i) {
-    if (current_step >= m_config.resolution_milestones[i]) {
-      if (i < m_config.resolution_scales.size()) {
-        current_scale = m_config.resolution_scales[i];
-      }
+/// Compute training image shape from config resolution params, following the reference 3DGS logic:
+///   resolution ∈ {1,2,4,8} → divisor: new_w = orig_w / (resolution * resolution_scale)
+///   resolution == -1       → auto: cap width at 1600, then apply resolution_scale
+///   resolution > 0 (other) → target width: global_down = orig_w / resolution, then * resolution_scale
+/// Result is rounded down to the nearest kImageTile boundary, clamped to [kImageTile, original].
+ImageShape Orchestrator::compute_training_resolution(const ImageShape& base_shape) const {
+  const float orig_w = static_cast<float>(base_shape.width);
+  const float orig_h = static_cast<float>(base_shape.height);
+
+  float scale;  // overall divisor: final_w = orig_w / scale
+  if (m_config.resolution == 1 || m_config.resolution == 2 ||
+      m_config.resolution == 4 || m_config.resolution == 8) {
+    // Integer downscale factor, combined with resolution_scale
+    scale = static_cast<float>(m_config.resolution) * m_config.resolution_scale;
+  } else {
+    float global_down;
+    if (m_config.resolution == -1) {
+      // Auto mode: cap width at 1600px
+      global_down = (orig_w > 1600.0f) ? (orig_w / 1600.0f) : 1.0f;
+    } else if (m_config.resolution > 0) {
+      // Target width mode
+      global_down = orig_w / static_cast<float>(m_config.resolution);
     } else {
-      break;
+      throw std::invalid_argument("Invalid resolution value: " + std::to_string(m_config.resolution));
     }
-  }
-  
-  return current_scale;
-}
-
-ImageShape Orchestrator::scale_image_shape(const ImageShape& original_shape, float scale) {
-  if (scale <= 0.0f || scale > 1.0f) {
-    throw std::invalid_argument("Resolution scale must be in range (0, 1]");
-  }
-  if (fabs(scale - 1.0f) < 1e-6) {
-    return original_shape;  // No scaling needed, also no rounding is needed.
+    scale = global_down * m_config.resolution_scale;
   }
 
-  // Calculate scaled dimensions, ensuring they're at least 1
-  uint32_t scaled_width_tile = std::clamp(kImageTile * (static_cast<uint32_t>(original_shape.width * (scale / kImageTile))),
-                                          kImageTile, original_shape.width);
-  uint32_t scaled_height_tile = std::clamp(kImageTile * (static_cast<uint32_t>(original_shape.height * (scale / kImageTile))),
-                                           kImageTile, original_shape.height);
+  // Compute scaled dimensions, round down to kImageTile, clamp to [kImageTile, original]
+  auto align_tile = [](float dim, float s, uint32_t orig) -> uint32_t {
+    uint32_t raw = static_cast<uint32_t>(dim / s);
+    uint32_t aligned = (raw / kImageTile) * kImageTile;
+    return std::clamp(aligned, kImageTile, orig);
+  };
 
-  return ImageShape{scaled_width_tile, scaled_height_tile, original_shape.channel};
+  uint32_t new_w = align_tile(orig_w, scale, base_shape.width);
+  uint32_t new_h = align_tile(orig_h, scale, base_shape.height);
+
+  return ImageShape{new_w, new_h, base_shape.channel};
 }
 
 void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
@@ -1082,29 +1023,6 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
   m_dataloader->set_output_shape(rgb_shape);
 }
 
-void Orchestrator::update_resolution(size_t current_step) {
-  // Calculate current resolution scale
-  float scale = calculate_resolution_scale(current_step);
-  
-  // Get base shape from dataset
-  ImageShape base_shape = m_dataloader->get_dataset()->image_shape();
-  
-  // Scale the image shape
-  ImageShape new_shape = scale_image_shape(base_shape, scale);
-  
-  // Check if resolution has changed
-  if (new_shape.width != m_rasterize_ctx.fwd_input.width || 
-      new_shape.height != m_rasterize_ctx.fwd_input.height) {
-    
-    log_info("Updating resolution from {}x{} to {}x{} at step {}", 
-             m_rasterize_ctx.fwd_input.width, m_rasterize_ctx.fwd_input.height,
-             new_shape.width, new_shape.height, current_step);
-    
-    // Reallocate buffers for new resolution
-    set_render_resolution({new_shape.width, new_shape.height, 3});
-  }
-}
-
 static __global__ void densification_update( //
     uint n, const tinygs::DensificationInfo *__restrict__ old_info,
     tinygs::DensificationInfo *__restrict__ new_info,
@@ -1122,16 +1040,16 @@ void Orchestrator::reorder_gaussians() {
   uint n = m_gaussians->size();
 
   // Reorder gaussians by Morton code
-  auto idx = reorder(thrust::raw_pointer_cast(pos.data()), n, nullptr);
+  auto idx = reorder(thrust::raw_pointer_cast(pos.data()), n, m_major_stream);
   
   // Apply reordering to gaussians
-  m_gaussians->reorder(thrust::raw_pointer_cast(idx.data()));
-  m_gradients->reorder(thrust::raw_pointer_cast(idx.data()));
+  m_gaussians->reorder(thrust::raw_pointer_cast(idx.data()), m_major_stream);
+  m_gradients->reorder(thrust::raw_pointer_cast(idx.data()), m_major_stream);
   m_optimizer->reorder(thrust::raw_pointer_cast(idx.data()));
 
   if (m_rasterize_ctx.densification_info) {
     auto new_info = std::make_shared<GPUBuffer<tinygs::DensificationInfo>>(n);
-    linear_kernel(densification_update, 0, nullptr, n,
+    linear_kernel(densification_update, 0, m_major_stream, n,
                   (const tinygs::DensificationInfo*) m_rasterize_ctx.densification_info->data(),
                   new_info->data(),
                   thrust::raw_pointer_cast(idx.data()));

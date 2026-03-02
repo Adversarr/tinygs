@@ -41,7 +41,7 @@ void AbsGSStrategy::step_impl(const RasterizeContext& ctx) {
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset(0);
+    ctx.densification_info->memset_async(ctx.stream, 0);
   }
 
   const int step = this_step();
@@ -55,7 +55,7 @@ void AbsGSStrategy::step_impl(const RasterizeContext& ctx) {
     // Reset densification info since indices have changed
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset(0);
+    ctx.densification_info->memset_async(ctx.stream, 0);
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
@@ -97,6 +97,7 @@ void AbsGSStrategy::duplicate(const RasterizeContext& ctx) {
   const float scale_boundary = m_percent_dense * scene_scale;
 
   thrust::for_each(
+      exec,
       thrust::make_counting_iterator<int>(0),
       thrust::make_counting_iterator<int>(num_gaussians),
       [d_densification_info, d_scale, d_grow_flags,

@@ -13,59 +13,87 @@
 #include "rasterization_config.h"
 #include "utils.h"
 #include "tinygs/common.hpp"
+#include "../sh_soa_utils.cuh"
 #include <cooperative_groups.h>
 #include <cstdint>
 namespace cg = cooperative_groups;
 
 namespace fast_gs::rasterization::kernels::backward {
 
+/// @brief Backward pass for SH → color, reading/writing SoA buffers directly.
 __device__ inline float3 convert_sh_to_color_backward(
-    const float3* sh_coefficients_rest,
-    float3* grad_sh_coefficients_0,
-    float3* grad_sh_coefficients_rest,
+    const float* __restrict__ sh1,       // [9*N] band 1 (read)
+    const float* __restrict__ sh2,       // [15*N] band 2 (read)
+    const float* __restrict__ sh3,       // [21*N] band 3 (read)
+    float* __restrict__ grad_sh0,        // [3*N] band 0 gradient (write)
+    float* __restrict__ grad_sh1,        // [9*N] band 1 gradient (write)
+    float* __restrict__ grad_sh2,        // [15*N] band 2 gradient (write)
+    float* __restrict__ grad_sh3,        // [21*N] band 3 gradient (write)
     const float3& grad_color,
     const float3& position,
     const float3& cam_position,
     const uint primitive_idx,
-    const uint active_sh_bases,
-    const uint total_bases_sh_rest) {
-    // computation adapted from https://github.com/NVlabs/tiny-cuda-nn/blob/212104156403bd87616c1a4f73a1c5f2c2e172a9/include/tiny-cuda-nn/common_device.h#L340
-    const int coefficients_base_idx = primitive_idx * total_bases_sh_rest;
-    const float3* coefficients_ptr = sh_coefficients_rest + coefficients_base_idx;
-    float3* grad_coefficients_ptr = grad_sh_coefficients_rest + coefficients_base_idx;
-    grad_sh_coefficients_0[primitive_idx] += 0.28209479177387814f * grad_color;
+    const uint n_primitives,
+    const uint active_sh_bases) {
+    using tinygs::read_sh_soa;
+    using tinygs::accum_sh0_soa;
+    using tinygs::accum_sh_soa;
+    const int N = static_cast<int>(n_primitives);
+    const int i = static_cast<int>(primitive_idx);
+    accum_sh0_soa(grad_sh0, N, i, 0.28209479177387814f * grad_color);
     float3 dcolor_dposition = make_float3(0.0f);
     if (active_sh_bases > 1) {
         auto [x_raw, y_raw, z_raw] = position - cam_position;
         auto [x, y, z] = normalize(make_float3(x_raw, y_raw, z_raw));
-        grad_coefficients_ptr[0] += (-0.48860251190291987f * y) * grad_color;
-        grad_coefficients_ptr[1] += (0.48860251190291987f * z) * grad_color;
-        grad_coefficients_ptr[2] += (-0.48860251190291987f * x) * grad_color;
-        float3 grad_direction_x = -0.48860251190291987f * coefficients_ptr[2];
-        float3 grad_direction_y = -0.48860251190291987f * coefficients_ptr[0];
-        float3 grad_direction_z = 0.48860251190291987f * coefficients_ptr[1];
+        // Band 1 gradient accumulation
+        accum_sh_soa(grad_sh1, 0, N, i, (-0.48860251190291987f * y) * grad_color);
+        accum_sh_soa(grad_sh1, 1, N, i, (0.48860251190291987f * z) * grad_color);
+        accum_sh_soa(grad_sh1, 2, N, i, (-0.48860251190291987f * x) * grad_color);
+        // Read band 1 coefficients for direction gradient
+        float3 c0 = read_sh_soa(sh1, 0, N, i);
+        float3 c1 = read_sh_soa(sh1, 1, N, i);
+        float3 c2 = read_sh_soa(sh1, 2, N, i);
+        float3 grad_direction_x = -0.48860251190291987f * c2;
+        float3 grad_direction_y = -0.48860251190291987f * c0;
+        float3 grad_direction_z = 0.48860251190291987f * c1;
         if (active_sh_bases > 4) {
             const float xx = x * x, yy = y * y, zz = z * z;
             const float xy = x * y, xz = x * z, yz = y * z;
-            grad_coefficients_ptr[3] += (1.0925484305920792f * xy) * grad_color;
-            grad_coefficients_ptr[4] += (-1.0925484305920792f * yz) * grad_color;
-            grad_coefficients_ptr[5] += (0.94617469575755997f * zz - 0.31539156525251999f) * grad_color;
-            grad_coefficients_ptr[6] += (-1.0925484305920792f * xz) * grad_color;
-            grad_coefficients_ptr[7] += (0.54627421529603959f * xx - 0.54627421529603959f * yy) * grad_color;
-            grad_direction_x = grad_direction_x + (1.0925484305920792f * y) * coefficients_ptr[3] + (-1.0925484305920792f * z) * coefficients_ptr[6] + (1.0925484305920792 * x) * coefficients_ptr[7];
-            grad_direction_y = grad_direction_y + (1.0925484305920792f * x) * coefficients_ptr[3] + (-1.0925484305920792f * z) * coefficients_ptr[4] + (-1.0925484305920792 * y) * coefficients_ptr[7];
-            grad_direction_z = grad_direction_z + (-1.0925484305920792f * y) * coefficients_ptr[4] + (1.8923493915151202 * z) * coefficients_ptr[5] + (-1.0925484305920792f * x) * coefficients_ptr[6];
+            // Band 2 gradient accumulation
+            accum_sh_soa(grad_sh2, 0, N, i, (1.0925484305920792f * xy) * grad_color);
+            accum_sh_soa(grad_sh2, 1, N, i, (-1.0925484305920792f * yz) * grad_color);
+            accum_sh_soa(grad_sh2, 2, N, i, (0.94617469575755997f * zz - 0.31539156525251999f) * grad_color);
+            accum_sh_soa(grad_sh2, 3, N, i, (-1.0925484305920792f * xz) * grad_color);
+            accum_sh_soa(grad_sh2, 4, N, i, (0.54627421529603959f * xx - 0.54627421529603959f * yy) * grad_color);
+            // Read band 2 coefficients for direction gradient
+            float3 c3 = read_sh_soa(sh2, 0, N, i);
+            float3 c4 = read_sh_soa(sh2, 1, N, i);
+            float3 c5 = read_sh_soa(sh2, 2, N, i);
+            float3 c6 = read_sh_soa(sh2, 3, N, i);
+            float3 c7 = read_sh_soa(sh2, 4, N, i);
+            grad_direction_x = grad_direction_x + (1.0925484305920792f * y) * c3 + (-1.0925484305920792f * z) * c6 + (1.0925484305920792 * x) * c7;
+            grad_direction_y = grad_direction_y + (1.0925484305920792f * x) * c3 + (-1.0925484305920792f * z) * c4 + (-1.0925484305920792 * y) * c7;
+            grad_direction_z = grad_direction_z + (-1.0925484305920792f * y) * c4 + (1.8923493915151202 * z) * c5 + (-1.0925484305920792f * x) * c6;
             if (active_sh_bases > 9) {
-                grad_coefficients_ptr[8] += (0.59004358992664352f * y * (-3.0f * xx + yy)) * grad_color;
-                grad_coefficients_ptr[9] += (2.8906114426405538f * xy * z) * grad_color;
-                grad_coefficients_ptr[10] += (0.45704579946446572f * y * (1.0f - 5.0f * zz)) * grad_color;
-                grad_coefficients_ptr[11] += (0.3731763325901154f * z * (5.0f * zz - 3.0f)) * grad_color;
-                grad_coefficients_ptr[12] += (0.45704579946446572f * x * (1.0f - 5.0f * zz)) * grad_color;
-                grad_coefficients_ptr[13] += (1.4453057213202769f * z * (xx - yy)) * grad_color;
-                grad_coefficients_ptr[14] += (0.59004358992664352f * x * (-xx + 3.0f * yy)) * grad_color;
-                grad_direction_x = grad_direction_x + (-3.5402615395598609f * xy) * coefficients_ptr[8] + (2.8906114426405538f * yz) * coefficients_ptr[9] + (0.45704579946446572f - 2.2852289973223288f * zz) * coefficients_ptr[12] + (2.8906114426405538f * xz) * coefficients_ptr[13] + (-1.7701307697799304f * xx + 1.7701307697799304f * yy) * coefficients_ptr[14];
-                grad_direction_y = grad_direction_y + (-1.7701307697799304f * xx + 1.7701307697799304f * yy) * coefficients_ptr[8] + (2.8906114426405538f * xz) * coefficients_ptr[9] + (0.45704579946446572f - 2.2852289973223288f * zz) * coefficients_ptr[10] + (-2.8906114426405538f * yz) * coefficients_ptr[13] + (3.5402615395598609f * xy) * coefficients_ptr[14];
-                grad_direction_z = grad_direction_z + (2.8906114426405538f * xy) * coefficients_ptr[9] + (-4.5704579946446566f * yz) * coefficients_ptr[10] + (5.597644988851731f * zz - 1.1195289977703462f) * coefficients_ptr[11] + (-4.5704579946446566f * xz) * coefficients_ptr[12] + (1.4453057213202769f * xx - 1.4453057213202769f * yy) * coefficients_ptr[13];
+                // Band 3 gradient accumulation
+                accum_sh_soa(grad_sh3, 0, N, i, (0.59004358992664352f * y * (-3.0f * xx + yy)) * grad_color);
+                accum_sh_soa(grad_sh3, 1, N, i, (2.8906114426405538f * xy * z) * grad_color);
+                accum_sh_soa(grad_sh3, 2, N, i, (0.45704579946446572f * y * (1.0f - 5.0f * zz)) * grad_color);
+                accum_sh_soa(grad_sh3, 3, N, i, (0.3731763325901154f * z * (5.0f * zz - 3.0f)) * grad_color);
+                accum_sh_soa(grad_sh3, 4, N, i, (0.45704579946446572f * x * (1.0f - 5.0f * zz)) * grad_color);
+                accum_sh_soa(grad_sh3, 5, N, i, (1.4453057213202769f * z * (xx - yy)) * grad_color);
+                accum_sh_soa(grad_sh3, 6, N, i, (0.59004358992664352f * x * (-xx + 3.0f * yy)) * grad_color);
+                // Read band 3 coefficients for direction gradient
+                float3 c8  = read_sh_soa(sh3, 0, N, i);
+                float3 c9  = read_sh_soa(sh3, 1, N, i);
+                float3 c10 = read_sh_soa(sh3, 2, N, i);
+                float3 c11 = read_sh_soa(sh3, 3, N, i);
+                float3 c12 = read_sh_soa(sh3, 4, N, i);
+                float3 c13 = read_sh_soa(sh3, 5, N, i);
+                float3 c14 = read_sh_soa(sh3, 6, N, i);
+                grad_direction_x = grad_direction_x + (-3.5402615395598609f * xy) * c8 + (2.8906114426405538f * yz) * c9 + (0.45704579946446572f - 2.2852289973223288f * zz) * c12 + (2.8906114426405538f * xz) * c13 + (-1.7701307697799304f * xx + 1.7701307697799304f * yy) * c14;
+                grad_direction_y = grad_direction_y + (-1.7701307697799304f * xx + 1.7701307697799304f * yy) * c8 + (2.8906114426405538f * xz) * c9 + (0.45704579946446572f - 2.2852289973223288f * zz) * c10 + (-2.8906114426405538f * yz) * c13 + (3.5402615395598609f * xy) * c14;
+                grad_direction_z = grad_direction_z + (2.8906114426405538f * xy) * c9 + (-4.5704579946446566f * yz) * c10 + (5.597644988851731f * zz - 1.1195289977703462f) * c11 + (-4.5704579946446566f * xz) * c12 + (1.4453057213202769f * xx - 1.4453057213202769f * yy) * c13;
             }
         }
 
@@ -89,7 +117,9 @@ __global__ void preprocess_backward_cu(
     const float3* __restrict__ means,
     const float3* __restrict__ raw_scales,
     const float4* __restrict__ raw_rotations,
-    const float3* __restrict__ sh_coefficients_rest,
+    const float* __restrict__ sh1,
+    const float* __restrict__ sh2,
+    const float* __restrict__ sh3,
     const float4* __restrict__ w2c,
     const float3* __restrict__ cam_position,
     const uint* __restrict__ primitive_n_touched_tiles,
@@ -100,13 +130,14 @@ __global__ void preprocess_backward_cu(
     float3* __restrict__ grad_raw_scales,
     float4* __restrict__ grad_raw_rotations,
     float3* __restrict__ grad_color,
-    float3* __restrict__ grad_sh_coefficients_0,
-    float3* __restrict__ grad_sh_coefficients_rest,
+    float* __restrict__ grad_sh0,
+    float* __restrict__ grad_sh1,
+    float* __restrict__ grad_sh2,
+    float* __restrict__ grad_sh3,
     float4* __restrict__ grad_w2c_per_gs,
     tinygs::DensificationInfo* __restrict__ densification_info,
     const uint n_primitives,
     const uint active_sh_bases,
-    const uint total_bases_sh_rest,
     const float w,
     const float h,
     const float fx,
@@ -124,10 +155,10 @@ __global__ void preprocess_backward_cu(
 
     // sh evaluation backward
     const float3 dL_dmean3d_from_color = convert_sh_to_color_backward(
-        sh_coefficients_rest, grad_sh_coefficients_0, grad_sh_coefficients_rest,
+        sh1, sh2, sh3, grad_sh0, grad_sh1, grad_sh2, grad_sh3,
         grad_color[primitive_idx],
         mean3d, cam_position[0],
-        primitive_idx, active_sh_bases, total_bases_sh_rest);
+        primitive_idx, n_primitives, active_sh_bases);
 
     const float4 w2c_r3 = w2c[2];
     const float depth = w2c_r3.x * mean3d.x + w2c_r3.y * mean3d.y + w2c_r3.z * mean3d.z + w2c_r3.w;

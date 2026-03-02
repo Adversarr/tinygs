@@ -54,10 +54,12 @@ struct OrchestratorConfig {
 
   float grad_scaler = 1.0f;
 
-  // Progressive resolution training configuration
-  bool enable_progressive_resolution = false;       ///< Enable progressive resolution training
-  std::vector<size_t> resolution_milestones{0, 5000, 8000};  ///< Specific steps for resolution changes, must start from 0
-  std::vector<float> resolution_scales{0.25, 0.5, 1.0};     ///< Scales corresponding to milestones
+  // Resolution configuration (matches reference 3DGS semantics):
+  //   resolution ∈ {1,2,4,8}  → downscale divisor (new_w = orig_w / (resolution * resolution_scale))
+  //   resolution == -1        → auto: cap width at 1600px, then apply resolution_scale
+  //   resolution > 0 (other)  → target width (global_down = orig_w / resolution)
+  int resolution = -1;              ///< Resolution mode / downscale factor
+  float resolution_scale = 1.0f;   ///< Additional resolution scale factor (divisor)
 
   // Strategy parameters
   size_t scene_scale_recompute_interval = 1000;     ///< Interval for recomputing scene scale in strategy steps
@@ -293,26 +295,15 @@ private:
   /// @brief Reorder gaussians to encourage spatial-storage continuity (Morton)
   void reorder_gaussians();
 
-  ////////////////////////////// Progressive Resolution Training //////////////////////////////
-
-  /// @brief Calculate the resolution scale factor based on current training step
-  /// @param current_step Current training step
-  /// @return Resolution scale factor (1.0 = full resolution)
-  float calculate_resolution_scale(size_t current_step) const;
-
-  /// @brief Scale image shape by resolution factor, and round up to kImageTile
-  /// @param original_shape Original image shape
-  /// @param scale Resolution scale factor
-  /// @return Scaled image shape
-  static ImageShape scale_image_shape(const ImageShape& original_shape, float scale);
-
-  /// @brief Reallocate GPU buffers for new resolution
-  /// @param new_shape New image shape after scaling
+  /// @brief Reallocate GPU buffers and update contexts for a new render resolution.
+  /// @param new_shape New image shape (must not exceed full dataset resolution)
   void set_render_resolution(const ImageShape& new_shape);
 
-  /// @brief Update resolution based on current training step
-  /// @param current_step Current training step
-  void update_resolution(size_t current_step);
+  /// @brief Compute the training image shape from dataset base shape + config resolution params.
+  /// Uses reference 3DGS logic: resolution ∈ {1,2,4,8} is a divisor, -1 auto-caps 1600px, etc.
+  /// @param base_shape Original (full) dataset image shape
+  /// @return Resolved training image shape (tile-aligned)
+  ImageShape compute_training_resolution(const ImageShape& base_shape) const;
 };
 
 }  // namespace tinygs

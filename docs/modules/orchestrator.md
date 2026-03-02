@@ -44,10 +44,9 @@ struct OrchestratorConfig {
     std::vector<size_t> test_steps{7000, 30000};
     std::string out_dir;
     
-    // Progressive resolution
-    bool enable_progressive_resolution = false;
-    std::vector<size_t> resolution_milestones{0, 5000, 8000};
-    std::vector<float> resolution_scales{0.25, 0.5, 1.0};
+    // Resolution (reference 3DGS semantics)
+    int resolution = -1;                    // {1,2,4,8}=divisor, -1=auto(1600px), >0=target width
+    float resolution_scale = 1.0f;         // Additional resolution scale factor (divisor)
     
     // Strategy
     size_t scene_scale_recompute_interval = 1000;
@@ -194,9 +193,6 @@ void Orchestrator::train_step() {
     // Get next batch
     auto batch = m_dataloader->next();
     
-    // Update resolution (progressive training)
-    update_resolution(m_state.current_step);
-    
     // Apply pose optimization
     if (m_state.current_step >= m_config.start_pose_opt && m_pose_opt) {
         batch.input.w2c = m_pose_opt->query(
@@ -252,31 +248,27 @@ void Orchestrator::train_step() {
 
 ---
 
-## Progressive Resolution Training
+## Resolution Configuration
 
-Train at lower resolution initially, then progressively increase:
+Training resolution is determined once at initialization using reference 3DGS semantics:
 
 ```cpp
-void Orchestrator::update_resolution(size_t current_step) {
-    if (!m_config.enable_progressive_resolution) return;
-    
-    float scale = calculate_resolution_scale(current_step);
-    ImageShape new_shape = scale_image_shape(
-        m_dataloader->get_dataset()->image_shape(),
-        scale
-    );
-    
-    if (new_shape != current_shape) {
-        set_render_resolution(new_shape);
-        m_dataloader->set_output_shape(new_shape);
-    }
-}
+// resolution ∈ {1,2,4,8}: downscale divisor
+//   new_w = orig_w / (resolution * resolution_scale)
+// resolution == -1 (default): auto — cap width at 1600px, then apply resolution_scale
+// resolution > 0 (other): target width — global_down = orig_w / resolution
+ImageShape compute_training_resolution(const ImageShape& base_shape) const;
 ```
 
-**Benefits:**
-- Faster initial training
-- Better convergence
-- Reduced memory early on
+**Configuration:**
+```json
+{
+  "trainer": {
+    "resolution": 2,
+    "resolution_scale": 1.0
+  }
+}
+```
 
 ---
 

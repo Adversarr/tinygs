@@ -43,7 +43,7 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset(0);
+    ctx.densification_info->memset_async(ctx.stream, 0);
   }
 
   auto step = this_step();
@@ -58,7 +58,7 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
     // after pruning, we need to reset the densification info since the indices have changed.
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset(0);
+    ctx.densification_info->memset_async(ctx.stream, 0);
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
@@ -98,6 +98,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   
   // First pass: compute and store all gradient values
   thrust::for_each(                                       //
+      exec,                                               //
       thrust::make_counting_iterator<int>(0),             //
       thrust::make_counting_iterator<int>(num_gaussians), //
       [d_densification_info, d_gradient_values,
@@ -149,6 +150,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
 #endif
 
   thrust::for_each(                                       //
+      exec,                                               //
       thrust::make_counting_iterator<int>(0),             //
       thrust::make_counting_iterator<int>(num_gaussians), //
       [d_densification_info, d_scale, d_grow_flags,

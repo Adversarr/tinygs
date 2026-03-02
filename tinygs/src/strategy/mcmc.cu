@@ -207,6 +207,7 @@ void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
 
 void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
+  auto exec = thrust::cuda::par.on(ctx.stream);
   // Expand exponentially.
   const int num_gaussians = m_gaussians->size();
   const int target_size = std::min(
@@ -219,7 +220,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   }
   thrust::device_vector<float> opacities(num_gaussians);
   thrust::transform(
-    thrust::device,
+    exec,
     m_gaussians->opacities().begin(),
     m_gaussians->opacities().end(),
     opacities.begin(),
@@ -238,7 +239,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
     );
 
     thrust::copy(
-      thrust::device,
+      exec,
       sampled_idxs_local.data(),
       sampled_idxs_local.data() + num_to_add,
       sampled_idxs.begin()
@@ -249,6 +250,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   thrust::device_vector<float> sampled_opacities(num_to_add);
   thrust::device_vector<vec3> sampled_scales(num_to_add);
   thrust::transform( // sampled_opacities = opacities.index_select(0, sampled_idxs);
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_to_add),
     sampled_opacities.begin(),
@@ -258,6 +260,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
     ] __device__ (int idx) { return opacities[sampled_idxs[idx]]; }
   );
   thrust::transform( // sampled_scales = get_scale().index_select(0, sampled_idxs);
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_to_add),
     sampled_scales.begin(),
@@ -271,11 +274,12 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   thrust::device_vector<int> ratios(num_to_add, 0);
   {
     thrust::device_vector<int> sample_count(num_gaussians, 0);
-    thrust::for_each(thrust::device, sampled_idxs.begin(), sampled_idxs.end(),
+    thrust::for_each(exec, sampled_idxs.begin(), sampled_idxs.end(),
       [count = thrust::raw_pointer_cast(sample_count.data())] __device__ (int idx) {
         atomicAdd(count + idx, 1);
       });
     thrust::transform( // gather from sample_idx in sample_count.
+        exec,
         thrust::make_counting_iterator<int>(0),
         thrust::make_counting_iterator<int>(num_to_add), ratios.begin(),
         [sample_count = thrust::raw_pointer_cast(sample_count.data()),
@@ -311,6 +315,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
 
   // copy the parameters
   thrust::for_each(
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_to_add),
     [
@@ -351,10 +356,11 @@ MCMCStrategy::~MCMCStrategy() = default;
 
 void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
+  auto exec = thrust::cuda::par.on(ctx.stream);
   size_t num_gaussians = m_gaussians->size();
   thrust::device_vector<float> opacities(num_gaussians);
   thrust::transform(
-    thrust::device,
+    exec,
     m_gaussians->opacities().begin(),
     m_gaussians->opacities().end(),
     opacities.begin(),
@@ -364,6 +370,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   auto rotations = m_gaussians->rotations();
   thrust::device_vector<int> is_alive(num_gaussians);
   thrust::transform(
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_gaussians),
     is_alive.begin(),
@@ -387,7 +394,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     }
   );
 
-  const int num_kept = thrust::reduce(is_alive.begin(), is_alive.end());
+  const int num_kept = thrust::reduce(exec, is_alive.begin(), is_alive.end());
   const int num_dead = num_gaussians - num_kept;
   if (num_dead <= 0) {
     log_info("No gaussians to relocate");
@@ -398,6 +405,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   thrust::device_vector<int> alive_indices(num_kept);
   thrust::device_vector<int> dead_indices(num_dead);
   thrust::copy_if(
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_gaussians),
     is_alive.begin(),
@@ -406,6 +414,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   );
 
   thrust::copy_if(
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_gaussians),
     is_alive.begin(),
@@ -416,7 +425,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   // Sample from alive Gaussians based on opacity
   thrust::device_vector<float> probs(num_kept);
   thrust::transform(  // probs = opacities.index_select(0, alive_indices);
-    thrust::device,
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_kept),
     probs.begin(),
@@ -433,7 +442,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   );
   thrust::device_vector<int> sampled_idxs(num_dead);
   thrust::transform(  // sampled_idxs = alive_indices.index_select(0, sampled_idxs_local);
-    thrust::device,
+    exec,
     sampled_idxs_local.data(),
     sampled_idxs_local.data() + num_dead,
     sampled_idxs.begin(),
@@ -446,6 +455,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   thrust::device_vector<float> sampled_opacities(num_dead);
   thrust::device_vector<vec3> sampled_scales(num_dead);
   thrust::transform( // sampled_opacities = opacities.index_select(0, sampled_idxs);
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_dead),
     sampled_opacities.begin(),
@@ -455,6 +465,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     ] __device__ (int idx) { return opacities[sampled_idxs[idx]]; }
   );
   thrust::transform( // sampled_scales = get_scale().index_select(0, sampled_idxs);
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_dead),
     sampled_scales.begin(),
@@ -471,7 +482,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   { // ratios.index_add_(0, sampled_idxs, torch::ones_like(sampled_idxs, torch::kInt32));
     thrust::device_vector<int> sampled_idxs_count(num_gaussians, 0);
     thrust::for_each(
-      thrust::device, sampled_idxs.begin(), sampled_idxs.end(),
+      exec, sampled_idxs.begin(), sampled_idxs.end(),
       [
         cnt = thrust::raw_pointer_cast(sampled_idxs_count.data())
       ] __device__ (int idx) {
@@ -480,6 +491,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     );
     //* ratios = ratios.index_select(0, sampled_idxs).contiguous();
     thrust::transform(
+      exec,
       thrust::make_counting_iterator<int>(0),
       thrust::make_counting_iterator<int>(num_dead),
       ratios.begin(),
@@ -506,6 +518,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
 
   // Update all the dead gaussians.
   thrust::for_each(
+    exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_dead),
     [

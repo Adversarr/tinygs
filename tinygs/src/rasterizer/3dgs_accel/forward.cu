@@ -11,6 +11,7 @@
 
 #include "forward.h"
 #include "auxiliary.h"
+#include "../sh_soa_utils.cuh"
 #include <cuda.h>
 #include "cuda_runtime.h"
 #include "device_launch_parameters.h"
@@ -21,8 +22,14 @@ namespace cg = cooperative_groups;
 
 // Forward method for converting the input spherical harmonics
 // coefficients of each Gaussian to a simple RGB color.
-__device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* dc, const float* shs, bool* clamped)
+// SH coefficients are in SoA layout: sh0 [3*P], sh1 [9*P], sh2 [15*P], sh3 [21*P].
+__device__ glm::vec3 computeColorFromSH(int idx, int deg, int P,
+	const glm::vec3* means, glm::vec3 campos,
+	const float* sh0, const float* sh1, const float* sh2, const float* sh3,
+	bool* clamped)
 {
+	using tinygs::read_sh0_soa;
+	using tinygs::read_sh_soa;
 	// The implementation is loosely based on code for 
 	// "Differentiable Point-Based Radiance Fields for 
 	// Efficient View Synthesis" by Zhang et al. (2022)
@@ -30,38 +37,55 @@ __device__ glm::vec3 computeColorFromSH(int idx, int deg, int max_coeffs, const 
 	glm::vec3 dir = pos - campos;
 	dir = dir / glm::length(dir);
 
-	glm::vec3* direct_color = ((glm::vec3*)dc) + idx;
-	glm::vec3* sh = ((glm::vec3*)shs) + idx * max_coeffs;
-	glm::vec3 result = SH_C0 * direct_color[0];
+	float3 dc = read_sh0_soa(sh0, P, idx);
+	glm::vec3 result = SH_C0 * glm::vec3(dc.x, dc.y, dc.z);
 
 	if (deg > 0)
 	{
 		float x = dir.x;
 		float y = dir.y;
 		float z = dir.z;
-		result = result - SH_C1 * y * sh[0] + SH_C1 * z * sh[1] - SH_C1 * x * sh[2];
+		float3 s0 = read_sh_soa(sh1, 0, P, idx);
+		float3 s1 = read_sh_soa(sh1, 1, P, idx);
+		float3 s2 = read_sh_soa(sh1, 2, P, idx);
+		result = result
+			- SH_C1 * y * glm::vec3(s0.x, s0.y, s0.z)
+			+ SH_C1 * z * glm::vec3(s1.x, s1.y, s1.z)
+			- SH_C1 * x * glm::vec3(s2.x, s2.y, s2.z);
 
 		if (deg > 1)
 		{
 			float xx = x * x, yy = y * y, zz = z * z;
 			float xy = x * y, yz = y * z, xz = x * z;
+			float3 s3 = read_sh_soa(sh2, 0, P, idx);
+			float3 s4 = read_sh_soa(sh2, 1, P, idx);
+			float3 s5 = read_sh_soa(sh2, 2, P, idx);
+			float3 s6 = read_sh_soa(sh2, 3, P, idx);
+			float3 s7 = read_sh_soa(sh2, 4, P, idx);
 			result = result +
-				SH_C2[0] * xy * sh[3] +
-				SH_C2[1] * yz * sh[4] +
-				SH_C2[2] * (2.0f * zz - xx - yy) * sh[5] +
-				SH_C2[3] * xz * sh[6] +
-				SH_C2[4] * (xx - yy) * sh[7];
+				SH_C2[0] * xy * glm::vec3(s3.x, s3.y, s3.z) +
+				SH_C2[1] * yz * glm::vec3(s4.x, s4.y, s4.z) +
+				SH_C2[2] * (2.0f * zz - xx - yy) * glm::vec3(s5.x, s5.y, s5.z) +
+				SH_C2[3] * xz * glm::vec3(s6.x, s6.y, s6.z) +
+				SH_C2[4] * (xx - yy) * glm::vec3(s7.x, s7.y, s7.z);
 
 			if (deg > 2)
 			{
+				float3 s8  = read_sh_soa(sh3, 0, P, idx);
+				float3 s9  = read_sh_soa(sh3, 1, P, idx);
+				float3 s10 = read_sh_soa(sh3, 2, P, idx);
+				float3 s11 = read_sh_soa(sh3, 3, P, idx);
+				float3 s12 = read_sh_soa(sh3, 4, P, idx);
+				float3 s13 = read_sh_soa(sh3, 5, P, idx);
+				float3 s14 = read_sh_soa(sh3, 6, P, idx);
 				result = result +
-					SH_C3[0] * y * (3.0f * xx - yy) * sh[8] +
-					SH_C3[1] * xy * z * sh[9] +
-					SH_C3[2] * y * (4.0f * zz - xx - yy) * sh[10] +
-					SH_C3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) * sh[11] +
-					SH_C3[4] * x * (4.0f * zz - xx - yy) * sh[12] +
-					SH_C3[5] * z * (xx - yy) * sh[13] +
-					SH_C3[6] * x * (xx - 3.0f * yy) * sh[14];
+					SH_C3[0] * y * (3.0f * xx - yy) * glm::vec3(s8.x, s8.y, s8.z) +
+					SH_C3[1] * xy * z * glm::vec3(s9.x, s9.y, s9.z) +
+					SH_C3[2] * y * (4.0f * zz - xx - yy) * glm::vec3(s10.x, s10.y, s10.z) +
+					SH_C3[3] * z * (2.0f * zz - 3.0f * xx - 3.0f * yy) * glm::vec3(s11.x, s11.y, s11.z) +
+					SH_C3[4] * x * (4.0f * zz - xx - yy) * glm::vec3(s12.x, s12.y, s12.z) +
+					SH_C3[5] * z * (xx - yy) * glm::vec3(s13.x, s13.y, s13.z) +
+					SH_C3[6] * x * (xx - 3.0f * yy) * glm::vec3(s14.x, s14.y, s14.z);
 			}
 		}
 	}
@@ -160,8 +184,10 @@ __global__ void preprocessCUDA(int P, int D, int M,
 	const float scale_modifier,
 	const glm::vec4* rotations,
 	const float* opacities,
-	const float* dc,
-	const float* shs,
+	const float* sh0,
+	const float* sh1,
+	const float* sh2,
+	const float* sh3,
 	bool* clamped,
 	const float* viewmatrix,
 	const float* projmatrix,
@@ -243,7 +269,7 @@ __global__ void preprocessCUDA(int P, int D, int M,
 		return;
 
 	// Convert spherical harmonics coefficients to RGB color.
-	glm::vec3 result = computeColorFromSH(idx, D, M, (glm::vec3*)orig_points, *cam_pos, dc, shs, clamped);
+	glm::vec3 result = computeColorFromSH(idx, D, P, (glm::vec3*)orig_points, *cam_pos, sh0, sh1, sh2, sh3, clamped);
 	rgb[idx * C + 0] = result.x;
 	rgb[idx * C + 1] = result.y;
 	rgb[idx * C + 2] = result.z;
@@ -500,8 +526,10 @@ void FORWARD::preprocess(int P, int D, int M,
 	const float scale_modifier,
 	const glm::vec4* rotations,
 	const float* opacities,
-	const float* dc,
-	const float* shs,
+	const float* sh0,
+	const float* sh1,
+	const float* sh2,
+	const float* sh3,
 	bool* clamped,
 	const float* viewmatrix,
 	const float* projmatrix,
@@ -527,8 +555,10 @@ void FORWARD::preprocess(int P, int D, int M,
 		scale_modifier,
 		rotations,
 		opacities,
-		dc,
-		shs,
+		sh0,
+		sh1,
+		sh2,
+		sh3,
 		clamped,
 		viewmatrix, 
 		projmatrix,

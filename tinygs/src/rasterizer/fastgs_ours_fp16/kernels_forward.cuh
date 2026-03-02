@@ -11,6 +11,7 @@
 
 #include "buffer_utils.h"
 #include "../../helper_math.h"
+#include "../sh_soa_utils.cuh"
 #include "rasterization_config.h"
 #include "utils.h"
 #include <cooperative_groups.h>
@@ -22,25 +23,29 @@ namespace cg = cooperative_groups;
 namespace tinygs::fast_gs_fp16::kernels::forward {
 
 __device__ float3 convert_sh_to_color(
-    const float3* sh_coefficients_0,
-    const float3* sh_coefficients_rest,
+    const float* __restrict__ sh0,
+    const float* __restrict__ sh1,
+    const float* __restrict__ sh2,
+    const float* __restrict__ sh3,
     const float3& position,
     const float3& cam_position,
     const uint primitive_idx,
-    const uint active_sh_bases,
-    const uint total_bases_sh_rest) {
-    // computation adapted from https://github.com/NVlabs/tiny-cuda-nn/blob/212104156403bd87616c1a4f73a1c5f2c2e172a9/include/tiny-cuda-nn/common_device.h#L340
-    float3 result = 0.5f + 0.28209479177387814f * sh_coefficients_0[primitive_idx];
+    const uint n_primitives,
+    const uint active_sh_bases) {
+    using tinygs::read_sh0_soa;
+    using tinygs::read_sh_soa;
+    const int N = static_cast<int>(n_primitives);
+    const int i = static_cast<int>(primitive_idx);
+    float3 result = 0.5f + 0.28209479177387814f * read_sh0_soa(sh0, N, i);
     if (active_sh_bases > 1) {
-        const float3* coefficients_ptr = sh_coefficients_rest + primitive_idx * total_bases_sh_rest;
         auto [x, y, z] = normalize(position - cam_position);
-        result = result + (-0.48860251190291987f * y) * coefficients_ptr[0] + (0.48860251190291987f * z) * coefficients_ptr[1] + (-0.48860251190291987f * x) * coefficients_ptr[2];
+        result = result + (-0.48860251190291987f * y) * read_sh_soa(sh1, 0, N, i) + (0.48860251190291987f * z) * read_sh_soa(sh1, 1, N, i) + (-0.48860251190291987f * x) * read_sh_soa(sh1, 2, N, i);
         if (active_sh_bases > 4) {
             const float xx = x * x, yy = y * y, zz = z * z;
             const float xy = x * y, xz = x * z, yz = y * z;
-            result = result + (1.0925484305920792f * xy) * coefficients_ptr[3] + (-1.0925484305920792f * yz) * coefficients_ptr[4] + (0.94617469575755997f * zz - 0.31539156525251999f) * coefficients_ptr[5] + (-1.0925484305920792f * xz) * coefficients_ptr[6] + (0.54627421529603959f * xx - 0.54627421529603959f * yy) * coefficients_ptr[7];
+            result = result + (1.0925484305920792f * xy) * read_sh_soa(sh2, 0, N, i) + (-1.0925484305920792f * yz) * read_sh_soa(sh2, 1, N, i) + (0.94617469575755997f * zz - 0.31539156525251999f) * read_sh_soa(sh2, 2, N, i) + (-1.0925484305920792f * xz) * read_sh_soa(sh2, 3, N, i) + (0.54627421529603959f * xx - 0.54627421529603959f * yy) * read_sh_soa(sh2, 4, N, i);
             if (active_sh_bases > 9) {
-                result = result + (0.59004358992664352f * y * (-3.0f * xx + yy)) * coefficients_ptr[8] + (2.8906114426405538f * xy * z) * coefficients_ptr[9] + (0.45704579946446572f * y * (1.0f - 5.0f * zz)) * coefficients_ptr[10] + (0.3731763325901154f * z * (5.0f * zz - 3.0f)) * coefficients_ptr[11] + (0.45704579946446572f * x * (1.0f - 5.0f * zz)) * coefficients_ptr[12] + (1.4453057213202769f * z * (xx - yy)) * coefficients_ptr[13] + (0.59004358992664352f * x * (-xx + 3.0f * yy)) * coefficients_ptr[14];
+                result = result + (0.59004358992664352f * y * (-3.0f * xx + yy)) * read_sh_soa(sh3, 0, N, i) + (2.8906114426405538f * xy * z) * read_sh_soa(sh3, 1, N, i) + (0.45704579946446572f * y * (1.0f - 5.0f * zz)) * read_sh_soa(sh3, 2, N, i) + (0.3731763325901154f * z * (5.0f * zz - 3.0f)) * read_sh_soa(sh3, 3, N, i) + (0.45704579946446572f * x * (1.0f - 5.0f * zz)) * read_sh_soa(sh3, 4, N, i) + (1.4453057213202769f * z * (xx - yy)) * read_sh_soa(sh3, 5, N, i) + (0.59004358992664352f * x * (-xx + 3.0f * yy)) * read_sh_soa(sh3, 6, N, i);
             }
         }
     }
@@ -251,8 +256,10 @@ __global__ __launch_bounds__(config::block_size_preprocess) void preprocess_cu(
     const float3* __restrict__ raw_scales,
     const float4* __restrict__ raw_rotations,
     const float* __restrict__ raw_opacities,
-    const float3* __restrict__ sh_coefficients_0,
-    const float3* __restrict__ sh_coefficients_rest,
+    const float* __restrict__ sh0,
+    const float* __restrict__ sh1,
+    const float* __restrict__ sh2,
+    const float* __restrict__ sh3,
     const float4* __restrict__ w2c,
     const float3* __restrict__ cam_position,
     tinygs::DensificationInfo* __restrict__ densification_info,
@@ -268,7 +275,6 @@ __global__ __launch_bounds__(config::block_size_preprocess) void preprocess_cu(
     const uint grid_width,
     const uint grid_height,
     const uint active_sh_bases,
-    const uint total_bases_sh_rest,
     const float w,
     const float h,
     const float fx,
@@ -481,9 +487,9 @@ __global__ __launch_bounds__(config::block_size_preprocess) void preprocess_cu(
         static_cast<ushort>(screen_bounds.w));
     primitive_mean2d[primitive_idx] = mean2d;
     auto color = convert_sh_to_color(
-        sh_coefficients_0, sh_coefficients_rest,
+        sh0, sh1, sh2, sh3,
         mean3d, cam_position[0],
-        primitive_idx, active_sh_bases, total_bases_sh_rest);
+        primitive_idx, n_primitives, active_sh_bases);
 
     const uint offset = atomicAdd(n_visible_primitives, 1);
     const uint depth_key = __float_as_uint(depth);

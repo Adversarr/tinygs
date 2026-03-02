@@ -285,7 +285,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     // Set metric_map and metric_counts
     metric_ctx.metric_map = std::make_shared<GPUBuffer<int>>(std::move(metric_map));
     metric_ctx.metric_counts = std::make_shared<GPUBuffer<int>>(ctx.stream, num_gaussians);
-    metric_ctx.metric_counts->memset(0);
+    metric_ctx.metric_counts->memset_async(ctx.stream, 0);
 
     m_rasterizer->forward_metric(metric_ctx);
     CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
@@ -364,7 +364,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset(0);
+    ctx.densification_info->memset_async(ctx.stream, 0);
   }
 
   const int step = this_step();
@@ -389,7 +389,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
     // Reset densification info since indices have changed
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset(0);
+    ctx.densification_info->memset_async(ctx.stream, 0);
     m_importance_score.clear();
     m_pruning_score.clear();
   }
@@ -819,7 +819,7 @@ void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
 
   // Reset densification info
   ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(nums_kept);
-  ctx.densification_info->memset(0);
+  ctx.densification_info->memset_async(ctx.stream, 0);
   m_importance_score.clear();
   m_pruning_score.clear();
 }
