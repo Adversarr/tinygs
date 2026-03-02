@@ -8,7 +8,6 @@ A complete configuration file contains:
 
 ```json
 {
-  "input_pc_file": "path/to/points.ply",
   "dataset": { ... },
   "dataloader": { ... },
   "test_dataset": { ... },
@@ -25,18 +24,6 @@ A complete configuration file contains:
 }
 ```
 
-## Required Fields
-
-### input_pc_file
-
-Path to the initial point cloud file (PLY or TXT format):
-
-```json
-{
-  "input_pc_file": "outputs/garden/points.ply"
-}
-```
-
 ---
 
 ## Dataset Configuration
@@ -48,13 +35,11 @@ Defines the training dataset:
 ```json
 {
   "dataset": {
-    "type": "png_folder",
-    "folder_path": "outputs/garden/images/",
-    "extrinsics_file_path": "outputs/garden/extri.txt",
-    "intrinsics_file_path": "outputs/garden/intri.txt",
-    "interpolate": true,
-    "undistortion": false,
-    "extension": "png"
+    "type": "image",
+    "root_path": "outputs/garden/train/",
+    "extension": "png",
+    "resolution": -1,
+    "resolution_scale": 1.0
   }
 }
 ```
@@ -63,25 +48,11 @@ Defines the training dataset:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `type` | string | Dataset type: `png_folder`, `video` |
-| `folder_path` | string | Path to image folder |
-| `extrinsics_file_path` | string | Path to extrinsics file |
-| `intrinsics_file_path` | string | Path to intrinsics file |
-| `interpolate` | bool | Interpolate camera poses |
-| `undistortion` | bool | Apply undistortion |
+| `type` | string | Dataset type: `image` |
+| `root_path` | string | Dataset root containing `cameras.json`, `poses.json`, `images/` |
 | `extension` | string | Image extension: `png`, `jpg` |
-
-**Video dataset:**
-
-```json
-{
-  "dataset": {
-    "type": "video",
-    "video_file_path": "path/to/video.mp4",
-    "video_info_path": "path/to/videoInfo.txt"
-  }
-}
-```
+| `resolution` | int | Resolution mode: `{1,2,4,8}` divisor, `-1` auto(1600px cap), `>0` target width |
+| `resolution_scale` | float | Additional scale divisor applied on top of `resolution` |
 
 ### test_dataset (optional)
 
@@ -90,9 +61,11 @@ Same structure as `dataset`, for evaluation:
 ```json
 {
   "test_dataset": {
-    "type": "png_folder",
-    "folder_path": "outputs/garden/test_images/",
-    ...
+    "type": "image",
+    "root_path": "outputs/garden/val/",
+    "extension": "png",
+    "resolution": -1,
+    "resolution_scale": 1.0
   }
 }
 ```
@@ -181,7 +154,7 @@ Same structure as `dataset`, for evaluation:
 ```json
 {
   "optimizer": {
-    "type": "simple_adam",
+    "type": "adam",
     "means_lr": 0.00016,
     "shs_lr": 0.0025,
     "opacities_lr": 0.05,
@@ -198,7 +171,7 @@ Same structure as `dataset`, for evaluation:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `type` | string | - | `simple_adam`, `adam`, `adamw`, `lion`, `lamb`, `adan`, `sgd` |
+| `type` | string | - | `adam`, `adamw`, `sgd` |
 | `means_lr` | float | 1.6e-4 | Position learning rate |
 | `shs_lr` | float | 2.5e-3 | SH coefficients learning rate |
 | `opacities_lr` | float | 5.0e-2 | Opacity learning rate |
@@ -363,9 +336,6 @@ Array of metric names:
     "eval_data_type": "float16",
     "out_dir": "outputs",
     "test_steps": [7000, 30000],
-    "enable_progressive_resolution": false,
-    "resolution": -1,
-    "resolution_scale": 1.0,
     "start_pose_opt": 500
   }
 }
@@ -386,8 +356,6 @@ Array of metric names:
 | `eval_data_type` | string | float32 | `float32` or `float16` |
 | `out_dir` | string | "" | Output directory |
 | `test_steps` | array | [7000, 30000] | Steps to run evaluation |
-| `resolution` | int | -1 | Resolution mode: {1,2,4,8}=divisor, -1=auto (cap 1600px), >0=target width |
-| `resolution_scale` | float | 1.0 | Additional resolution scale factor (divisor) |
 | `start_pose_opt` | int | 500 | Step to start pose optimization |
 
 ---
@@ -398,17 +366,24 @@ Minimal working configuration:
 
 ```json
 {
-  "input_pc_file": "outputs/scene/points.ply",
   "dataset": {
-    "type": "png_folder",
-    "folder_path": "outputs/scene/images/",
-    "extrinsics_file_path": "outputs/scene/extri.txt",
-    "intrinsics_file_path": "outputs/scene/intri.txt"
+    "type": "image",
+    "root_path": "outputs/scene/train/",
+    "extension": "png",
+    "resolution": -1,
+    "resolution_scale": 1.0
   },
   "dataloader": { "type": "async" },
+  "test_dataset": {
+    "type": "image",
+    "root_path": "outputs/scene/val/",
+    "extension": "png",
+    "resolution": -1,
+    "resolution_scale": 1.0
+  },
   "initializer": { "type": "knn" },
   "rasterizer": { "type": "fastgs" },
-  "optimizer": { "type": "simple_adam" },
+  "optimizer": { "type": "adam" },
   "lr_scheduler": { "type": "exponential" },
   "pose_opt": { "type": "adamw" },
   "losses": [

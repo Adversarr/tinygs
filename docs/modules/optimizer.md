@@ -7,11 +7,8 @@ The optimizer module provides gradient-based optimization algorithms for updatin
 | File | Description |
 |------|-------------|
 | `optim.hpp` | Base class and shared parameters |
-| `simple_adam.hpp` | In-place Adam (no momentum storage) |
+| `adam.hpp` | Adam optimizer |
 | `adamw.hpp` | AdamW with weight decay |
-| `lion.hpp` | Lion optimizer |
-| `lamb.hpp` | LAMB optimizer |
-| `adan.hpp` | Adan optimizer |
 | `sgd.hpp` | Stochastic gradient descent |
 | `lr_scheduler.hpp` | Learning rate schedulers |
 
@@ -21,11 +18,8 @@ The optimizer module provides gradient-based optimization algorithms for updatin
 
 | Type | Description | Use Case |
 |------|-------------|----------|
-| `simple_adam` | In-place Adam | Memory-efficient, default choice |
+| `adam` | Adam optimizer | Default training optimizer |
 | `adamw` | AdamW with weight decay | When regularization needed |
-| `lion` | Lion optimizer | Often better generalization |
-| `lamb` | LAMB optimizer | Large batch training |
-| `adan` | Adan optimizer | Adaptive Nesterov momentum |
 | `sgd` | Stochastic gradient descent | Simple baseline |
 
 ---
@@ -122,17 +116,6 @@ class AdamW : public OptimizerBase {
 
 ---
 
-## Simple Adam
-
-Memory-efficient in-place Adam:
-
-```cpp
-// No momentum storage - uses single buffer updates
-// Trades convergence quality for memory savings
-```
-
----
-
 ## Learning Rate Schedulers
 
 ### LrSchedulerBase
@@ -215,7 +198,7 @@ auto scheduler = std::make_shared<ExponentialLR>(optimizer, 1.0f, 0.999869f);
 
 ```cpp
 // Setup
-auto optimizer = create_optimizer("simple_adam", gaussians, gradients);
+auto optimizer = create_optimizer("adam", gaussians, gradients);
 auto scheduler = create_lr_scheduler("exponential", optimizer);
 
 // Training loop

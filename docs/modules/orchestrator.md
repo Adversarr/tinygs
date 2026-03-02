@@ -44,10 +44,6 @@ struct OrchestratorConfig {
     std::vector<size_t> test_steps{7000, 30000};
     std::string out_dir;
     
-    // Resolution (reference 3DGS semantics)
-    int resolution = -1;                    // {1,2,4,8}=divisor, -1=auto(1600px), >0=target width
-    float resolution_scale = 1.0f;         // Additional resolution scale factor (divisor)
-    
     // Strategy
     size_t scene_scale_recompute_interval = 1000;
     size_t reorder_gaussians_interval = 1000;
@@ -250,25 +246,8 @@ void Orchestrator::train_step() {
 
 ## Resolution Configuration
 
-Training resolution is determined once at initialization using reference 3DGS semantics:
-
-```cpp
-// resolution ∈ {1,2,4,8}: downscale divisor
-//   new_w = orig_w / (resolution * resolution_scale)
-// resolution == -1 (default): auto — cap width at 1600px, then apply resolution_scale
-// resolution > 0 (other): target width — global_down = orig_w / resolution
-ImageShape compute_training_resolution(const ImageShape& base_shape) const;
-```
-
-**Configuration:**
-```json
-{
-  "trainer": {
-    "resolution": 2,
-    "resolution_scale": 1.0
-  }
-}
-```
+Resolution is now dataset-owned. Configure `resolution` and `resolution_scale` under
+`dataset` / `test_dataset`; orchestrator uses the loaded dataset shapes directly.
 
 ---
 
@@ -355,21 +334,29 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
 
 ```cpp
 // Create components
-auto dataset = create_dataset("png_folder");
-dataset->set_params(config["dataset"]);
+auto dataset = create_dataset("image");
+dataset->set_params({
+    {"root_path", "outputs/scene/train/"},
+    {"extension", "png"},
+    {"resolution", -1},
+    {"resolution_scale", 1.0f}
+});
 dataset->load();
 
 auto dataloader = create_dataloader("async", dataset);
 auto initializer = create_initialization("knn");
 auto rasterizer = create_rasterizer("fastgs");
-auto optimizer = create_optimizer("simple_adam", gaussians, gradients);
+auto optimizer = create_optimizer("adam", gaussians, gradients);
 auto scheduler = create_lr_scheduler("exponential", optimizer);
 auto strategy = create_strategy("mcmc", gaussians, gradients, optimizer);
 auto pose_opt = create_pose_opt("adamw");
 
 // Initialize Gaussians
-PointCloud pc = load_point_cloud(config["input_pc_file"]);
-initializer->initialize(pc);
+auto pc_opt = dataset->get_point_cloud();
+if (!pc_opt.has_value()) {
+    throw std::runtime_error("Dataset does not provide points3d.ply");
+}
+initializer->initialize(pc_opt.value());
 gaussians->copy_from_host(initializer->gaussians());
 
 // Setup orchestrator

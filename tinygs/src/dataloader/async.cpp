@@ -233,10 +233,6 @@ struct AsyncDataLoader::Impl {
     // Transfer data from host to GPU using the provided CUDA stream
     base.transfer_gpu(prefetch_stream, gpu_image, host_data.image);
 
-    // Ensure the prefetched buffer is fully ready before exposing it to consumer.
-    // Without this fence, consumer stream can read incomplete writes.
-    CUDA_CHECK_THROW(cudaStreamSynchronize(prefetch_stream));
-
     // Prepare GPU batch output
     GPUBatchOutput gpu_output;
     gpu_output.image = Image{gpu_image.shape, gpu_image.data_type, gpu_image.data};
@@ -301,9 +297,6 @@ GPUBatchInputOutput AsyncDataLoader::next() {
     reset();
   } else {
     if (m_impl->last_using_buffer_idx >= 0) {
-      // Ensure previous consumer work has finished before returning the ring buffer slot.
-      // This is conservative but prevents cross-stream overwrite/read hazards.
-      CUDA_CHECK_THROW(cudaDeviceSynchronize());
       if (!m_impl->index_queue->push((uint32_t) m_impl->last_using_buffer_idx)) {
         throw std::runtime_error("Failed to return buffer index to queue");
       }

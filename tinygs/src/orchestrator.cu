@@ -147,8 +147,6 @@ json OrchestratorConfig::to_json() const {
   j["export_rasterized"] = export_rasterized;
   j["export_full_features"] = export_full_features;
   j["record_trajectory"] = record_trajectory;
-  j["resolution"] = resolution;
-  j["resolution_scale"] = resolution_scale;
   j["start_pose_opt"] = start_pose_opt;
   j["scene_scale_recompute_interval"] = scene_scale_recompute_interval;
   j["reorder_gaussians_interval"] = reorder_gaussians_interval;
@@ -191,8 +189,6 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("export_rasterized")) export_rasterized = j["export_rasterized"].get<bool>();
   if (j.contains("export_full_features")) export_full_features = j["export_full_features"].get<bool>();
   if (j.contains("record_trajectory")) record_trajectory = j["record_trajectory"].get<bool>();
-  if (j.contains("resolution")) resolution = j["resolution"].get<int>();
-  if (j.contains("resolution_scale")) resolution_scale = j["resolution_scale"].get<float>();
   if (j.contains("start_pose_opt")) start_pose_opt = j["start_pose_opt"].get<size_t>();
 
   if (j.contains("scene_scale_recompute_interval")) scene_scale_recompute_interval = j["scene_scale_recompute_interval"].get<size_t>();
@@ -476,9 +472,8 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
   m_active_data_type = m_config.eval_data_type;
   DataLoaderBase* effective_loader = loader ? loader : m_dataloader.get();
 
-  // Set eval resolution on the effective loader (test or train), not just m_dataloader
-  ImageShape eval_shape{current_shape.width, current_shape.height, 3};
-  effective_loader->set_output_shape(eval_shape);
+  // Use the effective dataset resolution (train/test can differ).
+  ImageShape eval_shape = effective_loader->get_dataset()->image_shape();
 
   // Update rasterizer context buffers for the eval resolution
   set_render_resolution(eval_shape);
@@ -668,12 +663,19 @@ void Orchestrator::initialize() {
 
   m_loss_ctx.stream = m_rasterize_ctx.stream = m_major_stream;
 
-  // Get image dimensions from the first data sample
-  auto base_shape = m_dataloader->get_dataset()->image_shape();
+  // Use dataset-owned image resolutions (train and optional test may differ).
+  auto train_shape = m_dataloader->get_dataset()->image_shape();
+  auto full_shape = train_shape;
+  if (m_test_dataloader) {
+    const auto test_shape = m_test_dataloader->get_dataset()->image_shape();
+    full_shape.width = std::max(full_shape.width, test_shape.width);
+    full_shape.height = std::max(full_shape.height, test_shape.height);
+  }
+  m_max_render_shape = full_shape;
   
   // Always allocate buffers for full resolution to avoid reallocations during training
-  uint32_t full_pad_width = base_shape.padded_width();
-  uint32_t full_pad_height = base_shape.padded_height();
+  uint32_t full_pad_width = full_shape.padded_width();
+  uint32_t full_pad_height = full_shape.padded_height();
   size_t full_buffer_size = full_pad_width * full_pad_height * 3;  // RGB elements count
   
   // Initialize GPU memory buffers with full resolution size
@@ -683,14 +685,10 @@ void Orchestrator::initialize() {
 
   const double mb = static_cast<double>(full_buffer_size) * sizeof(float) / (1024.0 * 1024.0);
   log_info("Allocated GPU buffers for full resolution {}x{} (size: {:.2f} MB)", 
-           base_shape.width, base_shape.height, mb);
+           full_shape.width, full_shape.height, mb);
 
-  // Determine training resolution using reference 3DGS semantics
-  ImageShape training_shape = compute_training_resolution(base_shape);
-  log_info("Training resolution: {}x{} (base: {}x{}, resolution={}, resolution_scale={:.2f})",
-           training_shape.width, training_shape.height,
-           base_shape.width, base_shape.height,
-           m_config.resolution, m_config.resolution_scale);
+  ImageShape training_shape = train_shape;
+  log_info("Training resolution: {}x{}", training_shape.width, training_shape.height);
   log_info("Camera intrinsics: {}", to_string(m_dataloader->get_dataset()
                                                   ->get_camera_loader()
                                                   .get_camera_intrinsics()[0]));
@@ -903,11 +901,6 @@ void Orchestrator::validate_setup() const {
   if (m_config.accumulate_grad_steps < 1) {
     throw std::runtime_error("accumulate_grad_steps must be >= 1");
   }
-
-  // Validate resolution configuration
-  if (m_config.resolution_scale <= 0.0f) {
-    throw std::runtime_error("resolution_scale must be > 0");
-  }
 }
 
 cv::Mat Orchestrator::to_opencv() const {
@@ -955,50 +948,9 @@ cv::Mat Orchestrator::to_opencv() const {
   return img;
 }
 
-/// Compute training image shape from config resolution params, following the reference 3DGS logic:
-///   resolution ∈ {1,2,4,8} → divisor: new_w = orig_w / (resolution * resolution_scale)
-///   resolution == -1       → auto: cap width at 1600, then apply resolution_scale
-///   resolution > 0 (other) → target width: global_down = orig_w / resolution, then * resolution_scale
-/// Result is rounded down to the nearest kImageTile boundary, clamped to [kImageTile, original].
-ImageShape Orchestrator::compute_training_resolution(const ImageShape& base_shape) const {
-  const float orig_w = static_cast<float>(base_shape.width);
-  const float orig_h = static_cast<float>(base_shape.height);
-
-  float scale;  // overall divisor: final_w = orig_w / scale
-  if (m_config.resolution == 1 || m_config.resolution == 2 ||
-      m_config.resolution == 4 || m_config.resolution == 8) {
-    // Integer downscale factor, combined with resolution_scale
-    scale = static_cast<float>(m_config.resolution) * m_config.resolution_scale;
-  } else {
-    float global_down;
-    if (m_config.resolution == -1) {
-      // Auto mode: cap width at 1600px
-      global_down = (orig_w > 1600.0f) ? (orig_w / 1600.0f) : 1.0f;
-    } else if (m_config.resolution > 0) {
-      // Target width mode
-      global_down = orig_w / static_cast<float>(m_config.resolution);
-    } else {
-      throw std::invalid_argument("Invalid resolution value: " + std::to_string(m_config.resolution));
-    }
-    scale = global_down * m_config.resolution_scale;
-  }
-
-  // Compute scaled dimensions, round down to kImageTile, clamp to [kImageTile, original]
-  auto align_tile = [](float dim, float s, uint32_t orig) -> uint32_t {
-    uint32_t raw = static_cast<uint32_t>(dim / s);
-    uint32_t aligned = (raw / kImageTile) * kImageTile;
-    return std::clamp(aligned, kImageTile, orig);
-  };
-
-  uint32_t new_w = align_tile(orig_w, scale, base_shape.width);
-  uint32_t new_h = align_tile(orig_h, scale, base_shape.height);
-
-  return ImageShape{new_w, new_h, base_shape.channel};
-}
-
 void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
-  if (new_shape.width  > m_dataloader->get_dataset()->image_shape().width ||
-      new_shape.height > m_dataloader->get_dataset()->image_shape().height) {
+  if (new_shape.width > m_max_render_shape.width ||
+      new_shape.height > m_max_render_shape.height) {
     throw std::invalid_argument("Not a valid buffer shape.");
   }
 
@@ -1019,8 +971,6 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
   m_loss_ctx.loss = Image(rgb_shape, m_active_data_type, m_loss_buffer->data());
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
-
-  m_dataloader->set_output_shape(rgb_shape);
 }
 
 static __global__ void densification_update( //

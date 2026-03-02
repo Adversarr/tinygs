@@ -38,3 +38,6 @@ loss.png
 *.ply
 out2
 .ralph
+*.nsys-rep
+*.ncu-rep
+*.sqlite

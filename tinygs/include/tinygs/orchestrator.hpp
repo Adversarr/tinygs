@@ -54,13 +54,6 @@ struct OrchestratorConfig {
 
   float grad_scaler = 1.0f;
 
-  // Resolution configuration (matches reference 3DGS semantics):
-  //   resolution ∈ {1,2,4,8}  → downscale divisor (new_w = orig_w / (resolution * resolution_scale))
-  //   resolution == -1        → auto: cap width at 1600px, then apply resolution_scale
-  //   resolution > 0 (other)  → target width (global_down = orig_w / resolution)
-  int resolution = -1;              ///< Resolution mode / downscale factor
-  float resolution_scale = 1.0f;   ///< Additional resolution scale factor (divisor)
-
   // Strategy parameters
   size_t scene_scale_recompute_interval = 1000;     ///< Interval for recomputing scene scale in strategy steps
   size_t reorder_gaussians_interval = 1000;         ///< Interval for reordering gaussians in strategy steps
@@ -264,6 +257,9 @@ private:
   // Active render/loss data type used for buffers
   DataType m_active_data_type = DataType::Float32;
 
+  // Maximum allocated render shape used as a guard for render/loss buffers.
+  ImageShape m_max_render_shape{};
+
   // Early stopping state: track best loss and the step it was achieved
   float m_best_loss = -1.0f;        ///< Best (lowest) loss seen so far, -1 means unset
   size_t m_best_loss_step = 0;      ///< Step at which m_best_loss was recorded
@@ -298,12 +294,6 @@ private:
   /// @brief Reallocate GPU buffers and update contexts for a new render resolution.
   /// @param new_shape New image shape (must not exceed full dataset resolution)
   void set_render_resolution(const ImageShape& new_shape);
-
-  /// @brief Compute the training image shape from dataset base shape + config resolution params.
-  /// Uses reference 3DGS logic: resolution ∈ {1,2,4,8} is a divisor, -1 auto-caps 1600px, etc.
-  /// @param base_shape Original (full) dataset image shape
-  /// @return Resolved training image shape (tile-aligned)
-  ImageShape compute_training_resolution(const ImageShape& base_shape) const;
 };
 
 }  // namespace tinygs

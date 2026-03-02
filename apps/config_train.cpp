@@ -71,6 +71,12 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   // orchestrator
   auto orchestrator = std::make_shared<Orchestrator>();
   if (config.contains("trainer") && config.at("trainer").is_object()) {
+    const auto& trainer_cfg = config.at("trainer");
+    if (trainer_cfg.contains("resolution") || trainer_cfg.contains("resolution_scale")) {
+      throw std::runtime_error(
+          "trainer.resolution and trainer.resolution_scale are no longer supported. "
+          "Please move them to dataset/test_dataset sections.");
+    }
     orchestrator->set_params(config.at("trainer"));
   }
 

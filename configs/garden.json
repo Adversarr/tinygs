@@ -6,11 +6,15 @@
   "dataset": {
     "root_path": "/data/gaussian-splatting/360_v2_converted/garden/train/",
     "extension": "JPG",
+    "resolution": -1,
+    "resolution_scale": 1.0,
     "type": "image"
   },
   "test_dataset": {
     "root_path": "/data/gaussian-splatting/360_v2_converted/garden/val/",
     "extension": "JPG",
+    "resolution": -1,
+    "resolution_scale": 1.0,
     "type": "image"
   },
   "initializer": {
@@ -105,8 +109,6 @@
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
     "reorder_gaussians_interval": 1000,
-    "resolution": -1,
-    "resolution_scale": 1.0,
     "start_pose_opt": 50000,
     "record_trajectory": false,
     "test_steps": [3000, 5000, 7000, 10000, 15000, 30000],

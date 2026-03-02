@@ -2,11 +2,14 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <nvtx3/nvtx3.hpp>
+#include <opencv2/imgproc.hpp>
 #include <stdexcept>
 
 #include "tinygs/core/camera.hpp"
@@ -24,38 +27,115 @@ namespace tinygs {
 
 /// Convert a single image from HWC (RGB/RGBA) to CHW-tiled uint8 layout.
 static void load_single_image(size_t index, const std::string& image_path, uint8_t* data_buffer,
-                              uint32_t expected_width, uint32_t expected_height, uint32_t channels) {
+                              uint32_t src_expected_width, uint32_t src_expected_height,
+                              uint32_t dst_width, uint32_t dst_height, uint32_t channels) {
   auto img = load_stbi_u8(image_path.c_str());
   if (!img.data) {
     throw std::runtime_error("Failed to load image: " + image_path);
   }
+  std::unique_ptr<void, decltype(&free)> img_guard(img.data, &free);
 
-  if (static_cast<uint32_t>(img.shape.width) != expected_width ||
-      static_cast<uint32_t>(img.shape.height) != expected_height) {
-    free(img.data);
+  if (static_cast<uint32_t>(img.shape.width) != src_expected_width ||
+      static_cast<uint32_t>(img.shape.height) != src_expected_height) {
     throw std::runtime_error("Image dimensions mismatch for " + image_path
-                             + ". Expected: " + std::to_string(expected_width) + "x"
-                             + std::to_string(expected_height)
+                             + ". Expected: " + std::to_string(src_expected_width) + "x"
+                             + std::to_string(src_expected_height)
                              + ", Got: " + std::to_string(img.shape.width) + "x"
                              + std::to_string(img.shape.height));
   }
+  if (img.shape.channel < static_cast<int>(channels)) {
+    throw std::runtime_error("Insufficient image channels for " + image_path
+                             + ". Expected at least " + std::to_string(channels)
+                             + ", Got: " + std::to_string(img.shape.channel));
+  }
 
-  ImageShape temp_shape{expected_width, expected_height, channels};
+  ImageShape temp_shape{dst_width, dst_height, channels};
   uint8_t* dest_ptr = data_buffer + index * temp_shape.padded_size();
-  uint8_t* img_data = static_cast<uint8_t*>(img.data);
   const auto total_pix = temp_shape.padded_width() * temp_shape.padded_height();
 
-  // HWC → CHW tiled; ignore alpha channel if present.
+  // HWC source -> HWC resized with OpenCV -> CHW tiled destination.
+  const uint32_t src_width = static_cast<uint32_t>(img.shape.width);
+  const uint32_t src_height = static_cast<uint32_t>(img.shape.height);
+  cv::Mat src_hwc;
+  switch (img.shape.channel) {
+    case 1:
+      src_hwc = cv::Mat(static_cast<int>(src_height), static_cast<int>(src_width),
+                        CV_8UC1, img.data);
+      break;
+    case 3:
+      src_hwc = cv::Mat(static_cast<int>(src_height), static_cast<int>(src_width),
+                        CV_8UC3, img.data);
+      break;
+    case 4:
+      src_hwc = cv::Mat(static_cast<int>(src_height), static_cast<int>(src_width),
+                        CV_8UC4, img.data);
+      break;
+    default:
+      throw std::runtime_error("Unsupported image channels for " + image_path + ": "
+                               + std::to_string(img.shape.channel));
+  }
+
+  cv::Mat resized_hwc;
+  const cv::Mat* src_for_pack = &src_hwc;
+  if (src_width != dst_width || src_height != dst_height) {
+    const int interp = (dst_width < src_width || dst_height < src_height)
+                           ? cv::INTER_AREA
+                           : cv::INTER_LINEAR;
+    cv::resize(src_hwc, resized_hwc,
+               cv::Size(static_cast<int>(dst_width), static_cast<int>(dst_height)),
+               0.0, 0.0, interp);
+    src_for_pack = &resized_hwc;
+  }
+
+  const int src_channels = src_for_pack->channels();
   for (uint32_t c = 0; c < channels; ++c) {
-    for (uint32_t h = 0; h < expected_height; ++h) {
-      for (uint32_t w = 0; w < expected_width; ++w) {
+    for (uint32_t h = 0; h < dst_height; ++h) {
+      const uint8_t* src_row = src_for_pack->ptr<uint8_t>(static_cast<int>(h));
+      for (uint32_t w = 0; w < dst_width; ++w) {
         const auto dst_pix_idx = get_linear_index_tiled(h, w, temp_shape.tiled_width());
-        const uint32_t src_idx = h * expected_width * img.shape.channel + w * img.shape.channel + c;
-        dest_ptr[c * total_pix + dst_pix_idx] = img_data[src_idx];
+        const uint32_t src_idx = w * static_cast<uint32_t>(src_channels) + c;
+        dest_ptr[c * total_pix + dst_pix_idx] = src_row[src_idx];
       }
     }
   }
-  free(img_data);
+}
+
+static ImageShape resolve_dataset_shape(uint32_t src_width,
+                                        uint32_t src_height,
+                                        int resolution,
+                                        float resolution_scale) {
+  if (resolution_scale <= 0.0f) {
+    throw std::invalid_argument("dataset.resolution_scale must be > 0");
+  }
+
+  const float orig_w = static_cast<float>(src_width);
+  const float orig_h = static_cast<float>(src_height);
+
+  float scale;
+  if (resolution == 1 || resolution == 2 || resolution == 4 || resolution == 8) {
+    scale = static_cast<float>(resolution) * resolution_scale;
+  } else {
+    float global_down;
+    if (resolution == -1) {
+      global_down = (orig_w > 1600.0f) ? (orig_w / 1600.0f) : 1.0f;
+    } else if (resolution > 0) {
+      global_down = orig_w / static_cast<float>(resolution);
+    } else {
+      throw std::invalid_argument("Invalid dataset.resolution value: " + std::to_string(resolution));
+    }
+    scale = global_down * resolution_scale;
+  }
+
+  auto align_tile = [](float dim, float s, uint32_t orig) -> uint32_t {
+    uint32_t raw = static_cast<uint32_t>(dim / s);
+    uint32_t aligned = (raw / kImageTile) * kImageTile;
+    return std::clamp(aligned, kImageTile, orig);
+  };
+
+  return ImageShape{
+      align_tile(orig_w, scale, src_width),
+      align_tile(orig_h, scale, src_height),
+      3};
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +165,12 @@ void ImageDataset::load() {
   auto start = std::chrono::steady_clock::now();
 
   const fs::path root{m_root_path};
+  if (m_data) {
+    CUDA_CHECK_THROW(cudaFreeHost(m_data));
+    m_data = nullptr;
+  }
+  m_timestamp_data.clear();
+
   const fs::path cameras_json_path = root / "cameras.json";
   const fs::path poses_json_path = root / "poses.json";
   const fs::path images_dir = root / "images";
@@ -119,6 +205,8 @@ void ImageDataset::load() {
   }
 
   // --- Infer image shape from the first image --------------------------------
+  uint32_t src_width = 0;
+  uint32_t src_height = 0;
   {
     const auto& first_ext = m_camera_loader.get_camera_extrinsics().front();
     const std::string& first_name = image_id_to_name.at(first_ext.frame_idx);
@@ -127,9 +215,9 @@ void ImageDataset::load() {
     if (!first_img.data) {
       throw std::runtime_error("ImageDataset: failed to load first image: " + first_path);
     }
-    m_image_shape.width = first_img.shape.width;
-    m_image_shape.height = first_img.shape.height;
-    m_image_shape.channel = 3;  // always RGB
+    src_width = first_img.shape.width;
+    src_height = first_img.shape.height;
+    m_image_shape = resolve_dataset_shape(src_width, src_height, m_resolution, m_resolution_scale);
     free(first_img.data);
     m_camera_loader.resize_sensor(m_image_shape.width, m_image_shape.height);
   }
@@ -150,7 +238,8 @@ void ImageDataset::load() {
   // --- Load all images in parallel -------------------------------------------
 #pragma omp parallel for
   for (size_t i = 0; i < m_size; ++i) {
-    load_single_image(i, image_paths[i], m_data, m_image_shape.width, m_image_shape.height,
+    load_single_image(i, image_paths[i], m_data, src_width, src_height,
+                      m_image_shape.width, m_image_shape.height,
                       m_image_shape.channel);
   }
 
@@ -162,9 +251,10 @@ void ImageDataset::load() {
 
   auto end = std::chrono::steady_clock::now();
   log_info(
-      "ImageDataset: loaded {} images ({}x{}) from '{}'. "
+      "ImageDataset: loaded {} images ({}x{}) from '{}' [source {}x{}, resolution={}, resolution_scale={}]. "
       "Memory: {:.2f} GiB, Time: {:.3f} s.",
       m_size, m_image_shape.width, m_image_shape.height, m_root_path,
+      src_width, src_height, m_resolution, m_resolution_scale,
       static_cast<double>(total_size) / (1024.0 * 1024.0 * 1024.0),
       std::chrono::duration<double>(end - start).count());
 }
@@ -233,6 +323,12 @@ void ImageDataset::set_params(const json& j) {
   if (j.contains("extension")) {
     m_extension = j["extension"].get<std::string>();
   }
+  if (j.contains("resolution")) {
+    m_resolution = j["resolution"].get<int>();
+  }
+  if (j.contains("resolution_scale")) {
+    m_resolution_scale = j["resolution_scale"].get<float>();
+  }
 }
 
 json ImageDataset::get_params() const {
@@ -242,6 +338,8 @@ json ImageDataset::get_params() const {
   if (!m_extension.empty()) {
     params["extension"] = m_extension;
   }
+  params["resolution"] = m_resolution;
+  params["resolution_scale"] = m_resolution_scale;
   return params;
 }
 

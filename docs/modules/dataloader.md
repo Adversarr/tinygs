@@ -149,8 +149,13 @@ class AsyncDataLoader : public DataLoaderBase {
 
 ```cpp
 // Create dataset first
-auto dataset = create_dataset("png_folder");
-dataset->set_params(dataset_config);
+auto dataset = create_dataset("image");
+dataset->set_params({
+    {"root_path", "outputs/scene/train/"},
+    {"extension", "png"},
+    {"resolution", -1},
+    {"resolution_scale", 1.0f}
+});
 dataset->load();
 
 // Create dataloader
@@ -170,11 +175,12 @@ dataloader->set_output_shape({width, height, 3});
 
 ```cpp
 // Setup
-auto dataset = create_dataset("png_folder");
+auto dataset = create_dataset("image");
 dataset->set_params({
-    {"folder_path", "outputs/scene/images/"},
-    {"extrinsics_file_path", "outputs/scene/extri.txt"},
-    {"intrinsics_file_path", "outputs/scene/intri.txt"}
+    {"root_path", "outputs/scene/train/"},
+    {"extension", "png"},
+    {"resolution", -1},
+    {"resolution_scale", 1.0f}
 });
 dataset->load();
 

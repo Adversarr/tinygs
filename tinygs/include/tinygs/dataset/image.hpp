@@ -53,6 +53,13 @@ private:
   /// Image file extension filter. Empty means auto-detect from poses.json names.
   std::string m_extension{""};
 
+  /// Resolution mode using reference 3DGS semantics:
+  ///   -1: auto cap width to 1600, {1,2,4,8}: divisor, >0: target width.
+  int m_resolution{-1};
+
+  /// Additional divisor scale applied to m_resolution logic.
+  float m_resolution_scale{1.0f};
+
   // -- Loaded state -----------------------------------------------------------
   ImageShape m_image_shape{};
   uint8_t* m_data{nullptr};

@@ -21,11 +21,10 @@ tinygs implements a modular architecture for 3D Gaussian Splatting training and 
    ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐
    │ Dataset  │  │GPUGaussian│ │  Image   │  │   Adam   │  │  Default │
    │          │  │    3d    │  │  Buffer  │  │  AdamW   │  │Improved  │
-   │png_folder│  │          │  │          │  │  Lion    │  │   MCMC   │
-   │  video   │  │ means    │  │          │  │  LAMB    │  │          │
-   └──────────┘  │ opacities│  └──────────┘  │   SGD    │  └──────────┘
-                 │ scales   │                │   ...    │
-                 │ rotations│                └──────────┘
+   │  image   │  │ means    │  │          │  │   SGD    │  │   MCMC   │
+   │          │  │ opacities│  │          │  │          │  │          │
+   └──────────┘  │ scales   │  └──────────┘  └──────────┘  └──────────┘
+                 │ rotations│
                  │ sh_coeff │
                  └──────────┘
 ```
@@ -40,7 +39,7 @@ The `Orchestrator` class is the central training coordinator that:
 - Coordinates all other components
 - Handles checkpointing and logging
 - Manages spherical harmonics degree progression
-- Implements progressive resolution training
+- Uses dataset-owned training/eval resolution
 
 **Key responsibilities:**
 1. Forward pass: Rasterize Gaussians to image
@@ -90,12 +89,8 @@ Updates Gaussian parameters based on gradients:
 **Implementations:**
 | Type | Description |
 |------|-------------|
-| `simple_adam` | In-place Adam (no momentum storage) |
 | `adam` | Full Adam with momentum |
 | `adamw` | AdamW with weight decay |
-| `lion` | Lion optimizer |
-| `lamb` | LAMB optimizer |
-| `adan` | Adan optimizer |
 | `sgd` | Stochastic gradient descent |
 
 **Per-parameter learning rates:**
@@ -155,8 +150,7 @@ Loads images and camera parameters:
 **Implementations:**
 | Type | Description |
 |------|-------------|
-| `png_folder` | Image folder (PNG/JPG) |
-| `video` | Video file (MP4) |
+| `image` | JSON camera + image folder dataset |
 
 ## Data Flow
 
@@ -228,7 +222,7 @@ auto rasterizer = create_rasterizer("fastgs");
 auto optimizer = create_optimizer("adamw", gaussians, gradients);
 auto strategy = create_strategy("mcmc", gaussians, gradients, optimizer);
 auto dataloader = create_dataloader("async", dataset);
-auto dataset = create_dataset("png_folder");
+auto dataset = create_dataset("image");
 auto loss = create_loss("fused_ssim");
 ```
 
