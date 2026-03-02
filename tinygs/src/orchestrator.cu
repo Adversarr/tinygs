@@ -625,8 +625,11 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
                                                 std::plus<float>(),
                                                 [mean](float x) { return (x - mean) * (x - mean); }) 
                          / metric_pair.second.size());
-    log_info("[Step {}] Metric {}: mean = {:.6f}, std = {:.6f}",
-             m_state.current_step, metric_pair.first, mean, std);
+    printf("[Step %zu] Metric %s: mean = %.6f, std = %.6f\n",
+         m_state.current_step,
+         metric_pair.first.c_str(),
+         mean,
+         std);
   }
 
   // Restore training dtype and resolution

@@ -41,9 +41,11 @@
   ],
   "lr_schedulers": {
     "means": {
-      "decay_rate": 0.99992325,
       "initial_lr": 1.0,
-      "step_count": 0,
+      "position_lr_final": 0.01,
+      "position_lr_delay_mult": 0.01,
+      "position_lr_max_steps": 30000,
+      "use_fastgs_schedule": true,
       "type": "exponential"
     },
     "shs": {
@@ -72,7 +74,7 @@
     "scales_l1": 0.01,
     "scales_lr": 0.005,
     "shs_lr": 0.0025,
-    "skip_zero_grad": true,
+    "skip_zero_grad": false,
     "type": "adam"
   },
   "pose_opt": {
@@ -104,6 +106,7 @@
     "noise_lr_init": 8.0,
     "split_distance": 0.45,
     "opacity_reduction": 0.6,
+    "opacity_reset_value": 0.01,
     "type": "fastgs"
   },
   "trainer": {
@@ -119,10 +122,10 @@
     "early_stopping_threshold": 1.0e-6,
     "enable_early_stopping": false,
     "far_plane": 100.0,
-    "grad_scaler": 1.0,
+    "grad_scaler": 512.0,
     "log_interval": 100,
     "max_sh_degree": 3,
-    "max_steps": 5000,
+    "max_steps": 30000,
     "near_plane": 0.01,
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,

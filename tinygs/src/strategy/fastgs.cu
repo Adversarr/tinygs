@@ -444,9 +444,9 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
   }
 
   const int step = this_step();
-  if (step % m_params.refine_every == 0 &&
-      step >= m_params.start_refine &&
-      step <= m_params.end_refine) {
+    if (step % m_params.refine_every == 0 &&
+      step > m_params.start_refine &&
+      step < m_params.end_refine) {
 
     // Compute multi-view importance scores before densification
     compute_gaussian_score(ctx, /*densify=*/ true);
@@ -481,7 +481,11 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
-      step >= m_params.start_refine && step < m_params.end_refine) {
+      step > m_params.start_refine && step < m_params.end_refine) {
+    linear_kernel(clamp_opacity_kernel, 0, ctx.stream,
+        static_cast<int>(m_gaussians->size()),
+        thrust::raw_pointer_cast(m_gaussians->opacities().data()),
+        m_opacity_reset_value);
     on_reset_opacity();
   }
 }

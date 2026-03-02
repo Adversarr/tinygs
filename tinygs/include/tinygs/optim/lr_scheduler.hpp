@@ -99,8 +99,13 @@ public:
 
 private:
   float m_initial_lr;   ///< Initial learning rate value
+  float m_final_lr;     ///< Final learning rate value for FastGS-style scheduling
+  float m_delay_mult;   ///< Delay multiplier for FastGS-style warmup
+  int m_delay_steps;    ///< Delay steps for FastGS-style warmup
+  int m_max_steps;      ///< Max steps for FastGS-style interpolation
   float m_decay_rate;   ///< Decay factor applied each step
   int m_step_count;     ///< Current step count for decay calculation
+  bool m_use_fastgs_schedule; ///< Whether to use FastGS-style schedule instead of pure decay
 };
 
 /// @brief Create learning rate scheduler object

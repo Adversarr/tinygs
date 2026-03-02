@@ -41,9 +41,11 @@
   ],
   "lr_schedulers": {
     "means": {
-      "decay_rate": 0.99992325,
       "initial_lr": 1.0,
-      "step_count": 0,
+      "position_lr_final": 0.01,
+      "position_lr_delay_mult": 0.01,
+      "position_lr_max_steps": 30000,
+      "use_fastgs_schedule": true,
       "type": "exponential"
     },
     "shs": {
@@ -104,6 +106,7 @@
     "noise_lr_init": 8.0,
     "split_distance": 0.45,
     "opacity_reduction": 0.6,
+    "opacity_reset_value": 0.01,
     "type": "fastgs"
   },
   "trainer": {
