@@ -88,8 +88,8 @@ struct GaussianOptimizationParams {
 ///     stay consistent after the Strategy adds or removes Gaussians.
 ///   - All CUDA work is enqueued on the provided `stream`.
 ///
-/// Implementations: "adam" only. AdamW behavior is enabled via Adam parameter
-/// `decouple_decay=true`.
+/// Implementations: "adam" and "adam_per_gaussian". AdamW behavior is enabled
+/// via parameter `decouple_decay=true`.
 class OptimizerBase {
 public:
   OptimizerBase(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
@@ -166,7 +166,7 @@ protected:
 };
 
 /// @brief Factory: create an optimizer by type name.
-/// @param optimizer_type One of: "adam".
+/// @param optimizer_type One of: "adam", "adam_per_gaussian" (alias: "adam_pg").
 /// @param gaussians Gaussian parameters to optimize.
 /// @param gaussians_grad Gradient buffer (same layout as gaussians).
 std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_type,

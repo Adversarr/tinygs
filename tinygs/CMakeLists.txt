@@ -35,6 +35,7 @@ set(TINYGS_SOURCES
     
     # Optimizers
     "src/optim/adam.cu"
+    "src/optim/adam_per_gaussian.cu"
     "src/optim/lr_scheduler.cpp"
     "src/optim/optim.cu"
 

@@ -1,4 +1,5 @@
 #include "tinygs/optim/adam.hpp"
+#include "tinygs/optim/adam_per_gaussian.hpp"
 #include "tinygs/optim/optim.hpp"
 #include <cmath>
 #include <nlohmann/json.hpp>
@@ -173,10 +174,12 @@ std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_typ
   std::string lower_optimizer_type = to_lower(optimizer_type);
   if (lower_optimizer_type == "adam") {
     return std::make_unique<Adam>(gaussians, gaussians_grad);
+  } else if (lower_optimizer_type == "adam_per_gaussian" || lower_optimizer_type == "adam_pg") {
+    return std::make_unique<AdamPerGaussian>(gaussians, gaussians_grad);
   } else {
     throw std::runtime_error(
         "Unknown optimizer type: " + optimizer_type +
-        ". Supported: adam only. Use optimizer.type='adam' with decouple_decay=true for AdamW mode.");
+        ". Supported: adam, adam_per_gaussian. Use decouple_decay=true for AdamW mode.");
   }
 }
 } // namespace tinygs
