@@ -118,10 +118,6 @@ __device__ __forceinline__ void uchar32float3(float3& f, const uchar3& uc) {
   f.z = static_cast<float>(uc.z) * inv_255;
 }
 
-__device__ __forceinline__ uint32_t half2asui32(__half2 h) {
-  return reinterpret_cast<const uint32_t&>(h);
-}
-
 __device__ __forceinline__ __half2 ui32ashalf2(uint32_t u) {
   return reinterpret_cast<const __half2&>(u);
 }
@@ -165,25 +161,6 @@ __host__ __device__ inline uint32_t morton3D_invert_y(uint32_t code) {
 }
 __host__ __device__ inline uint32_t morton3D_invert_z(uint32_t code) {
     return compact_bits(code >> 2);       // z bits at positions 2,5,8,...
-}
-
-__device__ __forceinline__ uint2 morton2d_invert(uint32_t lin) {
-  return make_uint2(morton3D_invert_x(lin),   // x
-                    morton3D_invert_y(lin));  // y
-}
-
-__device__ __forceinline__ uint morton2d(uint2 xy) {
-  return morton3D(xy.x, xy.y, 0);
-}
-
-__device__ __forceinline__ uint2 tile_linear_to_xy(uint linear, uint2 wh) {
-  // return make_uint2(linear % wh.x, linear / wh.x);
-  return morton2d_invert(linear);
-}
-
-__device__ __forceinline__ uint tile_xy_to_linear(uint2 wh, uint2 xy) {
-  // width * tile_y + tile_x
-  return wh.x * xy.y + xy.x;
 }
 
 __device__ __forceinline__ __half2 fast_exp_approx(__half2 input) {

@@ -26,9 +26,6 @@ private:
 
   /// Helper functions
   vec3 rgb_to_sh(const vec3& rgb) const;
-  vec3 generate_random_color() const;
-  vec3 generate_random_position() const;
-  vec3 generate_random_scale() const;
 
 public:
   explicit RandomInitialization(const RandomParameters& params = RandomParameters{});

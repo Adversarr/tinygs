@@ -50,9 +50,6 @@ private:
   /// Root directory for this dataset split (e.g. "data/garden/train/").
   std::string m_root_path{"."};
 
-  /// Image file extension filter. Empty means auto-detect from poses.json names.
-  std::string m_extension{""};
-
   /// Resolution mode using reference 3DGS semantics:
   ///   -1: auto cap width to 1600, {1,2,4,8}: divisor, >0: target width.
   int m_resolution{-1};

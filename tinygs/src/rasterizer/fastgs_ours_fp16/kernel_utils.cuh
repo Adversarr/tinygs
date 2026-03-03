@@ -9,7 +9,3 @@
 #include "utils.h"
 #include <cooperative_groups.h>
 namespace cg = cooperative_groups;
-
-namespace tinygs::fast_gs_fp16::kernels {
-
-} // namespace tinygs::fast_gs_fp16::kernels

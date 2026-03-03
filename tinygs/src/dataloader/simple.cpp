@@ -1,6 +1,5 @@
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/cuda/common_host.hpp"
-#include <random>
 #include <nvtx3/nvtx3.hpp>
 #include "tinygs/dataloader/nvtx_dl.h"
 

@@ -107,14 +107,6 @@ __forceinline__ __device__ float3 transformVec4x3Transpose(const float3& p, cons
 	return transformed;
 }
 
-__forceinline__ __device__ float dnormvdz(float3 v, float3 dv)
-{
-	float sum2 = v.x * v.x + v.y * v.y + v.z * v.z;
-	float invsum32 = 1.0f / sqrt(sum2 * sum2 * sum2);
-	float dnormvdz = (-v.x * v.z * dv.x - v.y * v.z * dv.y + (sum2 - v.z * v.z) * dv.z) * invsum32;
-	return dnormvdz;
-}
-
 __forceinline__ __device__ float3 dnormvdv(float3 v, float3 dv)
 {
 	float sum2 = v.x * v.x + v.y * v.y + v.z * v.z;

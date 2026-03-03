@@ -278,7 +278,6 @@ __global__ void preprocess_cu(
         tinygs::activate_scale(raw_scale.z) * tinygs::activate_scale(raw_scale.z));
     pipeline.consumer_wait();
     auto [qr, qx, qy, qz] = shm_raw_rotations[block.thread_rank()];
-    // auto [qr, qx, qy, qz] = raw_rotations[primitive_idx];
     pipeline.consumer_release();
 
     const float qrr_raw = qr * qr, qxx_raw = qx * qx, qyy_raw = qy * qy, qzz_raw = qz * qz;

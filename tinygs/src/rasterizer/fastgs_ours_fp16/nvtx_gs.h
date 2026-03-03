@@ -64,9 +64,4 @@ struct m_copy_counts_d2h     { static constexpr char const* message{"copy_counts
   nvtx3::event_attributes GS_CONCAT(_gs_attr_, __LINE__){GS_CONCAT(_gs_msg_, __LINE__), COLOR, CAT, nvtx3::payload{static_cast<int64_t>(PAYLOAD)}}; \
   ::gs_nvtx::range GS_CONCAT(_gs_range_, __LINE__){GS_CONCAT(_gs_attr_, __LINE__)};
 
-// Range with literal message
-#define GS_RANGE_SCOPE_LIT(MSG_LIT, COLOR, CAT, PAYLOAD) \
-  nvtx3::event_attributes GS_CONCAT(_gs_attr_, __LINE__){MSG_LIT, COLOR, CAT, nvtx3::payload{static_cast<int64_t>(PAYLOAD)}}; \
-  ::gs_nvtx::range GS_CONCAT(_gs_range_, __LINE__){GS_CONCAT(_gs_attr_, __LINE__)};
-
 } // namespace gs_nvtx

@@ -44,11 +44,6 @@ struct DensificationInfo {
   float metric_pruning_score = 0;    ///< FastGS: reconstruction quality pruning score
 };
 
-mat4x4 normalize_scene(
-  const Gaussian3d& gs3d,
-  const std::vector<std::pair<mat4x4, mat3x3>>& w2c_k_s,
-  float ext_scale = 1.0f);
-
 TINYGS_HOST_DEVICE inline float activate_scale(float x) {
   return ::expf(x);
   // return log(1 + exp(x));

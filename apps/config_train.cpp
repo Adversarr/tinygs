@@ -1,5 +1,4 @@
 #include <chrono>
-#include <cuda_runtime.h>
 #include <cxxopts.hpp>
 #include <fstream>
 #include <opencv2/opencv.hpp>
@@ -260,9 +259,8 @@ void eval(std::shared_ptr<Orchestrator> orchestrator) {
 
 void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
   auto gs3d = orchestrator->get_optimizer()->get_gaussians();
-  auto grads = orchestrator->get_optimizer()->get_gaussians_grad();
   auto last_log_time = std::chrono::steady_clock::now();
-  orchestrator->set_post_step_callback([orchestrator, gs3d, grads, visualize, last_log_time] (const TrainingState& state) mutable {
+  orchestrator->set_post_step_callback([orchestrator, gs3d, visualize, last_log_time] (const TrainingState& state) mutable {
     if (state.current_step % 100 != 0) {
       return;
     }
@@ -287,7 +285,6 @@ void train(std::shared_ptr<Orchestrator> orchestrator, bool visualize) {
     if (visualize) {
       cv::Mat img = orchestrator->to_opencv();
       if (!img.empty()) {
-        // cv::imwrite("render.png", img);
         cv::imshow("render", img);
 
         if (char key = cv::waitKey(0); key == 27) {

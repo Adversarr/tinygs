@@ -34,124 +34,7 @@
 
 #include <tinygs/common.hpp>
 
-#include <tinygs/random/pcg32.hpp>
-
 namespace tinygs {
-
-
-__forceinline__ __device__ unsigned lane_id() {
-  unsigned ret;
-  asm volatile("mov.u32 %0, %laneid;" : "=r"(ret));
-  return ret;
-}
-
-#define IQ_DEFAULT_STATE 0x853c49e6748fea9bULL
-
-/// Based on https://www.iquilezles.org/www/articles/sfrand/sfrand.htm
-struct iqrand {
-  /// @brief Initialize with default seed
-  TINYGS_HOST_DEVICE iqrand() : state((uint32_t)IQ_DEFAULT_STATE) {}
-
-  /// @brief Initialize with custom seed
-  TINYGS_HOST_DEVICE iqrand(uint32_t initstate) : state(initstate) {}
-
-  /// @brief Generate float in [0, 1)
-  TINYGS_HOST_DEVICE float next_float() {
-    union {
-      float fres;
-      unsigned int ires;
-    };
-
-    state *= 16807;
-    ires = ((((unsigned int)state) >> 9) | 0x3f800000);
-    return fres - 1.0f;
-  }
-
-  uint32_t state; ///< RNG state
-};
-
-using default_rng_t = pcg32;
-
-__device__ inline float random_val(uint32_t seed, uint32_t idx) {
-  default_rng_t rng{seed};
-  rng.advance(idx);
-  return rng.next_float();
-}
-
-__device__ inline float smoothstep(float val) {
-  return val * val * (3.0f - 2.0f * val);
-}
-
-__device__ inline float smoothstep_derivative(float val) {
-  return 6 * val * (1.0f - val);
-}
-
-__device__ inline float smoothstep_2nd_derivative(float val) {
-  return 6.0f - 12.0f * val;
-}
-
-__device__ inline float identity_fun(float val) { return val; }
-
-__device__ inline float identity_derivative(float val) { return 1.0f; }
-
-__device__ inline float identity_2nd_derivative(float val) { return 0.0f; }
-
-__device__ inline float gaussian_cdf(const float x, const float inv_radius) {
-  return normcdff(x * inv_radius);
-}
-
-__device__ inline float gaussian_cdf_approx(const float x,
-                                            const float inv_radius) {
-  static constexpr float MAGIC_SIGMOID_FACTOR = 1.12f / SQRT2;
-  return logistic(MAGIC_SIGMOID_FACTOR * x * inv_radius);
-}
-
-__device__ inline float gaussian_cdf_approx_derivative(const float result,
-                                                       const float inv_radius) {
-  static constexpr float MAGIC_SIGMOID_FACTOR = 1.12f / SQRT2;
-  return result * (1 - result) * MAGIC_SIGMOID_FACTOR * inv_radius;
-}
-
-__device__ inline float gaussian_pdf(const float x, const float inv_radius) {
-  return inv_radius * rsqrtf(2.0f * PI()) *
-         expf(-0.5f * (x * x * inv_radius * inv_radius));
-}
-
-__device__ inline float gaussian_pdf_max_1(const float x,
-                                           const float inv_radius) {
-  return expf(-0.5f * (x * x * inv_radius * inv_radius));
-}
-
-__device__ inline float tent(const float x, const float inv_radius) {
-  return fmaxf(1.0f - fabsf(x * inv_radius), 0.0f);
-}
-
-__device__ inline float tent_cdf(const float x, const float inv_radius) {
-  return fmaxf(0.0f, fminf(1.0f, x * inv_radius + 0.5f));
-}
-
-__host__ __device__ inline float quartic(const float x,
-                                         const float inv_radius) {
-  const float u = x * inv_radius;
-  const float tmp = fmaxf(1 - u * u, 0.0f);
-  return ((float)15 / 16) * tmp * tmp;
-}
-
-__host__ __device__ inline float quartic_cdf_deriv(const float x,
-                                                   const float inv_radius) {
-  return quartic(x, inv_radius) * inv_radius;
-}
-
-__host__ __device__ inline float quartic_cdf(const float x,
-                                             const float inv_radius) {
-  const float u = x * inv_radius;
-  const float u2 = u * u;
-  const float u4 = u2 * u2;
-  return fmaxf(0.0f, fminf(1.0f, ((float)15 / 16) * u *
-                                         (1 - ((float)2 / 3) * u2 +
-                                          ((float)1 / 5) * u4) +
-                                     0.5f));
-}
 
 __device__ __forceinline__ float saturate(float x) {
   return __saturatef(x); // Uses CUDA intrinsic for faster clamping
@@ -180,15 +63,6 @@ __host__ __device__ inline uint32_t morton3D(uint32_t x, uint32_t y, uint32_t z)
 	uint32_t yy = expand_bits(y);
 	uint32_t zz = expand_bits(z);
 	return xx | (yy << 1) | (zz << 2);
-}
-
-__host__ __device__ inline uint32_t morton3D_invert(uint32_t x) {
-	x = x               & 0x49249249;
-	x = (x | (x >> 2))  & 0xc30c30c3;
-	x = (x | (x >> 4))  & 0x0f00f00f;
-	x = (x | (x >> 8))  & 0xff0000ff;
-	x = (x | (x >> 16)) & 0x0000ffff;
-	return x;
 }
 
 } // namespace tinygs

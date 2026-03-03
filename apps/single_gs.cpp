@@ -1,5 +1,3 @@
-#include <cuda_runtime.h>
-
 #include <algorithm>
 #include <cxxopts.hpp>
 #include <iomanip>
@@ -7,7 +5,6 @@
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 
-#include "glm/gtx/string_cast.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/random/pcg32.hpp"

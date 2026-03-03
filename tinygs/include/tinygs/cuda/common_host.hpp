@@ -117,25 +117,6 @@ void set_verbose(bool verbose);
 	} while(0)
 
 
-// //////////////////////////////
-// // Enum<->string conversion //
-// //////////////////////////////
-
-// Activation string_to_activation(const std::string& activation_name);
-// std::string to_string(Activation activation);
-
-// GridType string_to_grid_type(const std::string& grid_type);
-// std::string to_string(GridType grid_type);
-
-// HashType string_to_hash_type(const std::string& hash_type);
-// std::string to_string(HashType hash_type);
-
-// InterpolationType string_to_interpolation_type(const std::string& interpolation_type);
-// std::string to_string(InterpolationType interpolation_type);
-
-// ReductionType string_to_reduction_type(const std::string& reduction_type);
-// std::string to_string(ReductionType reduction_type);
-
 //////////////////
 // Misc helpers //
 //////////////////
@@ -227,10 +208,6 @@ size_t hash_combine(std::size_t seed, const T& v) {
 	return rotl(seed, std::numeric_limits<size_t>::digits / 3) ^ distribute(std::hash<T>{}(v));
 }
 
-std::string to_snake_case(const std::string& str);
-
-std::vector<std::string> split(const std::string& text, const std::string& delim);
-
 template <typename T>
 std::string join(const T& components, const std::string& delim) {
 	std::ostringstream s;
@@ -250,16 +227,6 @@ inline bool equals_case_insensitive(const std::string& str1, const std::string& 
 	return to_lower(str1) == to_lower(str2);
 }
 
-struct CaseInsensitiveHash { size_t operator()(const std::string& v) const { return std::hash<std::string>{}(to_lower(v)); }};
-struct CaseInsensitiveEqual { bool operator()(const std::string& l, const std::string& r) const { return equals_case_insensitive(l, r); }};
-
-template <typename T>
-using ci_hashmap = std::unordered_map<std::string, T, CaseInsensitiveHash, CaseInsensitiveEqual>;
-
-
-template <typename T>
-std::string type_to_string();
-
 inline std::string bytes_to_string(size_t bytes) {
   std::array<std::string, 7> suffixes = {{"B", "KB", "MB", "GB", "TB", "PB", "EB"}};
 
@@ -275,34 +242,6 @@ inline std::string bytes_to_string(size_t bytes) {
   return oss.str();
 }
 
-/// @brief Check if number is power of two, optionally return log2
-inline bool is_pot(uint32_t num, uint32_t* log2 = nullptr) {
-  if (log2) {
-    *log2 = 0;
-  }
-  if (num > 0) {
-    while (num % 2 == 0) {
-      num /= 2;
-      if (log2) {
-        ++*log2;
-      }
-    }
-    if (num == 1) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-inline uint32_t powi(uint32_t base, uint32_t exponent) {
-  uint32_t result = 1;
-  for (uint32_t i = 0; i < exponent; ++i) {
-    result *= base;
-  }
-
-  return result;
-}
 
 class ScopeGuard {
 public:
@@ -320,22 +259,6 @@ public:
 	}
 private:
 	std::function<void()> m_callback;
-};
-
-template <typename T>
-class Lazy {
-public:
-	template <typename F>
-	T& get(F&& generator) {
-		if (!m_val) {
-			m_val = generator();
-		}
-
-		return m_val;
-	}
-
-private:
-	T m_val;
 };
 
 #if defined(__CUDACC__) || (defined(__clang__) && defined(__CUDA__))
@@ -373,73 +296,6 @@ inline void parallel_for_gpu(size_t n_elements, F&& fun) {
 	parallel_for_gpu(nullptr, n_elements, std::forward<F>(fun));
 }
 
-template <typename F>
-__global__ void parallel_for_aos_kernel(const size_t n_elements, const uint32_t n_dims, F fun) {
-	const size_t dim = threadIdx.x;
-	const size_t elem = threadIdx.y + blockIdx.x * blockDim.y;
-	if (dim >= n_dims) return;
-	if (elem >= n_elements) return;
-
-	fun(elem, dim);
-}
-
-template <typename F>
-inline void parallel_for_gpu_aos(uint32_t shmem_size, cudaStream_t stream, size_t n_elements, uint32_t n_dims, F&& fun) {
-	if (n_elements <= 0 || n_dims <= 0) {
-		return;
-	}
-
-	const dim3 threads = { n_dims, div_round_up(N_THREADS_LINEAR, n_dims), 1 };
-	const size_t n_threads = threads.x * threads.y;
-	const dim3 blocks = { (uint32_t)div_round_up(n_elements * n_dims, n_threads), 1, 1 };
-
-	parallel_for_aos_kernel<<<blocks, threads, shmem_size, stream>>>(
-		n_elements, n_dims, fun
-	);
-}
-
-template <typename F>
-inline void parallel_for_gpu_aos(cudaStream_t stream, size_t n_elements, uint32_t n_dims, F&& fun) {
-	parallel_for_gpu_aos(0, stream, n_elements, n_dims, std::forward<F>(fun));
-}
-
-template <typename F>
-inline void parallel_for_gpu_aos(size_t n_elements, uint32_t n_dims, F&& fun) {
-	parallel_for_gpu_aos(nullptr, n_elements, n_dims, std::forward<F>(fun));
-}
-
-template <typename F>
-__global__ void parallel_for_soa_kernel(const size_t n_elements, const uint32_t n_dims, F fun) {
-	const size_t elem = threadIdx.x + blockIdx.x * blockDim.x;
-	const size_t dim = blockIdx.y;
-	if (elem >= n_elements) return;
-	if (dim >= n_dims) return;
-
-	fun(elem, dim);
-}
-
-template <typename F>
-inline void parallel_for_gpu_soa(uint32_t shmem_size, cudaStream_t stream, size_t n_elements, uint32_t n_dims, F&& fun) {
-	if (n_elements <= 0 || n_dims <= 0) {
-		return;
-	}
-
-	const dim3 blocks = { n_blocks_linear(n_elements), n_dims, 1 };
-
-	parallel_for_soa_kernel<<<n_blocks_linear(n_elements), N_THREADS_LINEAR, shmem_size, stream>>>(
-		n_elements, n_dims, fun
-	);
-}
-
-template <typename F>
-inline void parallel_for_gpu_soa(cudaStream_t stream, size_t n_elements, uint32_t n_dims, F&& fun) {
-	parallel_for_gpu_soa(0, stream, n_elements, n_dims, std::forward<F>(fun));
-}
-
-template <typename F>
-inline void parallel_for_gpu_soa(size_t n_elements, uint32_t n_dims, F&& fun) {
-	parallel_for_gpu_soa(nullptr, n_elements, n_dims, std::forward<F>(fun));
-}
 #endif
 
 // Optional sync to make NVTX ranges cover GPU time (may affect perf)

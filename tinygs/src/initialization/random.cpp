@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <iostream>
 #include <random>
 
 #include "cuda/common_host.hpp"
@@ -20,34 +19,6 @@ RandomInitialization::RandomInitialization(const RandomParameters& params) : m_p
 vec3 RandomInitialization::rgb_to_sh(const vec3& rgb) const {
   constexpr float kInvSH = 0.28209479177387814f;
   return (rgb - vec3(0.5f)) / kInvSH;
-}
-
-vec3 RandomInitialization::generate_random_color() const {
-  static thread_local std::mt19937 gen(m_params.seed);
-  std::uniform_real_distribution<float> dis(0.0f, 1.0f);
-  return vec3(dis(gen), dis(gen), dis(gen));
-}
-
-vec3 RandomInitialization::generate_random_position() const {
-  static thread_local std::mt19937 gen(m_params.seed + 1);
-  std::uniform_real_distribution<float> dis(-m_params.extent, m_params.extent);
-  return vec3(dis(gen), dis(gen), dis(gen));
-}
-
-vec3 RandomInitialization::generate_random_scale() const {
-  static thread_local std::mt19937 gen(m_params.seed + 2);
-  
-  if (m_params.use_uniform_scale) {
-    float scale = m_params.init_scaling;
-    float log_scale = std::log(scale);
-    return vec3(log_scale, log_scale, log_scale);
-  } else {
-    std::uniform_real_distribution<float> dis(m_params.min_scale, m_params.max_scale);
-    float scale_x = std::log(dis(gen));
-    float scale_y = std::log(dis(gen));
-    float scale_z = std::log(dis(gen));
-    return vec3(scale_x, scale_y, scale_z);
-  }
 }
 
 void RandomInitialization::initialize(const PointCloud&  /*pointcloud*/) {

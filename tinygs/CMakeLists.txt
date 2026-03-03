@@ -4,14 +4,12 @@ set(TINYGS_SOURCES
     "src/core/camera.cpp"
     "src/core/camera_ext.cpp"
     "src/core/camera_loader.cpp"
-    "src/core/gaussian.cpp"
     "src/core/gpu_gaussian.cu"
     "src/core/pointcloud.cpp"
     
     # CUDA utilities
     "src/cuda/common_host.cu"
     "src/cuda/reduce.cu"
-    "src/cuda/stat.cu"
     
     # Dataloader
     "src/dataloader/dataloader.cu"
@@ -80,7 +78,6 @@ set(TINYGS_SOURCES
     # Utilities
     "src/utils/file.cpp"
     "src/utils/image_format.cu"
-    "src/utils/inspect_change.cu"
     "src/utils/scope_timer.cpp"
     "src/utils/stbi_wrapper.cpp"
 )

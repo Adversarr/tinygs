@@ -53,44 +53,6 @@ __device__ float3 convert_sh_to_color(
 }
 
 
-// based on https://github.com/r4dl/StopThePop-Rasterization/blob/d8cad09919ff49b11be3d693d1e71fa792f559bb/cuda_rasterizer/stopthepop/stopthepop_common.cuh#L131
-__device__ inline bool will_primitive_contribute(
-    const float2& mean,
-    const float3& conic,
-    const uint tile_x,
-    const uint tile_y,
-    const float power_threshold) {
-    const float2 rect_min = make_float2(static_cast<float>(tile_x * config::tile_width), static_cast<float>(tile_y * config::tile_width));
-    const float2 rect_max = make_float2(static_cast<float>((tile_x + 1) * config::tile_width - 1), static_cast<float>((tile_y + 1) * config::tile_width - 1));
-
-    const float x_min_diff = rect_min.x - mean.x;
-    const float x_left = static_cast<float>(x_min_diff > 0.0f);
-    const float not_in_x_range = x_left + static_cast<float>(mean.x > rect_max.x);
-    const float y_min_diff = rect_min.y - mean.y;
-    const float y_above = static_cast<float>(y_min_diff > 0.0f);
-    const float not_in_y_range = y_above + static_cast<float>(mean.y > rect_max.y);
-
-    // let's hope the compiler optimizes this properly
-    if (not_in_y_range + not_in_x_range == 0.0f) {
-        return true;
-    }
-    const float2 closest_corner = make_float2(
-        fast_lerp(rect_max.x, rect_min.x, x_left),
-        fast_lerp(rect_max.y, rect_min.y, y_above));
-    const float2 diff = mean - closest_corner;
-
-    const float2 d = make_float2(
-        copysignf(static_cast<float>(config::tile_width - 1), x_min_diff),
-        copysignf(static_cast<float>(config::tile_width - 1), y_min_diff));
-    const float2 t = make_float2(
-        not_in_y_range * __saturatef((d.x * conic.x * diff.x + d.x * conic.y * diff.y) / (d.x * conic.x * d.x)),
-        not_in_x_range * __saturatef((d.y * conic.y * diff.x + d.y * conic.z * diff.y) / (d.y * conic.z * d.y)));
-    const float2 max_contribution_point = closest_corner + t * d;
-    const float2 delta = mean - max_contribution_point;
-    const float max_power_in_tile = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
-    return max_power_in_tile <= power_threshold;
-}
-
 __device__ __forceinline__ __half2 h2copysign(const __half2& x, const __half2& y) {
     // Reinterpret __half2 as a 32-bit unsigned integer
     uint32_t ix = reinterpret_cast<const uint32_t&>(x);
@@ -129,10 +91,6 @@ __device__ __forceinline__ bool will_primitive_contribute_half(
     float2 mean, ConicOpacity conic,
     const uint tile_x, const uint tile_y,
     const float power_threshold) {
-    //? Reference float version
-    // auto f3_conic = make_float3(__half2float(conic.xy.x), __half2float(conic.xy.y), __half2float(conic.zw.x));
-    // return will_primitive_contribute(mean, f3_conic, tile_x, tile_y, power_threshold);
-
     const __half2 one = make_half2(CUDART_ONE_FP16, CUDART_ONE_FP16);
     const __half2 zero = make_half2(CUDART_ZERO_FP16, CUDART_ZERO_FP16);
     const __half2 tile_sizes = make_half2(

@@ -1,7 +1,5 @@
 #include "tinygs/utils/scope_timer.hpp"
 #include "tinygs/cuda/common_host.hpp"
-#include <iomanip>
-#include <sstream>
 
 namespace tinygs {
 

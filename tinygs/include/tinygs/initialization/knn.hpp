@@ -34,7 +34,6 @@ private:
   std::vector<float> compute_mean_neighbor_distances(const std::vector<vec3>& points) const;
   /// Compute per-point local covariance matrices using KNN neighbors
   std::vector<mat3x3> compute_local_covariances(const std::vector<vec3>& points) const;
-  float calculate_scene_scale(const std::vector<float>& distances) const;
   vec3 rgb_to_sh(const vec3& rgb) const;
   
   /// Radius outlier removal functionality

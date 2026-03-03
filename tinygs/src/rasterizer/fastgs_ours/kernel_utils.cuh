@@ -9,7 +9,3 @@
 #include "utils.h"
 #include <cooperative_groups.h>
 namespace cg = cooperative_groups;
-
-namespace fast_gs::rasterization::kernels {
-
-} // namespace fast_gs::rasterization::kernels

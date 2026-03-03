@@ -10,6 +10,4 @@ float gpu_sum(float *data, int size) {
                         thrust::plus<float>());
 }
 
-float mean(float *data, int size) { return gpu_sum(data, size) / size; }
-
 } // namespace tinygs

@@ -1,6 +1,4 @@
 #include <thrust/execution_policy.h>
-#include <thrust/host_vector.h>
-#include <thrust/random.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/device_ptr.h>
 #include <thrust/extrema.h>
@@ -77,7 +75,6 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   auto exec = thrust::cuda::par.on(ctx.stream);
   auto num_gaussians = m_gaussians->size();
   GPUBuffer<char> duplication_flags(ctx.stream, num_gaussians);
-  // thrust::device_vector<char> duplication_flags(num_gaussians);
   duplication_flags.memset_async(ctx.stream, 0);
   auto *d_grow_flags = thrust::raw_pointer_cast(duplication_flags.data());
   if (! ctx.densification_info || ctx.densification_info->size() != num_gaussians) {
@@ -213,7 +210,6 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
     }
   }
 
-  // thrust::device_vector<int> grow_indices_target(num_grows);
   GPUBuffer<int> grow_indices_target(ctx.stream, num_grows);
   grow_indices_target.memset_async(ctx.stream, 0);
   auto *d_grow_indices_target = thrust::raw_pointer_cast(grow_indices_target.data());
@@ -232,7 +228,6 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
 
 
   GPUBuffer<float> device_scales(ctx.stream, num_grows * 6);
-  // device_scales.memset_async(ctx.stream, 0);
   generate_random_logistic(m_rng, num_grows * 6,
                            thrust::raw_pointer_cast(device_scales.data()),
                            (float)0.0, (float)1.0);
@@ -243,7 +238,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   thrust::for_each(exec,
     thrust::make_counting_iterator<int>(0),
     thrust::make_counting_iterator<int>(num_grows),
-    [d_grow_indices_src, d_grow_indices_target, num_grows, d_grow_flags, num_gaussians,
+    [d_grow_indices_src, d_grow_indices_target, num_grows, d_grow_flags,
      means3d = thrust::raw_pointer_cast(m_gaussians->means().data()),
      scales3d = thrust::raw_pointer_cast(m_gaussians->scales().data()),
      opacities = thrust::raw_pointer_cast(m_gaussians->opacities().data()),

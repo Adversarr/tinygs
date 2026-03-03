@@ -320,9 +320,6 @@ void ImageDataset::set_params(const json& j) {
   if (j.contains("root_path")) {
     m_root_path = j["root_path"].get<std::string>();
   }
-  if (j.contains("extension")) {
-    m_extension = j["extension"].get<std::string>();
-  }
   if (j.contains("resolution")) {
     m_resolution = j["resolution"].get<int>();
   }
@@ -335,9 +332,6 @@ json ImageDataset::get_params() const {
   json params;
   params["type"] = "image";
   params["root_path"] = m_root_path;
-  if (!m_extension.empty()) {
-    params["extension"] = m_extension;
-  }
   params["resolution"] = m_resolution;
   params["resolution_scale"] = m_resolution_scale;
   return params;

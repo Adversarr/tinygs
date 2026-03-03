@@ -396,12 +396,6 @@ void Orchestrator::train_step() {
   if (opacities_cycle_start) clear_group_gradients(OptimParamGroup::Opacities);
   if (scales_cycle_start) clear_group_gradients(OptimParamGroup::Scales);
   if (rotations_cycle_start) clear_group_gradients(OptimParamGroup::Rotations);
-  if (!any_cycle_start) {
-    const bool clear_all_legacy = false;
-    if (clear_all_legacy) {
-      m_gradients->memset(0);
-    }
-  }
   m_loss_buffer->memset(0);
   m_image_grad_buffer->memset(0);
   debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "clear-buffers");

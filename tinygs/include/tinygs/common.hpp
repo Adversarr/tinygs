@@ -55,10 +55,8 @@
 
 #if defined(__CUDA_ARCH__)
 #define TINYGS_PRAGMA_UNROLL _Pragma("unroll")
-#define TINYGS_PRAGMA_NO_UNROLL _Pragma("unroll 1")
 #else
 #define TINYGS_PRAGMA_UNROLL
-#define TINYGS_PRAGMA_NO_UNROLL
 #endif
 
 #ifdef __CUDACC__
@@ -96,18 +94,6 @@
 namespace tinygs {
 using json = nlohmann::json;
 
-static constexpr uint32_t MIN_GPU_ARCH = TINYGS_MIN_GPU_ARCH;
-
-// When TinyGS managed its model parameters, they are always aligned,
-// which yields performance benefits in practice. However, parameters
-// supplied by PyTorch are not necessarily aligned. The following
-// variable controls whether TinyGS must deal with unaligned data.
-#if defined(TINYGS_PARAMS_UNALIGNED)
-static constexpr bool PARAMS_ALIGNED = false;
-#else
-static constexpr bool PARAMS_ALIGNED = true;
-#endif
-
 #define TINYGS_HALF_PRECISION                                                  \
   (!(TINYGS_MIN_GPU_ARCH == 61 || TINYGS_MIN_GPU_ARCH <= 52))
 
@@ -127,66 +113,8 @@ static constexpr bool PARAMS_ALIGNED = true;
 //  tensor cores)
 
 #if defined(__CUDACC__)
-#if TINYGS_HALF_PRECISION
-using network_precision_t = __half;
-#else
-using network_precision_t = float;
-#endif
-
 /// Optional: use float precision for debugging
 #endif
-
-enum class Activation {
-  ReLU,
-  LeakyReLU,
-  SiLU,
-  Exponential,
-  Sine,
-  Sigmoid,
-  Squareplus,
-  Softplus,
-  Tanh,
-  None,
-};
-
-enum class GridType {
-  Hash,
-  Dense,
-  Tiled,
-};
-
-enum class HashType {
-  Prime,
-  CoherentPrime,
-  ReversedPrime,
-  Rng,
-  BaseConvert,
-};
-
-enum class InterpolationType {
-  Nearest,
-  Linear,
-  Smoothstep,
-};
-
-enum class MatrixLayout {
-  RowMajor = 0,
-  SoA = 0, // For data matrices TinyGS's convention is RowMajor == SoA (struct
-           // of arrays)
-  ColumnMajor = 1,
-  AoS = 1,
-};
-
-static constexpr MatrixLayout RM = MatrixLayout::RowMajor;
-static constexpr MatrixLayout SoA = MatrixLayout::SoA;
-static constexpr MatrixLayout CM = MatrixLayout::ColumnMajor;
-static constexpr MatrixLayout AoS = MatrixLayout::AoS;
-
-enum class ReductionType {
-  Concatenation,
-  Sum,
-  Product,
-};
 
 /// The frame_id, camera_id, ... Always ui64.
 using uuid_t = uint64_t;
@@ -204,25 +132,6 @@ inline constexpr TINYGS_HOST_DEVICE float PI() {
   return 3.14159265358979323846f;
 }
 
-template <typename T> TINYGS_HOST_DEVICE void host_device_swap(T &a, T &b) {
-  T c(a);
-  a = b;
-  b = c;
-}
-
-template <typename T> TINYGS_HOST_DEVICE T gcd(T a, T b) {
-  while (a != 0) {
-    b %= a;
-    host_device_swap(a, b);
-  }
-  return b;
-}
-
-template <typename T> TINYGS_HOST_DEVICE T lcm(T a, T b) {
-  T tmp = gcd(a, b);
-  return tmp ? (a / tmp) * b : 0;
-}
-
 template <typename T> TINYGS_HOST_DEVICE T div_round_up(T val, T divisor) {
   return (val + divisor - 1) / divisor;
 }
@@ -234,30 +143,6 @@ template <typename T> TINYGS_HOST_DEVICE T next_multiple(T val, T divisor) {
 template <typename T> TINYGS_HOST_DEVICE T previous_multiple(T val, T divisor) {
   return (val / divisor) * divisor;
 }
-
-template <typename T> constexpr TINYGS_HOST_DEVICE bool is_pot(T val) {
-  return (val & (val - 1)) == 0;
-}
-
-inline constexpr TINYGS_HOST_DEVICE uint32_t next_pot(uint32_t v) {
-  --v;
-  v |= v >> 1;
-  v |= v >> 2;
-  v |= v >> 4;
-  v |= v >> 8;
-  v |= v >> 16;
-  return v + 1;
-}
-
-template <typename T> constexpr TINYGS_HOST_DEVICE float default_loss_scale();
-template <> constexpr TINYGS_HOST_DEVICE float default_loss_scale<float>() {
-  return 1.0f;
-}
-#ifdef __CUDACC__
-template <> constexpr TINYGS_HOST_DEVICE float default_loss_scale<__half>() {
-  return 128.0f;
-}
-#endif
 
 constexpr uint32_t BATCH_SIZE_GRANULARITY = 256;
 constexpr uint32_t N_THREADS_LINEAR = 128;
@@ -340,17 +225,9 @@ template <typename T> struct PayloadAndIdx {
   }
 };
 
-using DistAndIdx = PayloadAndIdx<float>;
-using IntervalAndIdx = PayloadAndIdx<Interval<float>>;
-
 constexpr int kMaxSphericalHarmonicsDegree = 3;
 constexpr int kMaxSphericalHarmonicsCoefficients =
     (kMaxSphericalHarmonicsDegree + 1) * (kMaxSphericalHarmonicsDegree + 1);
-
-constexpr int kMaxBatchSize = 1;
-constexpr uint32_t kMaxImageWidth = 2048;
-constexpr uint32_t kMaxImageHeight = 2048;
-constexpr uint32_t kMaxImageChannels = 4;
 
 
 static constexpr float SQRT2 = 1.41421356237309504880f;

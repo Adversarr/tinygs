@@ -11,23 +11,6 @@
 
 namespace cg = cooperative_groups;
 
-// // ------------------------------------------
-// // Constant Memory for Gaussian Coefficients
-// // ------------------------------------------
-// __constant__ float cGauss[11] = {
-//     0.001028380123898387f,
-//     0.0075987582094967365f,
-//     0.036000773310661316f,
-//     0.10936068743467331f,
-//     0.21300552785396576f,
-//     0.26601171493530273f,
-//     0.21300552785396576f,
-//     0.10936068743467331f,
-//     0.036000773310661316f,
-//     0.0075987582094967365f,
-//     0.001028380123898387f
-// };
-
 // ------------------------------------------
 // Block and Shared Memory Dimensions
 // ------------------------------------------
@@ -105,10 +88,6 @@ __global__ void fused_ssim_cuda_fp32(
         // 1) Load (img1, img2) tile + halo into shared memory
         // ------------------------------------------------------------
         {
-            const int tileSize = SHARED_Y * SHARED_X;
-            const int threads = BLOCK_X * BLOCK_Y;
-            // const int steps = (tileSize + threads - 1) / threads;
-
             const int this_warp = block.thread_rank() / 32;         // 0..7
             const int lane_id = block.thread_rank() % 32;           // 0..31
             const int warp_dx = this_warp / 2;                      // 0..3

@@ -46,46 +46,6 @@ std::vector<std::string> readlines(const std::string& path) {
     return lines;
 }
 
-std::vector<std::string> list_folder(const std::string& path, bool relative) {
-    // Check if directory exists
-    if (!std::filesystem::exists(path)) {
-        const std::string error_msg = fmt::format("Directory does not exist: {}", path);
-        log_error(error_msg);
-        throw std::runtime_error(error_msg);
-    }
-    
-    // Check if path is actually a directory
-    if (!std::filesystem::is_directory(path)) {
-        const std::string error_msg = fmt::format("Path is not a directory: {}", path);
-        log_error(error_msg);
-        throw std::runtime_error(error_msg);
-    }
-    
-    log_success("Listing directory: {}", path);
-    
-    std::vector<std::string> entries;
-    
-    try {
-        for (const auto& entry : std::filesystem::directory_iterator(path)) {
-            if (relative) {
-                entries.push_back(entry.path().string());
-            } else {
-                entries.push_back(entry.path().filename().string());
-            }
-        }
-    } catch (const std::filesystem::filesystem_error& e) {
-        const std::string error_msg = fmt::format("Error occurred while listing directory {}: {}", path, e.what());
-        log_error(error_msg);
-        throw std::runtime_error(error_msg);
-    }
-    
-    // Sort entries for consistent ordering
-    std::sort(entries.begin(), entries.end());
-    
-    log_success("Successfully listed {} entries from directory: {}", entries.size(), path);
-    return entries;
-}
-
 void ensure(const std::string& path) {
     // Validate input path
     if (path.empty()) {

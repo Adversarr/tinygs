@@ -3,7 +3,6 @@
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/random/pcg32.hpp"
 #include <queue>
-#include <random>
 #include <nvtx3/nvtx3.hpp>
 #include "tinygs/dataloader/nvtx_dl.h"
 

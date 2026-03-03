@@ -1150,37 +1150,6 @@ inline __host__ __device__ float4 floorf(float4 v) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// frac - returns the fractional portion of a scalar or each vector component
-////////////////////////////////////////////////////////////////////////////////
-
-inline __host__ __device__ float fracf(float v) {
-    return v - floorf(v);
-}
-inline __host__ __device__ float2 fracf(float2 v) {
-    return make_float2(fracf(v.x), fracf(v.y));
-}
-inline __host__ __device__ float3 fracf(float3 v) {
-    return make_float3(fracf(v.x), fracf(v.y), fracf(v.z));
-}
-inline __host__ __device__ float4 fracf(float4 v) {
-    return make_float4(fracf(v.x), fracf(v.y), fracf(v.z), fracf(v.w));
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// fmod
-////////////////////////////////////////////////////////////////////////////////
-
-inline __host__ __device__ float2 fmodf(float2 a, float2 b) {
-    return make_float2(fmodf(a.x, b.x), fmodf(a.y, b.y));
-}
-inline __host__ __device__ float3 fmodf(float3 a, float3 b) {
-    return make_float3(fmodf(a.x, b.x), fmodf(a.y, b.y), fmodf(a.z, b.z));
-}
-inline __host__ __device__ float4 fmodf(float4 a, float4 b) {
-    return make_float4(fmodf(a.x, b.x), fmodf(a.y, b.y), fmodf(a.z, b.z), fmodf(a.w, b.w));
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // absolute value
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -1214,43 +1183,9 @@ inline __host__ __device__ int4 abs(int4 v) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// reflect
-// - returns reflection of incident ray I around surface normal N
-// - N should be normalized, reflected vector's length is equal to length of I
-////////////////////////////////////////////////////////////////////////////////
-
-inline __host__ __device__ float3 reflect(float3 i, float3 n) {
-    return i - 2.0f * n * dot(n, i);
-}
-
-////////////////////////////////////////////////////////////////////////////////
 // cross product
 ////////////////////////////////////////////////////////////////////////////////
 
 inline __host__ __device__ float3 cross(float3 a, float3 b) {
     return make_float3(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// smoothstep
-// - returns 0 if x < a
-// - returns 1 if x > b
-// - otherwise returns smooth interpolation between 0 and 1 based on x
-////////////////////////////////////////////////////////////////////////////////
-
-inline __device__ __host__ float smoothstep(float a, float b, float x) {
-    float y = clamp((x - a) / (b - a), 0.0f, 1.0f);
-    return (y * y * (3.0f - (2.0f * y)));
-}
-inline __device__ __host__ float2 smoothstep(float2 a, float2 b, float2 x) {
-    float2 y = clamp((x - a) / (b - a), 0.0f, 1.0f);
-    return (y * y * (make_float2(3.0f) - (make_float2(2.0f) * y)));
-}
-inline __device__ __host__ float3 smoothstep(float3 a, float3 b, float3 x) {
-    float3 y = clamp((x - a) / (b - a), 0.0f, 1.0f);
-    return (y * y * (make_float3(3.0f) - (make_float3(2.0f) * y)));
-}
-inline __device__ __host__ float4 smoothstep(float4 a, float4 b, float4 x) {
-    float4 y = clamp((x - a) / (b - a), 0.0f, 1.0f);
-    return (y * y * (make_float4(3.0f) - (make_float4(2.0f) * y)));
 }

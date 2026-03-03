@@ -1,7 +1,6 @@
 #include "tinygs/initialization/initialization.hpp"
 #include "tinygs/initialization/knn.hpp"
 #include "tinygs/initialization/random.hpp"
-#include <algorithm>
 #include <string>
 
 namespace tinygs {

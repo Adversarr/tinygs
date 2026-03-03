@@ -9,7 +9,6 @@ The utils module provides utility functions and helper classes.
 | `file.hpp` | File I/O and path utilities |
 | `scope_timer.hpp` | RAII timing utilities |
 | `image_format.hpp` | GPU image format conversion |
-| `inspect_change.hpp` | Change detection utilities |
 | `stbi_wrapper.cpp` | STB image loading wrapper |
 
 ---
@@ -26,12 +25,6 @@ namespace tinygs {
 /// @return Vector of lines
 std::vector<std::string> readlines(const std::string& path);
 
-/// @brief List all files in a directory
-/// @param path Directory path
-/// @param relative Return relative paths (default: false)
-/// @return Vector of file paths
-std::vector<std::string> list_folder(const std::string& path, bool relative = false);
-
 /// @brief Ensure a directory exists (create if needed)
 /// @param path Directory path
 void ensure(const std::string& path);
@@ -46,12 +39,6 @@ void ensure(const std::string& path);
 auto lines = readlines("config.txt");
 for (const auto& line : lines) {
     // Process line
-}
-
-// List files in directory
-auto files = list_folder("images/", true);
-for (const auto& file : files) {
-    log_info("Found: {}", file);
 }
 
 // Create directory if needed
@@ -282,10 +269,6 @@ TINYGS_HOST_DEVICE float PI();
 ```cpp
 // Read configuration
 auto config_lines = readlines("config.txt");
-
-// List dataset files
-auto image_files = list_folder("data/images/");
-std::sort(image_files.begin(), image_files.end());
 
 // Create output directory
 ensure("output/checkpoints/");

@@ -2,7 +2,6 @@
 
 #include <curand_kernel.h>
 #include <cub/cub.cuh>
-#include <cstdio>
 #include <numeric>
 #include <algorithm>
 #include "tinygs/random/pcg32.hpp"

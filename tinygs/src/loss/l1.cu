@@ -37,7 +37,7 @@ __global__ void l1_kernel_f32(int N, const float *__restrict__ pred,
     loss[i] = fmaf(l, scale, loss[i]);  // Use fused multiply-add
   }
   if (grad != nullptr) {
-    grad[i] = fmaf(g, scale, grad[i]);  // Use fused multiply-add
+    grad[i] = fmaf(g_sat, scale, grad[i]);  // Use fused multiply-add
   }
 }
 
@@ -57,6 +57,7 @@ __global__ void l1_kernel_f16(int N, const half *__restrict__ pred,
   const float diff = p - t;
   const float l = fabsf(diff);
   const float g = copysignf(1.0f, diff);
+  const float g_sat = g * saturate_deriv(p_raw);
 
   if (loss != nullptr) {
     const float cur = __half2float(loss[i]);
@@ -64,7 +65,7 @@ __global__ void l1_kernel_f16(int N, const half *__restrict__ pred,
   }
   if (grad != nullptr) {
     const float cur = __half2float(grad[i]);
-    grad[i] = __float2half_rn(fmaf(g, scale, cur));
+    grad[i] = __float2half_rn(fmaf(g_sat, scale, cur));
   }
 }
 
@@ -90,6 +91,8 @@ __global__ void l1_kernel_f16_h2(int N_pairs, const __half2 *__restrict__ pred,
   const float l1 = fabsf(diff1);
   const float g0 = copysignf(1.0f, diff0);
   const float g1 = copysignf(1.0f, diff1);
+  const float g0_sat = g0 * saturate_deriv(p_raw.x);
+  const float g1_sat = g1 * saturate_deriv(p_raw.y);
 
   if (loss != nullptr) {
     float2 cur = __half22float2(loss[i]);
@@ -99,8 +102,8 @@ __global__ void l1_kernel_f16_h2(int N_pairs, const __half2 *__restrict__ pred,
   }
   if (grad != nullptr) {
     float2 cur = __half22float2(grad[i]);
-    cur.x = fmaf(g0, scale, cur.x);
-    cur.y = fmaf(g1, scale, cur.y);
+    cur.x = fmaf(g0_sat, scale, cur.x);
+    cur.y = fmaf(g1_sat, scale, cur.y);
     grad[i] = __floats2half2_rn(cur.x, cur.y);
   }
 }

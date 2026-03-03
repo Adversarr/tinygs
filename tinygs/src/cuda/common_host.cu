@@ -68,138 +68,6 @@ bool g_verbose = false;
 bool verbose() { return g_verbose; }
 void set_verbose(bool verbose) { g_verbose = verbose; }
 
-Activation string_to_activation(const std::string& activation_name) {
-	if (equals_case_insensitive(activation_name, "None")) {
-		return Activation::None;
-	} else if (equals_case_insensitive(activation_name, "ReLU")) {
-		return Activation::ReLU;
-	} else if (equals_case_insensitive(activation_name, "LeakyReLU")) {
-		return Activation::LeakyReLU;
-	} else if (equals_case_insensitive(activation_name, "SiLU")) {
-		return Activation::SiLU;
-	} else if (equals_case_insensitive(activation_name, "Exponential")) {
-		return Activation::Exponential;
-	} else if (equals_case_insensitive(activation_name, "Sigmoid")) {
-		return Activation::Sigmoid;
-	} else if (equals_case_insensitive(activation_name, "Sine")) {
-		return Activation::Sine;
-	} else if (equals_case_insensitive(activation_name, "Squareplus")) {
-		return Activation::Squareplus;
-	} else if (equals_case_insensitive(activation_name, "Softplus")) {
-		return Activation::Softplus;
-	} else if (equals_case_insensitive(activation_name, "Tanh")) {
-		return Activation::Tanh;
-	}
-
-	throw std::runtime_error{fmt::format("Invalid activation name: {}", activation_name)};
-}
-
-std::string to_string(Activation activation) {
-	switch (activation) {
-		case Activation::None: return "None";
-		case Activation::ReLU: return "ReLU";
-		case Activation::LeakyReLU: return "LeakyReLU";
-		case Activation::SiLU: return "SiLU";
-		case Activation::Exponential: return "Exponential";
-		case Activation::Sigmoid: return "Sigmoid";
-		case Activation::Sine: return "Sine";
-		case Activation::Squareplus: return "Squareplus";
-		case Activation::Softplus: return "Softplus";
-		case Activation::Tanh: return "Tanh";
-		default: throw std::runtime_error{"Invalid activation."};
-	}
-}
-
-GridType string_to_grid_type(const std::string& grid_type) {
-	if (equals_case_insensitive(grid_type, "Hash")) {
-		return GridType::Hash;
-	} else if (equals_case_insensitive(grid_type, "Dense")) {
-		return GridType::Dense;
-	} else if (equals_case_insensitive(grid_type, "Tiled") || equals_case_insensitive(grid_type, "Tile")) {
-		return GridType::Tiled;
-	}
-
-	throw std::runtime_error{fmt::format("Invalid grid type: {}", grid_type)};
-}
-
-std::string to_string(GridType grid_type) {
-	switch (grid_type) {
-		case GridType::Hash: return "Hash";
-		case GridType::Dense: return "Dense";
-		case GridType::Tiled: return "Tiled";
-		default: throw std::runtime_error{"Invalid grid type."};
-	}
-}
-
-HashType string_to_hash_type(const std::string& hash_type) {
-	if (equals_case_insensitive(hash_type, "Prime")) {
-		return HashType::Prime;
-	} else if (equals_case_insensitive(hash_type, "CoherentPrime")) {
-		return HashType::CoherentPrime;
-	} else if (equals_case_insensitive(hash_type, "ReversedPrime")) {
-		return HashType::ReversedPrime;
-	} else if (equals_case_insensitive(hash_type, "Rng")) {
-		return HashType::Rng;
-	} else if (equals_case_insensitive(hash_type, "BaseConvert")) {
-		return HashType::BaseConvert;
-	}
-
-	throw std::runtime_error{fmt::format("Invalid hash type: {}", hash_type)};
-}
-
-std::string to_string(HashType hash_type) {
-	switch (hash_type) {
-		case HashType::Prime: return "Prime";
-		case HashType::CoherentPrime: return "CoherentPrime";
-		case HashType::ReversedPrime: return "ReversedPrime";
-		case HashType::Rng: return "Rng";
-		case HashType::BaseConvert: return "BaseConvert";
-		default: throw std::runtime_error{"Invalid hash type."};
-	}
-}
-
-InterpolationType string_to_interpolation_type(const std::string& interpolation_type) {
-	if (equals_case_insensitive(interpolation_type, "Nearest")) {
-		return InterpolationType::Nearest;
-	} else if (equals_case_insensitive(interpolation_type, "Linear")) {
-		return InterpolationType::Linear;
-	} else if (equals_case_insensitive(interpolation_type, "Smoothstep")) {
-		return InterpolationType::Smoothstep;
-	}
-
-	throw std::runtime_error{fmt::format("Invalid interpolation type: {}", interpolation_type)};
-}
-
-std::string to_string(InterpolationType interpolation_type) {
-	switch (interpolation_type) {
-		case InterpolationType::Nearest: return "Nearest";
-		case InterpolationType::Linear: return "Linear";
-		case InterpolationType::Smoothstep: return "Smoothstep";
-		default: throw std::runtime_error{"Invalid interpolation type."};
-	}
-}
-
-ReductionType string_to_reduction_type(const std::string& reduction_type) {
-	if (equals_case_insensitive(reduction_type, "Concatenation")) {
-		return ReductionType::Concatenation;
-	} else if (equals_case_insensitive(reduction_type, "Sum")) {
-		return ReductionType::Sum;
-	} else if (equals_case_insensitive(reduction_type, "Product")) {
-		return ReductionType::Product;
-	}
-
-	throw std::runtime_error{fmt::format("Invalid reduction type: {}", reduction_type)};
-}
-
-std::string to_string(ReductionType reduction_type) {
-	switch (reduction_type) {
-		case ReductionType::Concatenation: return "Concatenation";
-		case ReductionType::Sum: return "Sum";
-		case ReductionType::Product: return "Product";
-		default: throw std::runtime_error{"Invalid reduction type."};
-	}
-}
-
 int cuda_runtime_version() {
 	int version;
 	CUDA_CHECK_THROW(cudaRuntimeGetVersion(&version));
@@ -305,36 +173,6 @@ MemoryInfo cuda_memory_info() {
 	return info;
 }
 
-std::string to_snake_case(const std::string& str) {
-	std::stringstream result;
-	result << static_cast<char>(std::tolower(str[0]));
-	for (uint32_t i = 1; i < str.length(); ++i) {
-		if (std::isupper(str[i])) {
-			result << "_" << static_cast<char>(std::tolower(str[i]));
-		} else {
-			result << str[i];
-		}
-	}
-	return result.str();
-}
-
-std::vector<std::string> split(const std::string& text, const std::string& delim) {
-	std::vector<std::string> result;
-	size_t begin = 0;
-	while (true) {
-		size_t end = text.find_first_of(delim, begin);
-		if (end == std::string::npos) {
-			result.emplace_back(text.substr(begin));
-			return result;
-		} else {
-			result.emplace_back(text.substr(begin, end - begin));
-			begin = end + 1;
-		}
-	}
-
-	return result;
-}
-
 std::string to_lower(std::string str) {
   std::transform(
       std::begin(str), std::end(str), std::begin(str),
@@ -348,15 +186,5 @@ std::string to_upper(std::string str) {
       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
   return str;
 }
-
-template <> std::string type_to_string<bool>() { return "bool"; }
-template <> std::string type_to_string<int>() { return "int"; }
-template <> std::string type_to_string<char>() { return "char"; }
-template <> std::string type_to_string<uint8_t>() { return "uint8_t"; }
-template <> std::string type_to_string<uint16_t>() { return "uint16_t"; }
-template <> std::string type_to_string<uint32_t>() { return "uint32_t"; }
-template <> std::string type_to_string<double>() { return "double"; }
-template <> std::string type_to_string<float>() { return "float"; }
-template <> std::string type_to_string<__half>() { return "__half"; }
 
 } // namespace tcnn
