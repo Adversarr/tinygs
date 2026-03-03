@@ -12,6 +12,7 @@ struct AdamParameters {
   float epsilon = 1e-8f;
   bool decouple_decay = false; // AdamW support
   float weight_decay = 0.0f;   // Standard AdamW decoupled weight decay coefficient
+  bool tf_style = false;       // false = PyTorch style (sqrt(v̂_t) + ε), true = TensorFlow style (sqrt(v̂_t + ε))
 
   /// @brief Default constructor with default values
   AdamParameters() = default;

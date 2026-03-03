@@ -65,7 +65,9 @@ __global__ static void adam(
 
   // Bias-corrected estimates
   const float m_hat = m / bias_correction1;
-  const float denom = tinygs::sqrt(v) / bias_correction2_sqrt + adam_p.epsilon;
+  const float denom = adam_p.tf_style
+      ? (tinygs::sqrt(v) + adam_p.epsilon) / bias_correction2_sqrt
+      : tinygs::sqrt(v) / bias_correction2_sqrt + adam_p.epsilon;
 
   // step
   theta -= m_hat * lr / denom;
@@ -113,7 +115,9 @@ __global__ static void adamw(
 
   // Bias-corrected estimates
   const float m_hat = m / bias_correction1;
-  const float denom = tinygs::sqrt(v) / bias_correction2_sqrt + adam_p.epsilon;
+  const float denom = adam_p.tf_style
+      ? (tinygs::sqrt(v) + adam_p.epsilon) / bias_correction2_sqrt
+      : tinygs::sqrt(v) / bias_correction2_sqrt + adam_p.epsilon;
 
   // step
   theta -= m_hat * lr / denom;
@@ -123,6 +127,7 @@ __global__ static void adamw(
   thetas_first[idx] = m;
   thetas_second[idx] = v;
 }
+
 
 struct Adam_domain {
   static constexpr char const *name{"optim"};
@@ -819,6 +824,7 @@ json AdamParameters::to_json() const {
   j["epsilon"] = epsilon;
   j["decouple_decay"] = decouple_decay;
   j["weight_decay"] = weight_decay;
+  j["tf_style"] = tf_style;
   return j;
 }
 
@@ -828,6 +834,7 @@ void AdamParameters::from_json(const json& config) {
   if (config.contains("epsilon")) epsilon = config.at("epsilon").get<float>();
   if (config.contains("decouple_decay")) decouple_decay = config.at("decouple_decay").get<bool>();
   if (config.contains("weight_decay")) weight_decay = config.at("weight_decay").get<float>();
+  if (config.contains("tf_style")) tf_style = config.at("tf_style").get<bool>();
 }
 
 /// @brief Reorder Gaussians based on provided indices
