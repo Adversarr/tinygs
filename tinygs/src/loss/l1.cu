@@ -115,10 +115,10 @@ void L1Loss::evaluate(LossContext ctx, float scale) {
   }
 
   int n = ctx.pred.shape.padded_size(); // physical
-  int npix = ctx.pred.shape.size();     // actual
+  int nelem = ctx.pred.shape.size();     // actual
   NVTX3_FUNC_RANGE();
 
-  const float actual_scale = scale / (npix * 3);
+  const float actual_scale = scale / nelem;
 
   if (data_type == DataType::Float32) {
     linear_kernel(l1_kernel_f32, 0, ctx.stream, n,

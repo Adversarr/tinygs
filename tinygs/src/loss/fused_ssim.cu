@@ -822,7 +822,7 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
     dim3 block(BLOCK_X, BLOCK_Y);
     int total = ctx.pred.shape.padded_size();   // physical
     m_impl->ensure(total, ctx.stream);
-    const float actual_scale = scale / (H * W * 3);
+    const float actual_scale = scale / ctx.pred.shape.size(); // normalize by element count
 
     if (data_type == DataType::Float32) {
       const float* pred = static_cast<const float*>(ctx.pred.data);
