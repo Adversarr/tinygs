@@ -43,6 +43,7 @@ project(tinygs
         LANGUAGES CXX CUDA
 )
 option(TINYGS_BUILD_APPS "Build tinygs application binaries" ON)
+option(TINYGS_BUILD_TESTS "Build tinygs test binaries" OFF)
 option(TINYGS_ENABLE_PROFILE "Enable profiling with lineinfo" OFF)
 option(TINYGS_ENABLE_NVTX_SYNC "Enable operation sync to get accurate nvtx range" OFF)
 option(TINYGS_ENABLE_NATIVE "Enable native optimizations" ON)
@@ -77,6 +78,11 @@ if(TINYGS_BUILD_APPS)
     add_subdirectory(apps)
 endif()
 
+if(TINYGS_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(test)
+endif()
+
 # Print configuration summary
 message(STATUS "")
 message(STATUS "tinygs Configuration Summary:")
@@ -88,4 +94,5 @@ message(STATUS "  CUDA version: ${CUDA_VERSION}")
 message(STATUS "  CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
 message(STATUS "  Minimum GPU architecture: ${MIN_GPU_ARCH}")
 message(STATUS "  Build apps: ${TINYGS_BUILD_APPS}")
+message(STATUS "  Build tests: ${TINYGS_BUILD_TESTS}")
 message(STATUS "")

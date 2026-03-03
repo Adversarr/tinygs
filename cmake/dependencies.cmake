@@ -61,4 +61,15 @@ if(TINYGS_BUILD_BENCHMARKS)
     endif()
 endif()
 
+if(TINYGS_BUILD_TESTS)
+    CPMAddPackage(
+      NAME googletest
+      VERSION 1.15.2
+      GITHUB_REPOSITORY google/googletest
+      OPTIONS
+        "INSTALL_GTEST OFF"
+        "gtest_force_shared_crt OFF"
+    )
+endif()
+
 find_package(OpenCV REQUIRED)
