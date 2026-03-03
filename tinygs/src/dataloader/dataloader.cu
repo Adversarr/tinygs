@@ -91,97 +91,6 @@ __global__ static void convert_u8_half_packed4(
   out[3] = __float2half(CHAR_TO_FLOAT * static_cast<float>(in->w));
 }
 
-////////////////////////////// Resize Kernels //////////////////////////////
-
-/// @brief Nearest-neighbor resize from tiled CHW UInt8 to tiled CHW Float32
-__global__ static void resize_nn_u8_to_float_tiled(
-    const uint8_t* __restrict__ src, float* __restrict__ dst,
-    uint32_t src_w, uint32_t src_h,
-    uint32_t dst_w, uint32_t dst_h,
-    uint32_t src_tiled_w, uint32_t dst_tiled_w,
-    uint32_t src_channel_stride, uint32_t dst_channel_stride,
-    uint32_t channels) {
-  const uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
-  const uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
-  if (x >= dst_w || y >= dst_h) return;
-  const uint32_t src_x = min((uint32_t)((float)x * (float)src_w / (float)dst_w), src_w - 1);
-  const uint32_t src_y = min((uint32_t)((float)y * (float)src_h / (float)dst_h), src_h - 1);
-  const uint32_t dst_idx_base = get_linear_index_tiled(y, x, dst_tiled_w);
-  const uint32_t src_idx_base = get_linear_index_tiled(src_y, src_x, src_tiled_w);
-  constexpr float CHAR_TO_FLOAT = 1.0f / 255.0f;
-  for (uint32_t c = 0; c < channels; ++c) {
-    const uint8_t v = src[src_idx_base + c * src_channel_stride];
-    dst[dst_idx_base + c * dst_channel_stride] = CHAR_TO_FLOAT * (float)v;
-  }
-}
-
-/// @brief Resize from tiled CHW UInt8 to tiled CHW Float32 with stochastic blur
-__global__ static void resize_u8_to_float_tiled_stochastic_blur(
-    const uint8_t* __restrict__ src, float* __restrict__ dst,
-    uint64_t* __restrict__ rng_state,
-    uint32_t src_w, uint32_t src_h,
-    uint32_t dst_w, uint32_t dst_h,
-    uint32_t src_tiled_w, uint32_t dst_tiled_w,
-    uint32_t src_channel_stride, uint32_t dst_channel_stride,
-    uint32_t channels) {
-  const uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
-  const uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
-  if (x >= dst_w || y >= dst_h) return;
-  const uint32_t src_x = min((uint32_t)((float)x * (float)src_w / (float)dst_w), src_w - 1);
-  const uint32_t src_y = min((uint32_t)((float)y * (float)src_h / (float)dst_h), src_h - 1);
-  const uint32_t src_x_next = min((uint32_t)((float)(x + 1) * (float)src_w / (float)dst_w), src_w - 1);
-  const uint32_t src_y_next = min((uint32_t)((float)(y + 1) * (float)src_h / (float)dst_h), src_h - 1);
-
-  const uint32_t dst_idx_base = get_linear_index_tiled(y, x, dst_tiled_w);
-  constexpr float CHAR_TO_FLOAT = 1.0f / 255.0f;
-  for (uint32_t c = 0; c < channels; ++c) {
-    const uint64_t state = rng_state[dst_idx_base + c * dst_channel_stride];
-    // randomly pick a pixel in x ... x_next and y ... y_next
-    pcg32 rng(state, 1u);
-    const uint32_t dx = rng.next_uint() % (src_x_next - src_x + 1);
-    const uint32_t dy = rng.next_uint() % (src_y_next - src_y + 1);
-    const uint32_t src_idx = get_linear_index_tiled(src_y + dy, src_x + dx, src_tiled_w);
-    const uint8_t v = src[src_idx + c * src_channel_stride];
-
-    dst[dst_idx_base + c * dst_channel_stride] = CHAR_TO_FLOAT * (float)v;
-    rng_state[dst_idx_base + c * dst_channel_stride] = rng.state;
-  }
-}
-
-/// @brief Resize from tiled CHW UInt8 to tiled CHW FP16 with stochastic blur
-__global__ static void resize_u8_to_half_tiled_stochastic_blur(
-    const uint8_t* __restrict__ src, __half* __restrict__ dst,
-    uint64_t* __restrict__ rng_state,
-    uint32_t src_w, uint32_t src_h,
-    uint32_t dst_w, uint32_t dst_h,
-    uint32_t src_tiled_w, uint32_t dst_tiled_w,
-    uint32_t src_channel_stride, uint32_t dst_channel_stride,
-    uint32_t channels) {
-  const uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
-  const uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
-  if (x >= dst_w || y >= dst_h) return;
-
-  const uint32_t src_y = min((uint32_t)((float)y * (float)src_h / (float)dst_h), src_h - 1);
-  const uint32_t src_x = min((uint32_t)((float)x * (float)src_w / (float)dst_w), src_w - 1);
-  const uint32_t src_x_next = min((uint32_t)((float)(x + 1) * (float)src_w / (float)dst_w), src_w - 1);
-  const uint32_t src_y_next = min((uint32_t)((float)(y + 1) * (float)src_h / (float)dst_h), src_h - 1);
-
-  const uint32_t dst_idx_base = get_linear_index_tiled(y, x, dst_tiled_w);
-  constexpr float CHAR_TO_FLOAT = 1.0f / 255.0f;
-  for (uint32_t c = 0; c < channels; ++c) {
-    const uint64_t state = rng_state[dst_idx_base + c * dst_channel_stride];
-    // randomly pick a pixel in x ... x_next and y ... y_next
-    pcg32 rng(state, 1u);
-    const uint32_t dx = rng.next_uint() % (src_x_next - src_x + 1);
-    const uint32_t dy = rng.next_uint() % (src_y_next - src_y + 1);
-    const uint32_t src_idx = get_linear_index_tiled(src_y + dy, src_x + dx, src_tiled_w);
-    const uint8_t v = src[src_idx + c * src_channel_stride];
-
-    dst[dst_idx_base + c * dst_channel_stride] = __float2half(CHAR_TO_FLOAT * (float)v);
-    rng_state[dst_idx_base + c * dst_channel_stride] = rng.state;
-  }
-}
-
 ////////////////////////////// DataLoaderBase Implementation //////////////////////////////
 
 void DataLoaderParams::from_json(const json& params) {
@@ -227,24 +136,13 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
     throw std::runtime_error("Host memory is not allocated.");
   }
 
-  const uint32_t src_width = host_data.shape.width;
-  const uint32_t src_height = host_data.shape.height;
-  const uint32_t dst_width = gpu_data.shape.width;
-  const uint32_t dst_height = gpu_data.shape.height;
-  const uint32_t channels = gpu_data.shape.channel;
-  const bool same_shape = (src_width == dst_width) && (src_height == dst_height) && (host_data.shape.channel == gpu_data.shape.channel);
+  const bool same_shape = host_data.shape == gpu_data.shape;
 
   if (gpu_data.shape != m_output_shape) {
     throw std::runtime_error(fmt::format(
       "Image shape mismatch not supported: gpu_data.shape={}, m_output_shape={}",
       to_string(gpu_data.shape), to_string(m_output_shape)));
   }
-  // Helper for per-channel stride in tiled CHW layout
-  auto compute_channel_stride = [](uint32_t w, uint32_t h) {
-    const uint32_t w_in_tile = (w + kImageTileMask) >> kImageTileLog2;
-    const uint32_t h_in_tile = (h + kImageTileMask) >> kImageTileLog2;
-    return w_in_tile * h_in_tile << (2 * kImageTileLog2);
-  };
 
   // Case 1: Same type & shape - direct copy
   if (host_data.data_type == gpu_data.data_type && same_shape) {
@@ -303,39 +201,13 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
       } else {
         throw std::runtime_error("Unsupported GPU image data type for UInt8 host.");
       }
-    } 
-    // Case 2b: Different shape - resize + convert
+    }
+    // Case 2b: Different shape - not supported
     else {
-      // Resize + convert (nearest) in tiled CHW
-      if (host_data.shape.channel != channels) {
-        throw std::runtime_error("Channel mismatch (host vs gpu) not supported for resize.");
-      }
-      const uint32_t dst_tiled_w = (dst_width + kImageTileMask) >> kImageTileLog2;
-      const uint32_t src_tiled_w = (src_width + kImageTileMask) >> kImageTileLog2;
-      const uint32_t dst_channel_stride = compute_channel_stride(dst_width, dst_height);
-      const uint32_t src_channel_stride = compute_channel_stride(src_width, src_height);
-      const dim3 block(16, 16);
-      const dim3 grid((dst_width + block.x - 1) / block.x,
-                      (dst_height + block.y - 1) / block.y);
-
-      if (gpu_data.data_type == DataType::Float32) {
-        // Resize + convert UInt8 to Float32
-        resize_u8_to_float_tiled_stochastic_blur<<<grid, block, 0, stream>>>(
-            reinterpret_cast<const uint8_t *>(raw_data),
-            reinterpret_cast<float *>(gpu_data.data), m_rng_state.data(),
-            src_width, src_height, dst_width, dst_height, src_tiled_w,
-            dst_tiled_w, src_channel_stride, dst_channel_stride, channels);
-      } 
-      else if (gpu_data.data_type == DataType::Float16) {
-        // Resize + convert UInt8 to FP16
-        resize_u8_to_half_tiled_stochastic_blur<<<grid, block, 0, stream>>>(
-            reinterpret_cast<const uint8_t *>(raw_data),
-            reinterpret_cast<__half *>(gpu_data.data), m_rng_state.data(),
-            src_width, src_height, dst_width, dst_height, src_tiled_w,
-            dst_tiled_w, src_channel_stride, dst_channel_stride, channels);
-      } else {
-        throw std::runtime_error("Resize to unsupported GPU image data type.");
-      }
+      throw std::runtime_error(fmt::format(
+        "Image shape mismatch not supported: host_data.shape={}, gpu_data.shape={}. "
+        "Shapes must match exactly.",
+        to_string(host_data.shape), to_string(gpu_data.shape)));
     }
   } 
   // Case 3: Host-side float32 data (not supported)
@@ -374,22 +246,6 @@ void DataLoaderBase::reset() {
     const size_t max_bytes = max_elements * sizeof(float); // reserve enough for float-sized scratch
     if (m_raw_data.size() < max_bytes) {
       m_raw_data.resize(max_bytes);
-    }
-
-    // Initialize RNG state for stochastic blur
-    if (m_rng_state.size() < max_elements) {
-      m_rng_state.resize(max_elements);
-
-      std::vector<uint64_t> h_rng_state;
-      h_rng_state.reserve(max_elements);
-      pcg32 rng(0, 1u);
-      for (size_t i = 0; i < max_elements; ++i) {
-        uint64_t up = rng.next_uint();
-        uint64_t lo = rng.next_uint();
-        h_rng_state.emplace_back((up << 32) | lo);
-      }
-      CUDA_CHECK_THROW(cudaMemcpy(m_rng_state.data(), h_rng_state.data(),
-                                  max_elements * sizeof(uint64_t), cudaMemcpyHostToDevice));
     }
   }
 }

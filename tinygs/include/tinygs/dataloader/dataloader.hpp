@@ -68,7 +68,7 @@ public:
    * - Enforces CHW (Channel-Height-Width) image format for both source and destination
    * - Handles automatic type conversion from UInt8 to float when data types differ
    * - Uses optimized vectorized conversion (packed4) when total elements are divisible by 4
-   * - Requires matching image shapes between source and destination
+   * - Requires matching image shapes between source and destination (throws on mismatch)
    *
    * @param stream CUDA stream to use for asynchronous transfer operations
    * @param gpu_data Destination GPU image data structure (must be pre-allocated)
@@ -101,7 +101,6 @@ protected:
 
 private:
   GPUMemory<char> m_raw_data;
-  GPUMemory<uint64_t> m_rng_state;
   std::mutex m_mutex;
 };
 
