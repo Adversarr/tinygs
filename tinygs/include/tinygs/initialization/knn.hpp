@@ -20,6 +20,9 @@ struct KnnParameters {
   bool enable_radius_outlier_removal = true; ///< Enable/disable radius outlier removal
   int nb_points = 16;              ///< Minimum neighbors within radius
   float radius = 0.05f;            ///< Radius for neighbor search
+  
+  /// Use anisotropic initialization (covariance-based) vs isotropic (uniform)
+  bool use_anisotropic = true;     ///< Use covariance for scale/rotation (true) or isotropic (false)
 };
 
 /// @brief Initialize GS size using average distance of K nearest neighbors

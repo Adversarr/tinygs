@@ -21,7 +21,8 @@
     "default_distance": 0.01,
     "enable_radius_outlier_removal": false,
     "init_opacity": 0.1,
-    "init_scaling": 0.6,
+    "init_scaling": 1,
+    "use_anisotropic": false,
     "min_distance": 1.0e-07,
     "nb_points": 16,
     "num_neighbors": 8,
@@ -79,7 +80,7 @@
   },
   "pose_opt": {
     "type": "adamw",
-    "lr": 0.0001,
+    "lr": 0.0,
     "momentum": 0.95,
     "beta1": 0.9,
     "beta2": 0.999,

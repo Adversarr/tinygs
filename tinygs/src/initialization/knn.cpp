@@ -275,6 +275,12 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   // Compute neighbor distances for scaling initialization using filtered points
   auto neighbor_distances = compute_mean_neighbor_distances(filtered_positions);
 
+  // Compute per-point local covariance matrices from KNN (only if anisotropic mode)
+  std::vector<mat3x3> local_covariances;
+  if (m_params.use_anisotropic) {
+    local_covariances = compute_local_covariances(filtered_positions);
+  }
+
   // Clear existing gaussians and resize to fit filtered data
   const size_t num_points = filtered_positions.size();
   m_gaussians.opacities.resize(num_points);
@@ -286,9 +292,6 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
   m_gaussians.sh2.resize(num_points * kSHDegreeNumCoeffs[2], vec3(0.0f));
   m_gaussians.sh3.resize(num_points * kSHDegreeNumCoeffs[3], vec3(0.0f));
 
-  // Compute per-point local covariance matrices from KNN
-  auto local_covariances = compute_local_covariances(filtered_positions);
-
   auto init_opa = deactivate_opacity(m_params.init_opacity);
   // Initialize gaussians using SoA structure with filtered points
   for (size_t i = 0; i < num_points; ++i) {
@@ -296,44 +299,53 @@ void KnnInitialization::initialize(const PointCloud& pointcloud) {
     m_gaussians.means[i] = vec3(filtered_positions[i].x, filtered_positions[i].y, filtered_positions[i].z);
     m_gaussians.opacities[i] = init_opa;
 
-    // Eigen decomposition (symmetric real) on precomputed covariance
-    glm::vec3 evals;
-    glm::mat3 evecs;
-    const int evcnt = glm::findEigenvaluesSymReal(local_covariances[i], evals, evecs);
-    if (evcnt == 3) {
-      // Sort eigenvalues descending and reorder eigenvectors for consistency
-      std::array<int,3> idx = {0,1,2};
-      std::sort(idx.begin(), idx.end(), [&](int a, int b){ return evals[a] > evals[b]; });
-      glm::mat3 evecs_sorted;
-      evecs_sorted[0] = evecs[idx[0]];
-      evecs_sorted[1] = evecs[idx[1]];
-      evecs_sorted[2] = evecs[idx[2]];
-      glm::vec3 evals_sorted(evals[idx[0]], evals[idx[1]], evals[idx[2]]);
+    if (m_params.use_anisotropic) {
+      // Eigen decomposition (symmetric real) on precomputed covariance
+      glm::vec3 evals;
+      glm::mat3 evecs;
+      const int evcnt = glm::findEigenvaluesSymReal(local_covariances[i], evals, evecs);
+      if (evcnt == 3) {
+        // Sort eigenvalues descending and reorder eigenvectors for consistency
+        std::array<int,3> idx = {0,1,2};
+        std::sort(idx.begin(), idx.end(), [&](int a, int b){ return evals[a] > evals[b]; });
+        glm::mat3 evecs_sorted;
+        evecs_sorted[0] = evecs[idx[0]];
+        evecs_sorted[1] = evecs[idx[1]];
+        evecs_sorted[2] = evecs[idx[2]];
+        glm::vec3 evals_sorted(evals[idx[0]], evals[idx[1]], evals[idx[2]]);
 
-      // Ensure right-handed basis
-      if (glm::determinant(evecs_sorted) < 0.0f) {
-        evecs_sorted[2] = -evecs_sorted[2];
+        // Ensure right-handed basis
+        if (glm::determinant(evecs_sorted) < 0.0f) {
+          evecs_sorted[2] = -evecs_sorted[2];
+        }
+
+        // Set rotation from eigenvectors, normalize and fix hemisphere
+        glm::quat q = glm::quat_cast(evecs_sorted);
+        q = glm::normalize(q);
+        if (q.w < 0.0f) q = -q;
+        m_gaussians.rotations[i] = vec4(q.w, q.x, q.y, q.z);
+
+        // Set per-axis scales from sqrt of eigenvalues (stddev)
+        const float eps = 1e-12f;
+        float sx = std::sqrt(std::max(evals_sorted.x, eps));
+        float sy = std::sqrt(std::max(evals_sorted.y, eps));
+        float sz = std::sqrt(std::max(evals_sorted.z, eps));
+        // Apply init scaling and clamp to reasonable bounds
+        sx = std::clamp(sx * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
+        sy = std::clamp(sy * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
+        sz = std::clamp(sz * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
+
+        m_gaussians.scales[i] = vec3(deactivate_scale(sx), deactivate_scale(sy), deactivate_scale(sz));
+      } else {
+        // Fallback: identity rotation + isotropic scale from mean KNN distance
+        m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
+        float scale_value = std::max(neighbor_distances[i] * m_params.init_scaling, m_params.min_distance);
+        scale_value = std::min(scale_value, m_params.max_distance);
+        float log_scale = deactivate_scale(scale_value);
+        m_gaussians.scales[i] = vec3(log_scale, log_scale, log_scale);
       }
-
-      // Set rotation from eigenvectors, normalize and fix hemisphere
-      glm::quat q = glm::quat_cast(evecs_sorted);
-      q = glm::normalize(q);
-      if (q.w < 0.0f) q = -q;
-      m_gaussians.rotations[i] = vec4(q.w, q.x, q.y, q.z);
-
-      // Set per-axis scales from sqrt of eigenvalues (stddev)
-      const float eps = 1e-12f;
-      float sx = std::sqrt(std::max(evals_sorted.x, eps));
-      float sy = std::sqrt(std::max(evals_sorted.y, eps));
-      float sz = std::sqrt(std::max(evals_sorted.z, eps));
-      // Apply init scaling and clamp to reasonable bounds
-      sx = std::clamp(sx * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
-      sy = std::clamp(sy * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
-      sz = std::clamp(sz * m_params.init_scaling, m_params.min_distance, m_params.max_distance);
-
-      m_gaussians.scales[i] = vec3(deactivate_scale(sx), deactivate_scale(sy), deactivate_scale(sz));
     } else {
-      // Fallback: identity rotation + isotropic scale from mean KNN distance
+      // Isotropic mode: identity rotation + uniform scale from mean KNN distance
       m_gaussians.rotations[i] = vec4(1.0f, 0.0f, 0.0f, 0.0f);
       float scale_value = std::max(neighbor_distances[i] * m_params.init_scaling, m_params.min_distance);
       scale_value = std::min(scale_value, m_params.max_distance);
@@ -383,6 +395,9 @@ void KnnInitialization::set_params(const json& params) {
   if (params.contains("radius")) {
     m_params.radius = params["radius"].get<float>();
   }
+  if (params.contains("use_anisotropic")) {
+    m_params.use_anisotropic = params["use_anisotropic"].get<bool>();
+  }
 }
 
 json KnnInitialization::get_params() const {
@@ -398,6 +413,7 @@ json KnnInitialization::get_params() const {
   params["enable_radius_outlier_removal"] = m_params.enable_radius_outlier_removal;
   params["nb_points"] = m_params.nb_points;
   params["radius"] = m_params.radius;
+  params["use_anisotropic"] = m_params.use_anisotropic;
   return params;
 }
 

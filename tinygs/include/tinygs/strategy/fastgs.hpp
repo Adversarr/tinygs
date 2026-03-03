@@ -76,6 +76,7 @@ public:
   float m_prune_budget_ratio = 0.5f;       ///< Fraction of standard prune candidates to remove
   bool m_use_multinomial_pruning = true;   ///< Use stochastic multinomial pruning (without replacement)
   bool m_prune_degenerate_rotation = false; ///< Prune degenerate rotation quaternions
+  bool m_prune_large_ss = false;            ///< Prune large gaussians in screen-space (default: disabled)
   float m_final_prune_score_threshold = 0.9f; ///< Pruning score above which Gaussians are removed
   float m_final_prune_opacity_threshold = 0.1f; ///< Opacity below which Gaussians are removed in final prune
   int m_final_prune_start = 18000;         ///< First final-prune step (>15000 and divisible by 3000)

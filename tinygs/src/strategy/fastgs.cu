@@ -775,14 +775,15 @@ void FastGSStrategy::prune(const RasterizeContext& ctx) {
        scene_scale = m_gaussians->scene_scale(),
        rotation = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
         prune_degenerate_rotation = m_prune_degenerate_rotation,
-       pruning_scale_threshold = m_params.pruning_scale_threshold,
-       prune_large = this_step() > m_params.reset_every,
-       max_radii_threshold = abs_ss_threshold,
+pruning_scale_threshold = m_params.pruning_scale_threshold,
+        prune_large = this_step() > m_params.reset_every,
+        prune_large_ss = m_prune_large_ss,
+        max_radii_threshold = abs_ss_threshold,
        original_num_gaussians,
        deninfo = ctx.densification_info->data(),
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) {
         bool not_large_ws = max(activate_scale(scale[i])) < pruning_scale_threshold * scene_scale;
-        bool not_large_ss = i >= original_num_gaussians ||
+        bool not_large_ss = !prune_large_ss || i >= original_num_gaussians ||
                             deninfo[i].max_radii_screen < max_radii_threshold;
         bool not_transparent = activate_opacity(d_opacity[i]) > min_opacity;
         bool not_degenerate = sum(abs(rotation[i])) > FLT_EPSILON;
@@ -975,6 +976,7 @@ void FastGSStrategy::set_params(const json& config) {
   if (config.contains("prune_budget_ratio"))     m_prune_budget_ratio = config["prune_budget_ratio"].get<float>();
   if (config.contains("use_multinomial_pruning")) m_use_multinomial_pruning = config["use_multinomial_pruning"].get<bool>();
   if (config.contains("prune_degenerate_rotation")) m_prune_degenerate_rotation = config["prune_degenerate_rotation"].get<bool>();
+  if (config.contains("prune_large_ss"))         m_prune_large_ss = config["prune_large_ss"].get<bool>();
   if (config.contains("final_prune_score_threshold"))
     m_final_prune_score_threshold = config["final_prune_score_threshold"].get<float>();
   if (config.contains("final_prune_opacity_threshold"))
@@ -1012,6 +1014,7 @@ json FastGSStrategy::get_params() const {
   params["prune_budget_ratio"] = m_prune_budget_ratio;
   params["use_multinomial_pruning"] = m_use_multinomial_pruning;
   params["prune_degenerate_rotation"] = m_prune_degenerate_rotation;
+  params["prune_large_ss"] = m_prune_large_ss;
   params["final_prune_score_threshold"] = m_final_prune_score_threshold;
   params["final_prune_opacity_threshold"] = m_final_prune_opacity_threshold;
   params["final_prune_start"] = m_final_prune_start;
