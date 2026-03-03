@@ -445,7 +445,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
 
   const int step = this_step();
     if (step % m_params.refine_every == 0 &&
-      step > m_params.start_refine &&
+      step >= m_params.start_refine &&
       step < m_params.end_refine) {
 
     // Compute multi-view importance scores before densification
@@ -460,7 +460,10 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
     linear_kernel(clamp_opacity_kernel, 0, ctx.stream,
         static_cast<int>(m_gaussians->size()),
         thrust::raw_pointer_cast(m_gaussians->opacities().data()),
-        m_opacity_reset_value);
+        0.8);
+
+    // Reset opacity Adam state after clamping (reference: replace_tensor_to_optimizer zeros exp_avg/exp_avg_sq)
+    on_reset_opacity();
 
     // Reset densification info since indices have changed
     size_t num_gaussians = m_gaussians->size();
@@ -707,10 +710,19 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
           const int tgt = d_split_tgt[i];
 
           // Build rotation matrix from source quaternion (w, x, y, z) stored as (x,y,z,w) in vec4
-          const float r = rotations[src].x;  // w
-          const float x = rotations[src].y;  // x
-          const float y = rotations[src].z;  // y
-          const float z = rotations[src].w;  // z
+          float r = rotations[src].x;  // w
+          float x = rotations[src].y;  // x
+          float y = rotations[src].z;  // y
+          float z = rotations[src].w;  // z
+          // Normalize quaternion to unit length
+          const float quat_mag = sqrtf(r * r + x * x + y * y + z * z);
+          if (quat_mag > 1e-8f) {
+            const float inv_mag = 1.0f / quat_mag;
+            r *= inv_mag;
+            x *= inv_mag;
+            y *= inv_mag;
+            z *= inv_mag;
+          }
           glm::mat3 rot = glm::mat3(
               1.f - 2.f * (y * y + z * z), 2.f * (x * y - r * z), 2.f * (x * z + r * y),
               2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),

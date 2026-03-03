@@ -37,6 +37,9 @@ struct GaussianOptimizationParams {
     // Per-parameter learning rates
     float means_lr = 1.6e-4f;       // Position LR
     float shs_lr = 2.5e-3f;         // SH coefficients LR
+    float sh1_lr_scale = 0.05f;     // SH degree-1 LR multiplier
+    float sh2_lr_scale = 0.05f;     // SH degree-2 LR multiplier
+    float sh3_lr_scale = 0.05f;     // SH degree-3 LR multiplier
     float opacities_lr = 5.0e-2f;   // Opacity LR
     float scales_lr = 5.0e-3f;      // Scale LR
     float rotations_lr = 1.0e-3f;   // Rotation LR
@@ -99,7 +102,8 @@ struct AdamWParameters {
     float beta1 = 0.9f;            // First moment decay
     float beta2 = 0.999f;          // Second moment decay
     float epsilon = 1e-8f;         // Numerical stability
-    bool enable_adabound = false;  // AdaBound extension
+    bool decouple_decay = false;   // Enable AdamW mode
+    float weight_decay = 0.0f;     // Decoupled weight decay
 };
 
 class AdamW : public OptimizerBase {
@@ -172,8 +176,12 @@ auto optimizer = create_optimizer("adam", gaussians, gradients);
 json params = {
     {"type", "adam"},
     {"decouple_decay", true},
+    {"weight_decay", 0.01},
     {"means_lr", 0.00016},
     {"shs_lr", 0.0025},
+    {"sh1_lr_scale", 0.05},
+    {"sh2_lr_scale", 0.05},
+    {"sh3_lr_scale", 0.05},
     {"opacities_lr", 0.05},
     {"scales_lr", 0.005},
     {"rotations_lr", 0.001}

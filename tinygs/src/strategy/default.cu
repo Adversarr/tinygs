@@ -281,10 +281,19 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
       } else {
         // NOTE: It is a little bit confusing, but (w, x, y, z) is a standard representation in
         // 3dgs, while (x, y, z, w) is the way to access it.
-        const float r = rotations[src_idx].x;
-        const float x = rotations[src_idx].y;
-        const float y = rotations[src_idx].z;
-        const float z = rotations[src_idx].w;
+        float r = rotations[src_idx].x;
+        float x = rotations[src_idx].y;
+        float y = rotations[src_idx].z;
+        float z = rotations[src_idx].w;
+        // Normalize quaternion to unit length
+        const float quat_mag = sqrtf(r * r + x * x + y * y + z * z);
+        if (quat_mag > 1e-8f) {
+          const float inv_mag = 1.0f / quat_mag;
+          r *= inv_mag;
+          x *= inv_mag;
+          y *= inv_mag;
+          z *= inv_mag;
+        }
         glm::mat3 rot = glm::mat3(
           1.f - 2.f * (y * y + z * z), 2.f * (x * y - r * z), 2.f * (x * z + r * y),
           2.f * (x * y + r * z), 1.f - 2.f * (x * x + z * z), 2.f * (y * z - r * x),

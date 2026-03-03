@@ -58,6 +58,11 @@ struct GaussianOptimizationParams {
   /// Per-group learning rates
   float means_lr = 1.6e-4f;
   float shs_lr = 2.5e-3f;
+  /// Additional multipliers for SH degree 1/2/3 learning rates.
+  /// Effective LR: shs_lr * sh{1,2,3}_lr_scale.
+  float sh1_lr_scale = 0.05f;
+  float sh2_lr_scale = 0.05f;
+  float sh3_lr_scale = 0.05f;
   float opacities_lr = 5.0e-2f;
   float scales_lr = 5.0e-3f;
   float rotations_lr = 1.0e-3f;

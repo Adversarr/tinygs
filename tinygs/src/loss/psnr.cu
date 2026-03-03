@@ -5,19 +5,27 @@
 #include <cmath>
 
 
-// def psnr(img1, img2):
-//     mse = (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
-//     return 20 * torch.log10(1.0 / torch.sqrt(mse))
+// FastGS reference (image_utils.py):
+//   def psnr(img1, img2):
+//       mse = (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
+//       return 20 * torch.log10(1.0 / torch.sqrt(mse))
+//
+// Note: FastGS computes MSE per channel, then PSNR per channel, then averages.
+// This is NOT the same as computing MSE over all pixels and then PSNR.
 
 /**
- * Computes Peak Signal-to-Noise Ratio (PSNR).
+ * Computes Peak Signal-to-Noise Ratio (PSNR) per-channel and averages.
  *
- * PSNR = 20 * log10(MAX_I) - 10 * log10(MSE)
- * where MAX_I is the maximum possible pixel value (typically 1.0 for normalized images)
- * and MSE = mean((pred - target)^2)
+ * For each channel c: PSNR_c = -10 * log10(MSE_c)
+ * Final PSNR = mean(PSNR_r, PSNR_g, PSNR_b)
  *
- * Since we're working with normalized images in the range [0, 1], MAX_I = 1.0
- * and log10(1.0) = 0, so PSNR = -10 * log10(MSE)
+ * This matches the FastGS reference implementation where:
+ *   mse = view(img.shape[0], -1).mean(1)  # per-channel MSE
+ *   psnr = 20 * log10(1.0 / sqrt(mse))     # per-channel PSNR
+ *   result = psnr.mean()                    # average across channels
+ *
+ * For normalized images in [0, 1], MAX_I = 1.0, so:
+ *   20 * log10(1.0 / sqrt(MSE)) = 20 * log10(1) - 10 * log10(MSE) = -10 * log10(MSE)
  */
 
 // CUDA kernel to compute squared differences (float32)
@@ -70,8 +78,13 @@ __global__ void psnr_squared_diff_kernel_f16_h2(int N_pairs, const __half2 *__re
 namespace tinygs {
 
 float PsnrMetric::evaluate(Image pred, Image target) {
-  int n = pred.shape.padded_size(); // physical
-  int npix = pred.shape.size();     // actual
+  // Total elements in padded memory layout (includes padding, which is zero-initialized)
+  int n = pred.shape.padded_size();
+  // Stride between channels in the tiled memory layout
+  uint32_t channel_stride = pred.shape.padded_width() * pred.shape.padded_height();
+  // Number of valid pixels per channel (excluding padding)
+  uint32_t pixels_per_channel = pred.shape.width * pred.shape.height;
+  uint32_t channels = pred.shape.channel;
   
   if (pred.shape != target.shape) {
     throw std::runtime_error(fmt::format(
@@ -113,18 +126,24 @@ float PsnrMetric::evaluate(Image pred, Image target) {
     throw std::runtime_error("PSNR: only float32/float16 are supported");
   }
 
-  // Compute MSE (mean squared error)
-  float mse = gpu_sum(squared_diff, n) / npix;
-
-  // Compute PSNR
-  // For normalized images, MAX_I = 1.0, so 20 * log10(MAX_I) = 0
-  // PSNR = -10 * log10(MSE)
-  if (mse == 0.0f) {
-    // Avoid log(0) which would be -inf
-    return 100.0f; // Return a large value for perfect match
+  // Compute per-channel PSNR and average
+  // This matches the FastGS reference implementation:
+  //   PSNR = mean([-10*log10(MSE_r), -10*log10(MSE_g), -10*log10(MSE_b)])
+  // Note: Padding elements are zero-initialized, so they don't affect the sum.
+  //       We sum over channel_stride elements (including padding zeros), then
+  //       divide by pixels_per_channel (actual valid pixels).
+  float psnr_sum = 0.0f;
+  for (uint32_t c = 0; c < channels; ++c) {
+    float sum_c = gpu_sum(squared_diff + c * channel_stride, channel_stride);
+    float mse_c = sum_c / pixels_per_channel;
+    // For normalized images, MAX_I = 1.0, so PSNR = -10 * log10(MSE)
+    if (mse_c == 0.0f) {
+      psnr_sum += 100.0f;  // Perfect match for this channel
+    } else {
+      psnr_sum += -10.0f * log10f(mse_c);
+    }
   }
-  
-  return -10.0f * log10f(mse);
+  return psnr_sum / static_cast<float>(channels);
 }
 
 } // namespace tinygs

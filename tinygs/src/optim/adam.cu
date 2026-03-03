@@ -8,8 +8,6 @@
 
 #include "../helper_math.h"
 
-// constexpr float kShRestScale = 1;
-constexpr float kShRestScale = 0.05f;
 constexpr int block_size = 512; // make occupancy higher
 
 namespace tinygs {
@@ -18,47 +16,12 @@ __device__ static __forceinline__ float lerp(float v0, float v1, float t) {
     return fmaf(t, v1, fmaf(-t, v0, v0));
 }
 
-struct NoDecay {
-  template <typename T>
-  __forceinline__ __device__ auto operator()(const T& /* theta */, const T &g) const noexcept {
-    return g;
-  }
-
-  template <typename T>
-  __forceinline__ __device__ auto operator()(const T& /* theta */) const noexcept {
-    return T(0.f);
-  }
+enum AdamL1DecayMode : int {
+  kAdamL1DecayNone = 0,
+  kAdamL1DecayOpacity = 1,
+  kAdamL1DecayScale = 2,
 };
 
-struct OpacityDecay {
-  float regu_l1 = 0.f;
-
-  template <typename T>
-  __forceinline__ __device__ auto operator()(const T& theta, const T &g) const noexcept {
-    return g + regu_l1 * activate_opacity_deriv(theta);
-  }
-
-  template <typename T>
-  __forceinline__ __device__ auto operator()(const T& theta) const noexcept {
-    return regu_l1 * activate_opacity_deriv(theta);
-  }
-};
-
-struct ScaleDecay {
-  float regu_l1 = 0.f;
-
-  template <typename T>
-  __forceinline__ __device__ auto operator()(const T& theta, const T &g) const noexcept {
-    return g + regu_l1 * activate_scale_deriv(theta);
-  }
-
-  template <typename T>
-  __forceinline__ __device__ auto operator()(const T& theta) const noexcept {
-    return regu_l1 * activate_scale_deriv(theta);
-  }
-};
-
-template<typename DecayFunc = NoDecay>
 __global__ static void adam(
     // Means
     float *__restrict__ thetas,
@@ -73,14 +36,22 @@ __global__ static void adam(
     float bias_correction1,     // (1 - beta_1^t)
     float bias_correction2_sqrt, // sqrt(1 - beta_2^t)
     float max_grad_1,
-    DecayFunc f = DecayFunc()
+    float l1_decay,
+    int l1_decay_mode
 ) {
   const auto idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= num_gaussians) return;
 
   // Load
   float theta = thetas[idx];
-  float g = f(theta, gradient_scale * thetas_grad[idx]);
+  float g = gradient_scale * thetas_grad[idx];
+  if (l1_decay != 0.0f) {
+    if (l1_decay_mode == kAdamL1DecayOpacity) {
+      g += l1_decay * activate_opacity_deriv(theta);
+    } else if (l1_decay_mode == kAdamL1DecayScale) {
+      g += l1_decay * activate_scale_deriv(theta);
+    }
+  }
   if (max_grad_1 != 0.0f) {
     g = copysignf(fminf(fabsf(g), max_grad_1), g);
   }
@@ -106,7 +77,6 @@ __global__ static void adam(
 }
 
 
-template<typename DecayFunc = NoDecay>
 __global__ static void adamw(
     // Means
     float *__restrict__ thetas,
@@ -120,8 +90,7 @@ __global__ static void adamw(
     float gradient_scale,
     float bias_correction1,     // (1 - beta_1^t)
     float bias_correction2_sqrt, // sqrt(1 - beta_2^t)
-    float max_grad_1,
-    DecayFunc f = DecayFunc()
+    float max_grad_1
 ) {
 
   const auto idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -129,7 +98,7 @@ __global__ static void adamw(
 
   // Load
   float theta = thetas[idx];
-  theta -= lr * f(theta);
+  theta -= lr * adam_p.weight_decay * theta;
   float g = gradient_scale * thetas_grad[idx];
   if (max_grad_1 != 0.0f) {
     g = copysignf(fminf(fabsf(g), max_grad_1), g);
@@ -204,7 +173,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
   }
 
   const auto n = m_gaussians->size();
-  const float g_scale = (m_adam_params.decay_reduction == "mean") ? (1.0f / n) : 1.0f;
+  const float g_scale = 1.0f / n;
   const float scene_scale = m_gaussians->scene_scale();
   m_global_steps++;
 
@@ -225,7 +194,9 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
       step_config.means_scale,
       bc1,
       bc2,
-      m_params.max_grad_1);
+      m_params.max_grad_1,
+      0.0f,
+      kAdamL1DecayNone);
   }
 
   if (step_config.update_opacities) {
@@ -246,7 +217,8 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
       bc1,
       bc2,
       m_params.max_grad_1,
-      OpacityDecay(m_params.opacities_l1 * g_scale));
+      m_params.opacities_l1 * g_scale,
+      kAdamL1DecayOpacity);
   }
 
   if (step_config.update_rotations) {
@@ -266,7 +238,9 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
       step_config.rotations_scale,
       bc1,
       bc2,
-      m_params.max_grad_1);
+      m_params.max_grad_1,
+      0.0f,
+      kAdamL1DecayNone);
   }
 
   if (step_config.update_scales) {
@@ -287,7 +261,8 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
       bc1,
       bc2,
       m_params.max_grad_1,
-      ScaleDecay(m_params.scales_l1 * g_scale));
+      m_params.scales_l1 * g_scale,
+      kAdamL1DecayScale);
   }
 
   if (step_config.update_shs) {
@@ -307,43 +282,51 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
       step_config.shs_scale,
       bc1,
       bc2,
-      m_params.max_grad_1);
+      m_params.max_grad_1,
+      0.0f,
+      kAdamL1DecayNone);
     adam<<<div_round_up<uint>(n * 9, block_size), block_size, 0, stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh1().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh1().data()),
       thrust::raw_pointer_cast(m_sh1_first.data()),
       thrust::raw_pointer_cast(m_sh1_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_shs_global_lr,
+      m_params.shs_lr * m_params.sh1_lr_scale * m_shs_global_lr,
       n * 9,
       step_config.shs_scale,
       bc1,
       bc2,
-      m_params.max_grad_1);
+      m_params.max_grad_1,
+      0.0f,
+      kAdamL1DecayNone);
     adam<<<div_round_up<uint>(n * 15, block_size), block_size, 0, stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh2().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh2().data()),
       thrust::raw_pointer_cast(m_sh2_first.data()),
       thrust::raw_pointer_cast(m_sh2_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_shs_global_lr,
+      m_params.shs_lr * m_params.sh2_lr_scale * m_shs_global_lr,
       n * 15,
       step_config.shs_scale,
       bc1,
       bc2,
-      m_params.max_grad_1);
+      m_params.max_grad_1,
+      0.0f,
+      kAdamL1DecayNone);
     adam<<<div_round_up<uint>(n * 21, block_size), block_size, 0, stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh3().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh3().data()),
       thrust::raw_pointer_cast(m_sh3_first.data()),
       thrust::raw_pointer_cast(m_sh3_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_shs_global_lr,
+      m_params.shs_lr * m_params.sh3_lr_scale * m_shs_global_lr,
       n * 21,
       step_config.shs_scale,
       bc1,
       bc2,
-      m_params.max_grad_1);
+      m_params.max_grad_1,
+      0.0f,
+      kAdamL1DecayNone);
   }
 
   maybe_sync(stream);
@@ -378,11 +361,6 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
   }
 
   auto n = m_gaussians->size();
-  float g_scale = 1.0f;
-  if (m_adam_params.decay_reduction == "mean") {
-    g_scale = 1.0f / n;
-  }
-
   m_global_steps++;
   const float bias_correction1 = static_cast<float>(
       1.0 - std::pow(static_cast<double>(m_adam_params.beta1),
@@ -423,8 +401,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1,
-      OpacityDecay(m_params.opacities_l1 * g_scale));
+      m_params.max_grad_1);
 
     // Rotations (4 floats per Gaussian)
     adamw<<<div_round_up<uint>(n * 4, block_size), block_size, 0, stream>>>(
@@ -452,8 +429,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       gradient_scale,
       bias_correction1,
       bias_correction2_sqrt,
-      m_params.max_grad_1,
-      ScaleDecay(m_params.scales_l1 * g_scale));
+      m_params.max_grad_1);
 
     // SH degree 0 (1 coefficient, 3*N floats)
     adamw<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
@@ -476,7 +452,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       thrust::raw_pointer_cast(m_sh1_first.data()),
       thrust::raw_pointer_cast(m_sh1_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_global_lr,
+      m_params.shs_lr * m_params.sh1_lr_scale * m_global_lr,
       n * 9,
       gradient_scale,
       bias_correction1,
@@ -490,7 +466,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       thrust::raw_pointer_cast(m_sh2_first.data()),
       thrust::raw_pointer_cast(m_sh2_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_global_lr,
+      m_params.shs_lr * m_params.sh2_lr_scale * m_global_lr,
       n * 15,
       gradient_scale,
       bias_correction1,
@@ -504,7 +480,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       thrust::raw_pointer_cast(m_sh3_first.data()),
       thrust::raw_pointer_cast(m_sh3_second.data()),
       m_adam_params,
-      m_params.shs_lr * kShRestScale * m_global_lr,
+      m_params.shs_lr * m_params.sh3_lr_scale * m_global_lr,
       n * 21,
       gradient_scale,
       bias_correction1,
@@ -842,7 +818,7 @@ json AdamParameters::to_json() const {
   j["beta2"] = beta2;
   j["epsilon"] = epsilon;
   j["decouple_decay"] = decouple_decay;
-  j["decay_reduction"] = decay_reduction;
+  j["weight_decay"] = weight_decay;
   return j;
 }
 
@@ -851,7 +827,7 @@ void AdamParameters::from_json(const json& config) {
   if (config.contains("beta2")) beta2 = config.at("beta2").get<float>();
   if (config.contains("epsilon")) epsilon = config.at("epsilon").get<float>();
   if (config.contains("decouple_decay")) decouple_decay = config.at("decouple_decay").get<bool>();
-  if (config.contains("decay_reduction")) decay_reduction = config.at("decay_reduction").get<std::string>();
+  if (config.contains("weight_decay")) weight_decay = config.at("weight_decay").get<float>();
 }
 
 /// @brief Reorder Gaussians based on provided indices

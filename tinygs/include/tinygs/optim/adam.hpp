@@ -11,7 +11,7 @@ struct AdamParameters {
   float beta2 = 0.999f;
   float epsilon = 1e-8f;
   bool decouple_decay = false; // AdamW support
-  std::string decay_reduction = "mean"; // "mean" or "sum"
+  float weight_decay = 0.0f;   // Standard AdamW decoupled weight decay coefficient
 
   /// @brief Default constructor with default values
   AdamParameters() = default;

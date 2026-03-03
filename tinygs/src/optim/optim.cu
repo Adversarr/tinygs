@@ -117,6 +117,9 @@ json GaussianOptimizationParams::to_json() const {
   j["skip_zero_grad"] = skip_zero_grad;
   j["means_lr"] = means_lr;
   j["shs_lr"] = shs_lr;
+  j["sh1_lr_scale"] = sh1_lr_scale;
+  j["sh2_lr_scale"] = sh2_lr_scale;
+  j["sh3_lr_scale"] = sh3_lr_scale;
   j["opacities_lr"] = opacities_lr;
   j["scales_lr"] = scales_lr;
   j["rotations_lr"] = rotations_lr;
@@ -137,6 +140,15 @@ void GaussianOptimizationParams::from_json(const json& config) {
   }
   if (config.contains("shs_lr")) {
     shs_lr = config["shs_lr"];
+  }
+  if (config.contains("sh1_lr_scale")) {
+    sh1_lr_scale = config["sh1_lr_scale"];
+  }
+  if (config.contains("sh2_lr_scale")) {
+    sh2_lr_scale = config["sh2_lr_scale"];
+  }
+  if (config.contains("sh3_lr_scale")) {
+    sh3_lr_scale = config["sh3_lr_scale"];
   }
   if (config.contains("opacities_lr")) {
     opacities_lr = config["opacities_lr"];

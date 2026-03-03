@@ -227,6 +227,15 @@ __global__ void fused_ssim_cuda_fp32(
             }
 
             if (pix_x < W && pix_y < H) {
+#ifdef TINYGS_SSIM_ENABLE_BOUNDARY
+                // Skip boundary pixels - incomplete 11x11 Gaussian window
+                if (pix_x < HALO || pix_x >= W - HALO || 
+                    pix_y < HALO || pix_y >= H - HALO) {
+                    continue;
+                }
+#endif
+                const uint global_idx = c * channel_stride + physical_pixel_idx;
+
                 float mu1 = out0;
                 float mu2 = out2;
                 float mu1_sq = mu1 * mu1;
@@ -242,12 +251,9 @@ __global__ void fused_ssim_cuda_fp32(
                 float D_ = 2.f * sigma12 + C2;
 
                 float val = (C_ * D_) / (A * B);
-
-                const uint global_idx = c * channel_stride + physical_pixel_idx;
-                ssim_map[global_idx] += (1 - val) * scale; // NOTE: 1 - ssim is loss
+                ssim_map[global_idx] += (1 - val) * scale;
 
                 if (dm_dmu1) {
-                    // partial derivatives
                     float d_m_dmu1 = (
                         (mu2 * 2.f * D_) / (A * B)
                         - (mu2 * 2.f * C_) / (A * B)
@@ -581,6 +587,15 @@ __global__ void fused_ssim_cuda_fp16(
                 out4 += current[4] * w;
             }
             if (pix_x < W && pix_y < H) {
+#ifdef TINYGS_SSIM_ENABLE_BOUNDARY
+                // Skip boundary pixels - incomplete 11x11 Gaussian window
+                if (pix_x < HALO || pix_x >= W - HALO || 
+                    pix_y < HALO || pix_y >= H - HALO) {
+                    continue;
+                }
+#endif
+                const uint global_idx = c * channel_stride + physical_pixel_idx;
+
                 float mu1 = out0;
                 float mu2 = out2;
                 float mu1_sq = mu1 * mu1;
@@ -595,7 +610,6 @@ __global__ void fused_ssim_cuda_fp16(
                 float D_ = 2.f * sigma12 + C2;
                 float val = (C_ * D_) / (A * B);
 
-                const uint global_idx = c * channel_stride + physical_pixel_idx;
                 if (ssim_map) {
                     float cur = __half2float(ssim_map[global_idx]);
                     ssim_map[global_idx] = __float2half_rn(fmaf((1.f - val), scale, cur));

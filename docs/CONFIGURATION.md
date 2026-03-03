@@ -157,6 +157,9 @@ Same structure as `dataset`, for evaluation:
     "type": "adam",
     "means_lr": 0.00016,
     "shs_lr": 0.0025,
+    "sh1_lr_scale": 0.05,
+    "sh2_lr_scale": 0.05,
+    "sh3_lr_scale": 0.05,
     "opacities_lr": 0.05,
     "scales_lr": 0.005,
     "rotations_lr": 0.001,
@@ -164,6 +167,7 @@ Same structure as `dataset`, for evaluation:
     "skip_zero_grad": true,
     "opacities_l1": 0.01,
     "scales_l1": 0.01,
+    "weight_decay": 0.0,
     "epsilon": 1.0e-8
   }
 }
@@ -174,6 +178,9 @@ Same structure as `dataset`, for evaluation:
 | `type` | string | - | `adam` |
 | `means_lr` | float | 1.6e-4 | Position learning rate |
 | `shs_lr` | float | 2.5e-3 | SH coefficients learning rate |
+| `sh1_lr_scale` | float | 0.05 | SH degree-1 LR multiplier (effective LR = `shs_lr * sh1_lr_scale`) |
+| `sh2_lr_scale` | float | 0.05 | SH degree-2 LR multiplier (effective LR = `shs_lr * sh2_lr_scale`) |
+| `sh3_lr_scale` | float | 0.05 | SH degree-3 LR multiplier (effective LR = `shs_lr * sh3_lr_scale`) |
 | `opacities_lr` | float | 5.0e-2 | Opacity learning rate |
 | `scales_lr` | float | 5.0e-3 | Scale learning rate |
 | `rotations_lr` | float | 1.0e-3 | Rotation learning rate |
@@ -183,6 +190,7 @@ Same structure as `dataset`, for evaluation:
 | `scales_l1` | float | 0.0 | L1 regularization for scale |
 | `epsilon` | float | 1e-8 | Adam epsilon |
 | `decouple_decay` | bool | false | Enable decoupled weight decay (AdamW mode) |
+| `weight_decay` | float | 0.0 | Standard AdamW decoupled weight decay coefficient |
 
 ---
 
