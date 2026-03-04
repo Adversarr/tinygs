@@ -128,6 +128,23 @@ int main(int argc, char** argv) {
   io.output.image.shape = shape;
   io.output.image.data_type = out_data_type;
 
+  auto tiled_to_linear_hwc = [&](const std::vector<float>& tiled) -> std::vector<float> {
+    std::vector<float> linear_hwc(total_pixels * 3);
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        int pixel_offset = get_linear_index(y, x, pad_width);
+        int r_idx = pixel_offset + 0 * channel_stride;
+        int g_idx = pixel_offset + 1 * channel_stride;
+        int b_idx = pixel_offset + 2 * channel_stride;
+        int out_idx = (y * width + x) * 3;
+        linear_hwc[out_idx + 0] = tiled[r_idx];
+        linear_hwc[out_idx + 1] = tiled[g_idx];
+        linear_hwc[out_idx + 2] = tiled[b_idx];
+      }
+    }
+    return linear_hwc;
+  };
+
   auto get_image_as_linear_hwc = [&]() -> std::vector<float> {
     std::vector<float> tiled_data(padded_size);
     if (use_fp16) {
@@ -165,6 +182,7 @@ int main(int argc, char** argv) {
 
   GPUMemory<float> out_image_grad_fp32;
   GPUMemory<float16_t> out_image_grad_fp16;
+  GPUMemory<float> out_image_grad_convert;
   std::vector<float> out_image_grad_host(total_pixels * 3);
   pcg32 rng(0, 1u);
   for (int i = 0; i < total_pixels * 3; ++i) {
@@ -185,9 +203,20 @@ int main(int argc, char** argv) {
   if (use_fp16) {
     out_image_grad_fp16.resize(padded_size);
     float_to_half_gpu(out_image_grad_fp16.data(), out_image_grad_tiled.data(), padded_size);
+    out_image_grad_convert.resize(padded_size);
   } else {
     out_image_grad_fp32.resize(padded_size);
     out_image_grad_fp32.copy_from_host(out_image_grad_tiled);
+  }
+
+  std::vector<float> fd_loss_weights;
+  if (use_fp16) {
+    half_to_float_gpu(out_image_grad_convert.data(), out_image_grad_fp16.data(), padded_size);
+    std::vector<float> out_image_grad_tiled_effective(padded_size);
+    out_image_grad_convert.copy_to_host(out_image_grad_tiled_effective);
+    fd_loss_weights = tiled_to_linear_hwc(out_image_grad_tiled_effective);
+  } else {
+    fd_loss_weights = tiled_to_linear_hwc(out_image_grad_tiled);
   }
 
   auto eval_scalar_loss = [&](const Gaussian3d& g) -> double {
@@ -198,7 +227,7 @@ int main(int argc, char** argv) {
 
     double loss = 0.0;
     for (size_t i = 0; i < pred.size(); ++i) {
-      loss += static_cast<double>(pred[i]) * static_cast<double>(out_image_grad_host[i]);
+      loss += static_cast<double>(pred[i]) * static_cast<double>(fd_loss_weights[i]);
     }
     return loss;
   };

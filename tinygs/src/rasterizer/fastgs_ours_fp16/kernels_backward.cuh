@@ -971,9 +971,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         dL_dconic_accum_f.y = - 128.0f * sum_float(dl_dconic_accum_y) / TINYGS_SCALE_FULL;
         dL_dconic_accum_f.z = - 128.0f * sum_float(dl_dconic_accum_z) / TINYGS_SCALE_FULL;
         dL_draw_opacity_partial_accum_f = sum_float(dl_draw_opacity_partial_accum) /TINYGS_SCALE_FULL;
-        dL_dcolor_accum_f.x = sum_float(dl_dcolor_accum_r);
-        dL_dcolor_accum_f.y = sum_float(dl_dcolor_accum_g);
-        dL_dcolor_accum_f.z = sum_float(dl_dcolor_accum_b);
+        dL_dcolor_accum_f.x = sum_float(dl_dcolor_accum_r) / TINYGS_SCALE_FULL;
+        dL_dcolor_accum_f.y = sum_float(dl_dcolor_accum_g) / TINYGS_SCALE_FULL;
+        dL_dcolor_accum_f.z = sum_float(dl_dcolor_accum_b) / TINYGS_SCALE_FULL;
 
 
 #ifndef NDEBUG
