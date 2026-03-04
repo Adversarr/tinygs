@@ -22,7 +22,7 @@
     "enable_radius_outlier_removal": false,
     "init_opacity": 0.1,
     "init_scaling": 1,
-    "use_anisotropic": true,
+    "use_anisotropic": false,
     "min_distance": 1.0e-07,
     "nb_points": 24,
     "num_neighbors": 16,
@@ -120,7 +120,7 @@
   },
   "trainer": {
     "means_accumulate_grad_steps": 1,
-    "shs_accumulate_grad_steps": 2,
+    "shs_accumulate_grad_steps": 4,
     "opacities_accumulate_grad_steps": 1,
     "scales_accumulate_grad_steps": 1,
     "rotations_accumulate_grad_steps": 1,
@@ -138,7 +138,7 @@
     "near_plane": 0.01,
     "sh_degree_interval": 1000,
     "scene_scale_recompute_interval": 1000,
-    "reorder_gaussians_interval": 1000,
+    "reorder_gaussians_interval": 3000,
     "start_pose_opt": 50000,
     "record_trajectory": false,
     "test_steps": [

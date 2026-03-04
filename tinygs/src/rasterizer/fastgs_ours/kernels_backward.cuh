@@ -240,7 +240,6 @@ __global__ void preprocess_backward_cu(
         grad_conic[2 * n_primitives + primitive_idx]);
     const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
                 2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
-                // GPT-5 claims here should have a 2.0f, but the reference does not have it
                 /* 2.0f * */ (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
                 2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
 
@@ -649,11 +648,14 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             if (!skip) [[likely]] {
                 alpha = fminf(alpha_prepare, config::max_fragment_alpha);
             }
+            const bool alpha_saturated = alpha_prepare >= config::max_fragment_alpha;
 
             const float blending_weight = transmittance * alpha;
             // const float inv_contribution = sqrtf(1.0f / (blending_weight + config::min_alpha_threshold));
             const float inv_contribution = 1;
             const float one_minus_alpha = 1.0f - alpha;
+            const float one_minus_alpha_safe = fmaxf(one_minus_alpha, 1e-4f);
+            const float one_minus_alpha_rcp = 1.0f / one_minus_alpha_safe;
             // color gradient
             const float3 dL_dcolor = blending_weight * (grad_color_pixel * color_grad_factor);
             // dL_dcolor_accum += dL_dcolor;
@@ -665,8 +667,8 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
                             conic.y * delta.x + conic.z * delta.y);
 
             // alpha gradient
-            const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel / one_minus_alpha;
-            const float dL_draw_opacity_partial = alpha * dL_dalpha_from_color;
+            const float dL_dalpha_from_color = transmittance * color_dot_grad_color_pixel - color_pixel_after_dot_grad_color_pixel * one_minus_alpha_rcp;
+            const float dL_draw_opacity_partial = alpha_saturated ? 0.0f : alpha * dL_dalpha_from_color;
             // dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
             dL_draw_opacity_partial_accum += dL_draw_opacity_partial * inv_contribution;
 

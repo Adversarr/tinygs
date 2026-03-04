@@ -686,10 +686,6 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             if (alpha < config::min_alpha_threshold)
                 continue;
             const float next_transmittance = transmittance * (1.0f - alpha);
-            if (next_transmittance < config::transmittance_threshold) {
-                done = true;
-                continue;
-            }
             color_pixel += transmittance * alpha * collected_color[j];
             if constexpr (METRIC_MODE) {
                 if (metric_map != nullptr && metric_counts != nullptr) {
@@ -703,6 +699,10 @@ __global__ void __launch_bounds__(config::block_size_blend) blend_cu(
             }
             transmittance = next_transmittance;
             n_contributions = n_possible_contributions;
+            if (transmittance < config::transmittance_threshold) {
+                done = true;
+                continue;
+            }
         }
         j = ((j + 31) / 32) * 32; // round up to next warp
         for (; j < current_batch_size; j += 32) {

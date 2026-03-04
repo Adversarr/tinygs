@@ -805,12 +805,10 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu(
             // next_transmittance > THRESHOLD => mask = 0xFFFF
             const uint32_t next_transmittance_acceptable_mask = __hge2_mask(
                 next_transmittance_h, least_acceptable_transmittance_h2);
-            // if next_transmittance_h < least_acceptable_transmittance_h2, then set unfinished to false
-            unfinished.data_u32 &= next_transmittance_acceptable_mask;
-            enable_this_mask &= next_transmittance_acceptable_mask;
+            const uint32_t active_mask = enable_this_mask;
 
             __half2 tah2 = __hmul2(__hmul2(transmittance, alpha_h), TINYGS_UNSCALE_HALF2);
-            reinterpret_cast<uint32_t&>(tah2) &= enable_this_mask;
+            reinterpret_cast<uint32_t&>(tah2) &= active_mask;
 
             ColorSimd rgb = collected_color[j];
             color_r = __hfma2(make_half2(__ushort2half_rn(rgb.rgb.x), __ushort2half_rn(rgb.rgb.x)),
@@ -820,13 +818,16 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu(
             color_b = __hfma2(make_half2(__ushort2half_rn(rgb.rgb.z), __ushort2half_rn(rgb.rgb.z)),
                 tah2, color_b);
             reinterpret_cast<uint32_t&>(transmittance) = 
-                (~enable_this_mask & reinterpret_cast<const uint32_t&>(transmittance)) |
-                ( enable_this_mask & reinterpret_cast<const uint32_t&>(next_transmittance_h));
+                (~active_mask & reinterpret_cast<const uint32_t&>(transmittance)) |
+                ( active_mask & reinterpret_cast<const uint32_t&>(next_transmittance_h));
+
+            // if next_transmittance_h < least_acceptable_transmittance_h2, then set unfinished to false
+            unfinished.data_u32 &= (~active_mask | next_transmittance_acceptable_mask);
 
             //? we set max_contributions to 0xFFFF (for each ushort). We increase the value by 1 everytime
             //? Therefore, no overflow will be caused.
-            n_contributions.data_u32 = (n_possible_contributions.data_u32 &  enable_this_mask) |
-                                       (n_contributions.data_u32          & ~enable_this_mask);
+            n_contributions.data_u32 = (n_possible_contributions.data_u32 &  active_mask) |
+                                       (n_contributions.data_u32          & ~active_mask);
             // If n_contributions == 0xFFFF => set unfinished to false.
             unfinished.data_u32 &= __vcmpltu2(n_contributions.data_u32, 0xFFFF'FFFFu);
         }
@@ -1065,7 +1066,7 @@ __global__ void __launch_bounds__(config::block_size_blend / 2) blend_cu2(
           // next_transmittance > THRESHOLD => mask = 0xFFFF
           const uint32_t next_t_acceptable_01 = hge2_positive(next_transmittance_h, least_acceptable_transmittance_h2);
           // convert it to mask.
-          auto enable_this_mask = bool2mask(unfinished.data_u32 & next_t_acceptable_01, 16);
+          auto enable_this_mask = bool2mask(unfinished.data_u32, 16);
 
           __half2 tah2 = __hmul2(__hmul2(transmittance, alpha_h), TINYGS_UNSCALE_HALF2);
           reinterpret_cast<uint32_t &>(tah2) &= enable_this_mask;

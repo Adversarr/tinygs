@@ -858,6 +858,12 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2& transmittance = REGlow.transmittance;
             const __half2 blending_weight = __hmul2(transmittance, alpha);
             const __half2 one_minus_alpha = __hsub2(h_1_2, alpha);
+            const float2 one_minus_alpha_f = __half22float2(one_minus_alpha);
+            const __half2 one_minus_alpha_safe = __float22half2_rn(
+                make_float2(
+                    fmaxf(one_minus_alpha_f.x, 1e-4f),
+                    fmaxf(one_minus_alpha_f.y, 1e-4f)));
+            const uint32_t alpha_unsaturated_mask = ~__hge2_mask(alpha_prepare, h_max_fragment_alpha_2);
 
             // --- color gradient ---
             dl_dcolor_accum_r = __hfma2(blending_weight, REGup.grad_color_r, dl_dcolor_accum_r);
@@ -883,8 +889,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             // 2. color_dot_grad_color_pixel is safe,
             // 3. alpha has been masked.
             const __half2 dL_dalpha_from_color = __hfma2(transmittance, color_dot_grad_color_pixel,
-                                                         __hneg2(__h2div(color_pixel_after_dot_grad_color_pixel, one_minus_alpha)));
-            const __half2 dL_draw_opacity_partial = __hmul2(alpha, dL_dalpha_from_color);
+                                                         __hneg2(__h2div(color_pixel_after_dot_grad_color_pixel, one_minus_alpha_safe)));
+            __half2 dL_draw_opacity_partial = __hmul2(alpha, dL_dalpha_from_color);
+            reinterpret_cast<uint32_t&>(dL_draw_opacity_partial) &= alpha_unsaturated_mask;
 
             // dL_draw_opacity_partial_accum += dL_draw_opacity_partial;
             // dL_draw_opacity_partial_accum += sum_float(dL_draw_opacity_partial);

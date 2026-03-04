@@ -23,7 +23,7 @@ namespace tinygs::fast_gs_fp16::config {
   DEF float min_alpha_threshold_rcp = 255.0f;
   DEF float min_alpha_threshold = 1.0f / min_alpha_threshold_rcp; // 0.00392156862
   DEF float min_alpha_threshold_deactivated = -5.537334267018537f; // log(255 - 1.0)
-  DEF float max_fragment_alpha = 0.99f;                          // 0.99f in original 3dgs
+  DEF float max_fragment_alpha = 0.999f;                        // 0.99f in original 3dgs
   DEF float transmittance_threshold = 1e-4f;
   // block size constants
   DEF int block_size_preprocess = 128;
