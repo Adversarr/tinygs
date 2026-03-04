@@ -454,6 +454,19 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
     if (m_gaussians->size() < m_params.max_num_gaussians) {
       duplicate(ctx);
     }
+
+    // Pad scores for newly added Gaussians so budget-based pruning can operate.
+    // Reference: new Gaussians get padded_importance=0, protecting them from
+    // multinomial sampling. Here pruning_score=0 yields weight~1 which is
+    // negligible vs high-score Gaussians (weight>>100).
+    const size_t new_size = m_gaussians->size();
+    if (!m_pruning_score.empty() && m_pruning_score.size() < new_size) {
+      m_pruning_score.resize(new_size, 0.0f);
+    }
+    if (!m_importance_score.empty() && m_importance_score.size() < new_size) {
+      m_importance_score.resize(new_size, 0.0f);
+    }
+
     prune(ctx);
 
     // Clamp opacity after densification (FastGS specific)
@@ -912,6 +925,8 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
         d_is_alive[gaussian_idx] = 0;
       });
   } else {
+    log_warning("[FastGS] No pruning scores or budget >= candidates ({}), pruning all standard candidates.",
+                num_standard_candidates);
     // No pruning scores or budget >= candidates: prune all standard candidates
     thrust::for_each(exec,
         thrust::make_counting_iterator<int>(0),

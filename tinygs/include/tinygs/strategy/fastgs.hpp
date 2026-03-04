@@ -82,7 +82,7 @@ public:
   int m_final_prune_start = 18000;         ///< First final-prune step (>15000 and divisible by 3000)
   int m_final_prune_end = 27000;           ///< Last final-prune step (<30000 and divisible by 3000)
   int m_final_prune_every = 3000;          ///< Interval for final pruning
-  float m_opacity_reset_value = 0.8f;      ///< After densification, clip opacity to this max
+  float m_opacity_reset_value = 0.01f;     ///< Periodic opacity reset clamp (ref: reset_opacity → min(opacity, 0.01))
 };
 
 }  // namespace tinygs
