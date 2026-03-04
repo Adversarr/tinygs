@@ -33,8 +33,8 @@ inline std::string to_string(const DataType& data_type) {
 }
 
 struct ImageShape {
-  uint32_t width, height;
-  uint32_t channel; ///< Number of channels (3 or 4 supported)
+  uint32_t width = 0, height = 0;
+  uint32_t channel = 0; ///< Number of channels (3 or 4 supported)
 
   TINYGS_HOST_DEVICE bool operator==(const ImageShape& other) const noexcept {
     return width == other.width && height == other.height && channel == other.channel;
@@ -64,9 +64,9 @@ inline std::string to_string(const ImageShape& shape) {
 }
 
 struct Image {
-  ImageShape shape;
+  ImageShape shape{};
   DataType data_type = DataType::Float32;
-  void* data;
+  void* data = nullptr;
 
   Image() = default;
   Image(ImageShape shape, DataType data_type, void* data) : shape(shape), data_type(data_type), data(data) {}

@@ -105,7 +105,7 @@ protected:
 };
 
 /// @brief Factory function for creating rasterizers.
-/// @param rasterizer_type One of: "default", "fastgs", "fastgs_ours", "fastgs_ours_fp16".
+/// @param rasterizer_type One of: "default", "fastgs".
 std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type);
 
 }

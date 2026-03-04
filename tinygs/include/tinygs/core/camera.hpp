@@ -16,14 +16,14 @@ enum class CameraModel: int {
 
 /// @brief Camera intrinsic parameters
 struct CameraIntrinsics {
-  uuid_t uid; ///< Camera ID (0-based)
-  CameraModel model;
-  int width;
-  int height;
-  float fx, fy;  ///< Focal lengths
-  float cx, cy;  ///< Principal point
-  float k1, k2, k3;  ///< Radial distortion coefficients
-  float p1, p2;      ///< Tangential distortion coefficients
+  uuid_t uid = 0; ///< Camera ID (0-based)
+  CameraModel model = CameraModel::Pinhole;
+  int width = 0;
+  int height = 0;
+  float fx = 0.0f, fy = 0.0f;  ///< Focal lengths
+  float cx = 0.0f, cy = 0.0f;  ///< Principal point
+  float k1 = 0.0f, k2 = 0.0f, k3 = 0.0f;  ///< Radial distortion coefficients
+  float p1 = 0.0f, p2 = 0.0f;      ///< Tangential distortion coefficients
   
   /// @brief Get 3x3 intrinsics matrix K
   TINYGS_HOST_DEVICE mat3x3 to_mat3() const {
@@ -105,25 +105,25 @@ public:
   /// @brief Get camera position in world coordinates
   TINYGS_HOST_DEVICE vec3 get_position() const {
     mat4x4 c2w = extrinsics.get_c2w();
-    return vec3{c2w[0][3], c2w[1][3], c2w[2][3]};
+    return vec3{c2w[3][0], c2w[3][1], c2w[3][2]};
   }
   
   /// @brief Get camera forward direction in world coordinates
   TINYGS_HOST_DEVICE vec3 get_forward() const {
     mat4x4 c2w = extrinsics.get_c2w();
-    return -vec3{c2w[0][2], c2w[1][2], c2w[2][2]};
+    return -vec3{c2w[2][0], c2w[2][1], c2w[2][2]};
   }
   
   /// @brief Get camera up direction in world coordinates
   TINYGS_HOST_DEVICE vec3 get_up() const {
     mat4x4 c2w = extrinsics.get_c2w();
-    return vec3{c2w[0][1], c2w[1][1], c2w[2][1]};
+    return vec3{c2w[1][0], c2w[1][1], c2w[1][2]};
   }
   
   /// @brief Get camera right direction in world coordinates
   TINYGS_HOST_DEVICE vec3 get_right() const {
     mat4x4 c2w = extrinsics.get_c2w();
-    return vec3{c2w[0][0], c2w[1][0], c2w[2][0]};
+    return vec3{c2w[0][0], c2w[0][1], c2w[0][2]};
   }
 };
 

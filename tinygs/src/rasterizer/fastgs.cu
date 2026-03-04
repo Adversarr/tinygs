@@ -18,6 +18,22 @@
 
 namespace tinygs {
 
+void FastGSRasterizerParams::from_json(const json& params) {
+  if (params.contains("f16_grad_scaler")) {
+    f16_grad_scaler = params["f16_grad_scaler"];
+  }
+  if (params.contains("enable_pose_opt")) {
+    enable_pose_opt = params["enable_pose_opt"];
+  }
+}
+
+json FastGSRasterizerParams::to_json() const {
+  json j;
+  j["f16_grad_scaler"] = f16_grad_scaler;
+  j["enable_pose_opt"] = enable_pose_opt;
+  return j;
+}
+
 struct PoseBlock {
   alignas(64) mat4x4 w2c;
   alignas(64) float3 cam_position;
@@ -96,7 +112,10 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     const mat4x4 &w2c = ctx.fwd_input.w2c;
     mat4x4 c2w = inverse(w2c);
 
-    // Copy w2c and cam_position to host memory
+    // Copy w2c and cam_position to host memory.
+    // FastGS CUDA kernels consume w2c as row-major float4 rows (w2c[0], w2c[1], w2c[2]),
+    // while GLM stores matrices in column-major order, so we transpose here.
+    // Camera world position is stored in the 4th column of c2w (column-major), i.e. c2w[3][0..2].
     m_impl->host_block->w2c = glm::transpose(w2c);
     m_impl->host_block->cam_position = {c2w[3][0], c2w[3][1], c2w[3][2]};
 
@@ -405,9 +424,13 @@ void FastGSRasterizer::set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians) {
 }
 
 json FastGSRasterizer::get_params() const {
-  return json::object({{"type", "fastgs"}});
+  json j = m_params.to_json();
+  j["type"] = "fastgs";
+  return j;
 }
 
-void FastGSRasterizer::set_params(const json& /*j*/) {}
+void FastGSRasterizer::set_params(const json& j) {
+  m_params.from_json(j);
+}
 
 } // namespace tinygs

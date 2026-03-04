@@ -16,7 +16,7 @@ CameraIntrinsics CameraIntrinsics::parse(const std::string& line) {
     }
     
     if (tokens.size() < 8) {
-        throw std::runtime_error("Invalid camera intrinsics format: expected 13 values");
+      throw std::runtime_error("Invalid camera intrinsics format: expected at least 8 values");
     }
     
     CameraIntrinsics intrinsics;
@@ -97,6 +97,9 @@ CameraExtrinsics CameraExtrinsics::parse(const std::string& line) {
     }
     // Normalize quaternion
     float norm = std::sqrt(qw*qw + qx*qx + qy*qy + qz*qz);
+    if (norm <= 1e-12f) {
+      throw std::runtime_error("Invalid camera extrinsics format: zero-length quaternion");
+    }
     qw /= norm; qx /= norm; qy /= norm; qz /= norm;
 
     return CameraExtrinsics(quat{qw, qx, qy, qz}, vec3{tx, ty, tz}, frame_idx, timestamp, camera_id);

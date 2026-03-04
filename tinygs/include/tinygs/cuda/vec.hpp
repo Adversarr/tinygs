@@ -220,9 +220,6 @@ REDUCTION_OP(min,     T, (T)std::numeric_limits<T>::infinity(), result = min(res
 REDUCTION_OP(max,     T, (T)-std::numeric_limits<T>::infinity(), result = max(result, a[i]), const TVEC& a)
 REDUCTION_OP(length2, T, (T)0, result += a[i] * a[i], const TVEC& a)
 
-REDUCTION_OP(operator==, bool, true,  result &= a[i] == b[i], const TVEC& a, const TVEC& b)
-REDUCTION_OP(operator!=, bool, false, result |= a[i] != b[i], const TVEC& a, const TVEC& b)
-
 #undef REDUCTION_OP
 
 #define BOOL_REDUCTION_OP(operation, type_result, init, expr, ...) \

@@ -85,7 +85,7 @@ int main(int argc, char** argv) {
   io.input.K = intrinsics.to_mat3();
 
   // Place the camera so the origin has positive z in camera space
-  CameraExtrinsics extrinsics{quat(1.0f, 0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, 3.0f), 0, 0};
+  CameraExtrinsics extrinsics{quat(1.0f, 0.0f, 0.0f, 0.0f), vec3(0.0f, 0.0f, 3.0f), 0, 0, 0};
 
   io.input.w2c = extrinsics.get_w2c();
 

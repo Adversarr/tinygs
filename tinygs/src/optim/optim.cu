@@ -129,6 +129,10 @@ json GaussianOptimizationParams::to_json() const {
   return j;
 }
 
+GaussianOptimizationParams::GaussianOptimizationParams(const json& config) {
+  from_json(config);
+}
+
 void GaussianOptimizationParams::from_json(const json& config) {
   if (config.contains("max_grad_1")) {
     max_grad_1 = config["max_grad_1"];

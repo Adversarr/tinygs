@@ -80,7 +80,7 @@
     "sh3_lr_scale": 0.5,
     "skip_zero_grad": false,
     "weight_decay": 0.0,
-    "type": "adam_per_gaussian"
+    "type": "adam"
   },
   "pose_opt": {
     "type": "adamw",

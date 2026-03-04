@@ -57,8 +57,12 @@ const std::function<void(LogSeverity, const std::string&)>& log_callback();
 void set_log_callback(const std::function<void(LogSeverity, const std::string&)>& callback);
 
 template <typename... Ts>
-void log(LogSeverity severity, const std::string& msg, Ts&&... args) {
-    log_callback()(severity, fmt::format(msg, std::forward<Ts>(args)...));
+void log(LogSeverity severity, fmt::format_string<Ts...> msg, Ts&&... args) {
+		log_callback()(severity, fmt::format(msg, std::forward<Ts>(args)...));
+}
+
+inline void log(LogSeverity severity, const std::string& msg) {
+	log_callback()(severity, msg);
 }
 
 // template <typename... Ts> void log_info(const std::string& msg, Ts&&... args) { log(LogSeverity::Info, msg, std::forward<Ts>(args)...); }
@@ -232,11 +236,12 @@ inline std::string bytes_to_string(size_t bytes) {
 
   double count = static_cast<double>(bytes);
   uint32_t i = 0;
-  for (; i < suffixes.size() && count >= 1024; ++i) {
+	for (; (i + 1) < suffixes.size() && count >= 1024.0; ++i) {
     count /= 1024;
   }
 
   std::ostringstream oss;
+	oss << std::fixed;
   oss.precision(3);
   oss << count << " " << suffixes[i];
   return oss.str();
