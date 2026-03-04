@@ -4,6 +4,39 @@
 
 ---
 
+## Reference: llama.cpp Cross-Platform Pattern
+
+**Backend abstraction:** Unified tensor interface (`ggml_backend`) with per-platform implementations (CUDA, Metal, HIP, Vulkan).
+
+**Stream handling:** Each backend wraps its native stream internally:
+- CUDA: `cudaStream_t`
+- Metal: `MTLCommandBuffer`
+- CPU: No-op (synchronous)
+
+**Backend selection:**
+- Compile-time: Enables which backends to include (CMake detects CUDA/Metal/HIP)
+- Runtime: Selects which enabled backend to use via hardware detection (`ggml_backend_init_best()`)
+
+**Key insight:** Hide streams inside backend implementations. Public API never exposes platform-specific types. Computational graphs built once in platform-agnostic format, dispatched to available backend.
+
+**What llama.cpp abstracts:**
+- Tensor operations (mul, add, softmax, etc.)
+- Memory allocation
+- Graph execution
+- Backend enumeration/selection
+- Error status
+
+**What llama.cpp does NOT abstract:**
+- Kernel launch syntax
+- Thread hierarchy (blockIdx/threadIdx)
+- Math intrinsics, atomics, shared memory
+
+**Why:** Users don't write kernels—they build tensor graphs. Backends implement operations internally.
+
+**Implication for tinygs:** Abstract at operation level (rasterize, optimize, compute_loss), not kernel level.
+
+---
+
 ## Current Blockers
 
 | Header | Issue |
