@@ -344,24 +344,46 @@ __global__ void preprocess_backward_cu(
             2.0f * (rotation_scaled.m11 * dL_dcov3d.m13 + rotation_scaled.m21 * dL_dcov3d.m23 + rotation_scaled.m31 * dL_dcov3d.m33),
             2.0f * (rotation_scaled.m12 * dL_dcov3d.m13 + rotation_scaled.m22 * dL_dcov3d.m23 + rotation_scaled.m32 * dL_dcov3d.m33),
             2.0f * (rotation_scaled.m13 * dL_dcov3d.m13 + rotation_scaled.m23 * dL_dcov3d.m23 + rotation_scaled.m33 * dL_dcov3d.m33)};
-        const float dL_dqxx = -dL_drotation.m22 - dL_drotation.m33;
-        const float dL_dqyy = -dL_drotation.m11 - dL_drotation.m33;
-        const float dL_dqzz = -dL_drotation.m11 - dL_drotation.m22;
-        const float dL_dqxy = dL_drotation.m12 + dL_drotation.m21;
-        const float dL_dqxz = dL_drotation.m13 + dL_drotation.m31;
-        const float dL_dqyz = dL_drotation.m23 + dL_drotation.m32;
-        const float dL_dqrx = dL_drotation.m32 - dL_drotation.m23;
-        const float dL_dqry = dL_drotation.m13 - dL_drotation.m31;
-        const float dL_dqrz = dL_drotation.m21 - dL_drotation.m12;
-    // The following formula for quaternion gradient appears to be a custom implementation.
-    // It's recommended to verify its correctness against the original 3DGS paper or standard quaternion calculus references.
-        const float dL_dq_norm_helper = qxx * dL_dqxx + qyy * dL_dqyy + qzz * dL_dqzz + qxy * dL_dqxy + qxz * dL_dqxz + qyz * dL_dqyz + qrx * dL_dqrx + qry * dL_dqry + qrz * dL_dqrz;
-        const float4 dL_draw_rotation = 2.0f * make_float4(
-            qx * dL_dqrx + qy * dL_dqry + qz * dL_dqrz - qr * dL_dq_norm_helper,
-            2.0f * qx * dL_dqxx + qy * dL_dqxy + qz * dL_dqxz + qr * dL_dqrx - qx * dL_dq_norm_helper,
-            2.0f * qy * dL_dqyy + qx * dL_dqxy + qz * dL_dqyz + qr * dL_dqry - qy * dL_dq_norm_helper,
-            2.0f * qz * dL_dqzz + qx * dL_dqxz + qy * dL_dqyz + qr * dL_dqrz - qz * dL_dq_norm_helper) / (q_norm_sq * __fsqrt_rn(q_norm_sq));
-        grad_raw_rotations[primitive_idx] += dL_draw_rotation;
+    // Compute dL/d(q_normalized) using the correct derivative formulas for R = mat3_cast(q_norm)
+    // The rotation matrix from normalized quaternion (w,x,y,z) is:
+    // R = [[1-2(y²+z²), 2(xy-wz), 2(xz+wy)],
+    //      [2(xy+wz), 1-2(x²+z²), 2(yz-wx)],
+    //      [2(xz-wy), 2(yz+wx), 1-2(x²+y²)]]
+    // dR/dw, dR/dx, dR/dy, dR/dz computed via partial derivatives
+    const float q_norm = __fsqrt_rn(q_norm_sq);
+    const float inv_q_norm = 1.0f / (q_norm + 1e-8f);
+    const float qn_w = qr * inv_q_norm;
+    const float qn_x = qx * inv_q_norm;
+    const float qn_y = qy * inv_q_norm;
+    const float qn_z = qz * inv_q_norm;
+
+    const float dL_dqnorm_w = 
+        dL_drotation.m12 * (-2.0f * qn_z) + dL_drotation.m13 * ( 2.0f * qn_y) +
+        dL_drotation.m21 * ( 2.0f * qn_z) + dL_drotation.m23 * (-2.0f * qn_x) +
+        dL_drotation.m31 * (-2.0f * qn_y) + dL_drotation.m32 * ( 2.0f * qn_x);
+    const float dL_dqnorm_x =
+        dL_drotation.m12 * ( 2.0f * qn_y) + dL_drotation.m13 * ( 2.0f * qn_z) +
+        dL_drotation.m21 * ( 2.0f * qn_y) + dL_drotation.m22 * (-4.0f * qn_x) + dL_drotation.m23 * (-2.0f * qn_w) +
+        dL_drotation.m31 * ( 2.0f * qn_z) + dL_drotation.m32 * ( 2.0f * qn_w) + dL_drotation.m33 * (-4.0f * qn_x);
+    const float dL_dqnorm_y =
+        dL_drotation.m11 * (-4.0f * qn_y) + dL_drotation.m12 * ( 2.0f * qn_x) + dL_drotation.m13 * ( 2.0f * qn_w) +
+        dL_drotation.m21 * ( 2.0f * qn_x) + dL_drotation.m23 * ( 2.0f * qn_z) +
+        dL_drotation.m31 * (-2.0f * qn_w) + dL_drotation.m32 * ( 2.0f * qn_z) + dL_drotation.m33 * (-4.0f * qn_y);
+    const float dL_dqnorm_z =
+        dL_drotation.m11 * (-4.0f * qn_z) + dL_drotation.m12 * (-2.0f * qn_w) + dL_drotation.m13 * ( 2.0f * qn_x) +
+        dL_drotation.m21 * ( 2.0f * qn_w) + dL_drotation.m22 * (-4.0f * qn_z) + dL_drotation.m23 * ( 2.0f * qn_y) +
+        dL_drotation.m31 * ( 2.0f * qn_x) + dL_drotation.m32 * ( 2.0f * qn_y);
+    
+    // Chain through quaternion normalization: q_norm = q_raw / ||q_raw||
+    // d(q_norm_i)/d(q_raw_j) = (delta_ij - q_norm_i * q_norm_j) / ||q_raw||
+    // dL/d(q_raw) = (dL/d(q_norm) - q_norm * dot(q_norm, dL/d(q_norm))) / ||q_raw||
+    const float dot_qnorm_dL = qn_w * dL_dqnorm_w + qn_x * dL_dqnorm_x + qn_y * dL_dqnorm_y + qn_z * dL_dqnorm_z;
+    const float4 dL_draw_rotation = make_float4(
+        (dL_dqnorm_w - qn_w * dot_qnorm_dL) * inv_q_norm,
+        (dL_dqnorm_x - qn_x * dot_qnorm_dL) * inv_q_norm,
+        (dL_dqnorm_y - qn_y * dot_qnorm_dL) * inv_q_norm,
+        (dL_dqnorm_z - qn_z * dot_qnorm_dL) * inv_q_norm);
+    grad_raw_rotations[primitive_idx] += dL_draw_rotation;
 
         // printf("%d: dL_ddc: %f %f %f\n", 
     //     (int)primitive_idx, grad_sh_coefficients_0[primitive_idx].x, grad_sh_coefficients_0[primitive_idx].y, grad_sh_coefficients_0[primitive_idx].z);

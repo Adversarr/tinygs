@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cxxopts.hpp>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
+#include <limits>
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 
@@ -19,7 +21,9 @@ int main(int argc, char** argv) {
     ("o1,opacity1", "Opacity of the Gaussian 1", cxxopts::value<float>()->default_value("0.6"))
     ("o2,opacity2", "Opacity of the Gaussian 2", cxxopts::value<float>()->default_value("0.6"))
     ("s1,scale1", "Scale of the Gaussian 1", cxxopts::value<float>()->default_value("0.1"))
-    ("s2,scale2", "Scale of the Gaussian 2", cxxopts::value<float>()->default_value("0.1"));
+    ("s2,scale2", "Scale of the Gaussian 2", cxxopts::value<float>()->default_value("0.1"))
+    ("fd-check", "Run full finite-difference gradient validation", cxxopts::value<bool>()->default_value("true"))
+    ("fd-eps", "Finite-difference epsilon", cxxopts::value<float>()->default_value("1e-3"));
 
   auto result = options.parse(argc, argv);
   if (result.count("help")) {
@@ -31,6 +35,8 @@ int main(int argc, char** argv) {
   float opacity2 = result["opacity2"].as<float>();
   float scale1 = result["scale1"].as<float>();
   float scale2 = result["scale2"].as<float>();
+  bool run_fd_check = result["fd-check"].as<bool>();
+  float fd_eps = result["fd-eps"].as<float>();
   std::string rasterizer = result["rasterizer"].as<std::string>();
 
   std::cout<< "opacity1: " << opacity1 << std::endl;
@@ -38,6 +44,8 @@ int main(int argc, char** argv) {
   std::cout<< "scale1: " << scale1 << std::endl;
   std::cout<< "scale2: " << scale2 << std::endl;
   std::cout<< "rasterizer: " << rasterizer << std::endl;
+  std::cout<< "fd_check: " << (run_fd_check ? "true" : "false") << std::endl;
+  std::cout<< "fd_eps: " << fd_eps << std::endl;
 
   using namespace tinygs;
   Gaussian3d gaussian;
@@ -62,6 +70,7 @@ int main(int argc, char** argv) {
   for (int i = 0; i < kSHDegreeNumCoeffs[2]; ++i) gaussian.sh2.push_back({0.0f, 0.0f, 0.0f});
   for (int i = 0; i < kSHDegreeNumCoeffs[3]; ++i) gaussian.sh3.push_back({0.0f, 0.0f, 0.0f});
   auto gpu_gaussian = std::make_shared<GPUGaussian3d>();
+  gpu_gaussian->set_sh_degree(3);
   gpu_gaussian->copy_from_host(gaussian);
 
   int width = 480;
@@ -105,6 +114,33 @@ int main(int argc, char** argv) {
   rast->set_gaussians(gpu_gaussian);
   params.fwd_input = io.input;
   params.fwd_output = io.output;
+
+  int total_pixels = width * height;
+
+  // Fixed random output gradient for reproducible scalar loss:
+  // L = sum_i (out_image[i] * out_image_grad[i])
+  GPUMemory<float> out_image_grad(width * height * 3);
+  std::vector<float> out_image_grad_host(width * height * 3);
+  pcg32 rng(0, 1u);
+  for (int i = 0; i < width * height * 3; ++i) {
+    out_image_grad_host[i] = (static_cast<float>(rng.next_uint(256)) / 255.0f) / total_pixels;
+  }
+  out_image_grad.copy_from_host(out_image_grad_host);
+
+  auto eval_scalar_loss = [&](const Gaussian3d& g) -> double {
+    gpu_gaussian->copy_from_host(g);
+    rast->forward(params);
+
+    std::vector<float> pred(width * height * 3);
+    out_image.copy_to_host(pred);
+
+    double loss = 0.0;
+    for (size_t i = 0; i < pred.size(); ++i) {
+      loss += static_cast<double>(pred[i]) * static_cast<double>(out_image_grad_host[i]);
+    }
+    return loss;
+  };
+
   rast->forward(params);
 
   cv::Mat image(height, width, CV_8UC3);
@@ -149,7 +185,6 @@ int main(int argc, char** argv) {
     sum_sq_b += b * b;
   }
   
-  int total_pixels = width * height;
   float avg_r = sum_r / total_pixels;
   float avg_g = sum_g / total_pixels;
   float avg_b = sum_b / total_pixels;
@@ -164,13 +199,6 @@ int main(int argc, char** argv) {
   std::cout << "Std color: R=" << std_r << " G=" << std_g << " B=" << std_b << std::endl;
 
   // backward pass
-  GPUMemory<float> out_image_grad(width * height * 3);
-  std::vector<float> out_image_grad_host(width * height * 3);
-  pcg32 rng(0, 1u);
-  for (int i = 0; i < width * height * 3; ++i) {
-    out_image_grad_host[i] = (static_cast<float>(rng.next_uint(256)) / 255.0f) / total_pixels;
-  }
-  out_image_grad.copy_from_host(out_image_grad_host);
   std::shared_ptr<GPUGaussian3d> grad = gpu_gaussian->clone();
   params.grad_output.image = Image(shape, DataType::Float32, out_image_grad.data());
   params.gaussians_grad = grad;
@@ -204,10 +232,164 @@ int main(int argc, char** argv) {
   }
   auto dinfo = params.densification_info->to_cpu();
 
+  std::cout << "=== Densification Info ===" << std::endl;
   for (int i = 0; i < dinfo.size(); ++i) {
-    std::cout << "  dDensificationInfo: " << dinfo[i].accum_absgrad_mean2d << std::endl;
-    std::cout << "  dDensificationInfo: " << dinfo[i].accum_grad_mean2d << std::endl;
-    std::cout << "  dDensificationInfo: " << dinfo[i].accum_counter << std::endl;
+    std::cout << "Gaussian " << i << ":" << std::endl;
+    std::cout << "  accum_counter: " << dinfo[i].accum_counter << std::endl;
+    std::cout << "  accum_grad_mean2d: " << dinfo[i].accum_grad_mean2d << std::endl;
+    std::cout << "  accum_absgrad_mean2d: " << dinfo[i].accum_absgrad_mean2d << std::endl;
+    std::cout << "  max_radii_screen: " << dinfo[i].max_radii_screen << std::endl;
+  }
+
+  if (run_fd_check) {
+    std::cout << "=== Finite Difference Gradient Check ===" << std::endl;
+
+    Gaussian3d num_grad;
+    num_grad.means.resize(gaussian.means.size(), vec3(0.0f));
+    num_grad.scales.resize(gaussian.scales.size(), vec3(0.0f));
+    num_grad.rotations.resize(gaussian.rotations.size(), vec4(0.0f));
+    num_grad.opacities.resize(gaussian.opacities.size(), 0.0f);
+    num_grad.sh0.resize(gaussian.sh0.size(), vec3(0.0f));
+    num_grad.sh1.resize(gaussian.sh1.size(), vec3(0.0f));
+    num_grad.sh2.resize(gaussian.sh2.size(), vec3(0.0f));
+    num_grad.sh3.resize(gaussian.sh3.size(), vec3(0.0f));
+
+    Gaussian3d gauss_work = gaussian;
+    const Gaussian3d gauss_base = gaussian;
+
+    auto central_diff = [&](float& x) -> float {
+      float old = x;
+      x = old + fd_eps;
+      double loss_plus = eval_scalar_loss(gauss_work);
+      x = old - fd_eps;
+      double loss_minus = eval_scalar_loss(gauss_work);
+      x = old;
+      return static_cast<float>((loss_plus - loss_minus) / (2.0 * static_cast<double>(fd_eps)));
+    };
+
+    for (size_t i = 0; i < gauss_work.means.size(); ++i) {
+      num_grad.means[i].x = central_diff(gauss_work.means[i].x);
+      num_grad.means[i].y = central_diff(gauss_work.means[i].y);
+      num_grad.means[i].z = central_diff(gauss_work.means[i].z);
+    }
+    for (size_t i = 0; i < gauss_work.scales.size(); ++i) {
+      num_grad.scales[i].x = central_diff(gauss_work.scales[i].x);
+      num_grad.scales[i].y = central_diff(gauss_work.scales[i].y);
+      num_grad.scales[i].z = central_diff(gauss_work.scales[i].z);
+    }
+    for (size_t i = 0; i < gauss_work.rotations.size(); ++i) {
+      num_grad.rotations[i].x = central_diff(gauss_work.rotations[i].x);
+      num_grad.rotations[i].y = central_diff(gauss_work.rotations[i].y);
+      num_grad.rotations[i].z = central_diff(gauss_work.rotations[i].z);
+      num_grad.rotations[i].w = central_diff(gauss_work.rotations[i].w);
+    }
+    for (size_t i = 0; i < gauss_work.opacities.size(); ++i) {
+      num_grad.opacities[i] = central_diff(gauss_work.opacities[i]);
+    }
+    for (size_t i = 0; i < gauss_work.sh0.size(); ++i) {
+      num_grad.sh0[i].x = central_diff(gauss_work.sh0[i].x);
+      num_grad.sh0[i].y = central_diff(gauss_work.sh0[i].y);
+      num_grad.sh0[i].z = central_diff(gauss_work.sh0[i].z);
+    }
+    for (size_t i = 0; i < gauss_work.sh1.size(); ++i) {
+      num_grad.sh1[i].x = central_diff(gauss_work.sh1[i].x);
+      num_grad.sh1[i].y = central_diff(gauss_work.sh1[i].y);
+      num_grad.sh1[i].z = central_diff(gauss_work.sh1[i].z);
+    }
+    for (size_t i = 0; i < gauss_work.sh2.size(); ++i) {
+      num_grad.sh2[i].x = central_diff(gauss_work.sh2[i].x);
+      num_grad.sh2[i].y = central_diff(gauss_work.sh2[i].y);
+      num_grad.sh2[i].z = central_diff(gauss_work.sh2[i].z);
+    }
+    for (size_t i = 0; i < gauss_work.sh3.size(); ++i) {
+      num_grad.sh3[i].x = central_diff(gauss_work.sh3[i].x);
+      num_grad.sh3[i].y = central_diff(gauss_work.sh3[i].y);
+      num_grad.sh3[i].z = central_diff(gauss_work.sh3[i].z);
+    }
+
+    // Restore original parameters on GPU for consistency after checking.
+    gpu_gaussian->copy_from_host(gauss_base);
+
+    size_t count = 0;
+    double sum_abs = 0.0;
+    double sum_rel = 0.0;
+    float max_abs = 0.0f;
+    float max_rel = 0.0f;
+    std::string max_abs_name;
+    std::string max_rel_name;
+
+    auto report = [&](const std::string& name, float ana, float num) {
+      float abs_err = std::abs(ana - num);
+      float denom = std::max(std::abs(num), 1e-6f);
+      float rel_err = abs_err / denom;
+
+      std::cout << std::setw(24) << name
+                << " | ana=" << std::setw(12) << ana
+                << " num=" << std::setw(12) << num
+                << " abs=" << std::setw(12) << abs_err
+                << " rel=" << std::setw(12) << rel_err << std::endl;
+
+      sum_abs += abs_err;
+      sum_rel += rel_err;
+      count++;
+      if (abs_err > max_abs) {
+        max_abs = abs_err;
+        max_abs_name = name;
+      }
+      if (rel_err > max_rel) {
+        max_rel = rel_err;
+        max_rel_name = name;
+      }
+    };
+
+    for (size_t i = 0; i < gaussian_grad.means.size(); ++i) {
+      report("means[" + std::to_string(i) + "].x", gaussian_grad.means[i].x, num_grad.means[i].x);
+      report("means[" + std::to_string(i) + "].y", gaussian_grad.means[i].y, num_grad.means[i].y);
+      report("means[" + std::to_string(i) + "].z", gaussian_grad.means[i].z, num_grad.means[i].z);
+    }
+    for (size_t i = 0; i < gaussian_grad.scales.size(); ++i) {
+      report("scales[" + std::to_string(i) + "].x", gaussian_grad.scales[i].x, num_grad.scales[i].x);
+      report("scales[" + std::to_string(i) + "].y", gaussian_grad.scales[i].y, num_grad.scales[i].y);
+      report("scales[" + std::to_string(i) + "].z", gaussian_grad.scales[i].z, num_grad.scales[i].z);
+    }
+    for (size_t i = 0; i < gaussian_grad.rotations.size(); ++i) {
+      report("rotations[" + std::to_string(i) + "].w", gaussian_grad.rotations[i].x, num_grad.rotations[i].x);
+      report("rotations[" + std::to_string(i) + "].x", gaussian_grad.rotations[i].y, num_grad.rotations[i].y);
+      report("rotations[" + std::to_string(i) + "].y", gaussian_grad.rotations[i].z, num_grad.rotations[i].z);
+      report("rotations[" + std::to_string(i) + "].z", gaussian_grad.rotations[i].w, num_grad.rotations[i].w);
+    }
+    for (size_t i = 0; i < gaussian_grad.opacities.size(); ++i) {
+      report("opacities[" + std::to_string(i) + "]", gaussian_grad.opacities[i], num_grad.opacities[i]);
+    }
+    for (size_t i = 0; i < gaussian_grad.sh0.size(); ++i) {
+      report("sh0[" + std::to_string(i) + "].r", gaussian_grad.sh0[i].x, num_grad.sh0[i].x);
+      report("sh0[" + std::to_string(i) + "].g", gaussian_grad.sh0[i].y, num_grad.sh0[i].y);
+      report("sh0[" + std::to_string(i) + "].b", gaussian_grad.sh0[i].z, num_grad.sh0[i].z);
+    }
+    for (size_t i = 0; i < gaussian_grad.sh1.size(); ++i) {
+      report("sh1[" + std::to_string(i) + "].r", gaussian_grad.sh1[i].x, num_grad.sh1[i].x);
+      report("sh1[" + std::to_string(i) + "].g", gaussian_grad.sh1[i].y, num_grad.sh1[i].y);
+      report("sh1[" + std::to_string(i) + "].b", gaussian_grad.sh1[i].z, num_grad.sh1[i].z);
+    }
+    for (size_t i = 0; i < gaussian_grad.sh2.size(); ++i) {
+      report("sh2[" + std::to_string(i) + "].r", gaussian_grad.sh2[i].x, num_grad.sh2[i].x);
+      report("sh2[" + std::to_string(i) + "].g", gaussian_grad.sh2[i].y, num_grad.sh2[i].y);
+      report("sh2[" + std::to_string(i) + "].b", gaussian_grad.sh2[i].z, num_grad.sh2[i].z);
+    }
+    for (size_t i = 0; i < gaussian_grad.sh3.size(); ++i) {
+      report("sh3[" + std::to_string(i) + "].r", gaussian_grad.sh3[i].x, num_grad.sh3[i].x);
+      report("sh3[" + std::to_string(i) + "].g", gaussian_grad.sh3[i].y, num_grad.sh3[i].y);
+      report("sh3[" + std::to_string(i) + "].b", gaussian_grad.sh3[i].z, num_grad.sh3[i].z);
+    }
+
+    double mean_abs = count > 0 ? (sum_abs / static_cast<double>(count)) : 0.0;
+    double mean_rel = count > 0 ? (sum_rel / static_cast<double>(count)) : 0.0;
+    std::cout << "=== FD Summary ===" << std::endl;
+    std::cout << "Checked components: " << count << std::endl;
+    std::cout << "Mean abs error: " << mean_abs << std::endl;
+    std::cout << "Mean rel error: " << mean_rel << std::endl;
+    std::cout << "Max abs error: " << max_abs << " at " << max_abs_name << std::endl;
+    std::cout << "Max rel error: " << max_rel << " at " << max_rel_name << std::endl;
   }
 
   return 0;

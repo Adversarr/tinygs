@@ -30,7 +30,7 @@ outputs
 *.ncu-rep
 *.nsys-rep
 config_train
-video_to_png
+single_gs
 loss.png
 *.pt
 *.pth

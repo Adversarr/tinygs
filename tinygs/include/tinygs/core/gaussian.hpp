@@ -35,11 +35,22 @@ struct Gaussian3d {
 /// Populated by the rasterizer backward pass (accum_counter, accum_grad_mean2d,
 /// accum_absgrad_mean2d, max_radii_screen) and optionally by the FastGS strategy
 /// (metric_importance_score, metric_pruning_score).
+///
+/// Coordinate system: mean2d gradients are in normalized device coordinates (NDC)
+/// with range [-1, 1] mapped from screen space via:
+///   ndc = (screen - 0.5 * (width/height)) / (0.5 * (width/height))
+/// This means screen-space gradients are scaled by (0.5 * width, 0.5 * height).
+///
+/// Gradient accumulation strategy:
+///   - accum_grad_mean2d: L2 norm of accumulated SIGNED gradients (components cancel)
+///   - accum_absgrad_mean2d: L2 norm of accumulated ABSOLUTE gradients (components add)
+/// This distinction is critical for under-reconstruction detection: signed gradients
+/// cancel across pixels, while absolute gradients capture total magnitude.
 struct DensificationInfo {
   float accum_counter = 0;           ///< Number of views that touched this Gaussian
-  float accum_grad_mean2d = 0;       ///< Accumulated signed gradient of mean2d norm
-  float accum_absgrad_mean2d = 0;    ///< Accumulated absolute gradient of mean2d norm
-  float max_radii_screen = 0;        ///< Maximum radius in screen space
+  float accum_grad_mean2d = 0;       ///< Accumulated signed gradient of mean2d (NDC space)
+  float accum_absgrad_mean2d = 0;    ///< Accumulated absolute gradient of mean2d (NDC space)
+  float max_radii_screen = 0;        ///< Maximum radius in screen space (pixels)
   float metric_importance_score = 0; ///< FastGS: multi-view importance score
   float metric_pruning_score = 0;    ///< FastGS: reconstruction quality pruning score
 };

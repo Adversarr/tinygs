@@ -620,8 +620,14 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
   // Reset transmittance
   std::fill(T_pixel.begin(), T_pixel.end(), 1.0f);
 
-  // Densification info
+  // Densification info: copy existing from GPU (preserves max_radii_screen from forward)
   std::vector<DensificationInfo> dinfo(N);
+  if (ctx.densification_info) {
+    CUDA_CHECK_THROW(cudaMemcpy(
+        dinfo.data(), ctx.densification_info->data(),
+        N * sizeof(DensificationInfo),
+        cudaMemcpyDeviceToHost));
+  }
   
   // For each visible Gaussian, iterate over its covered pixels
   // First pass: record per-pixel per-gaussian alpha and T_before
@@ -688,6 +694,7 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
     // Per-Gaussian gradient accumulators
     vec3 dL_dcolor(0.0f);
     vec2 dL_dmean2d(0.0f);
+    vec2 dL_dmean2d_abs(0.0f);  // Component-wise absolute gradient for densification
     float dL_dopacity = 0.0f;
     float dL_dcov2d_a = 0.0f, dL_dcov2d_b = 0.0f, dL_dcov2d_c = 0.0f;
 
@@ -754,8 +761,12 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
       // power = -0.5 * (inv_a*dx^2 + 2*inv_b*dx*dy + inv_c*dy^2)
       // d(power)/d(mu_x) = (inv_a*dx + inv_b*dy)  [since dx = px-mu_x, d(dx)/d(mu_x) = -1]
       // d(power)/d(mu_y) = (inv_b*dx + inv_c*dy)
-      dL_dmean2d.x += dL_dpower * (inv_a * dx + inv_b * dy);
-      dL_dmean2d.y += dL_dpower * (inv_b * dx + inv_c * dy);
+      float dmean2d_x = dL_dpower * (inv_a * dx + inv_b * dy);
+      float dmean2d_y = dL_dpower * (inv_b * dx + inv_c * dy);
+      dL_dmean2d.x += dmean2d_x;
+      dL_dmean2d.y += dmean2d_y;
+      dL_dmean2d_abs.x += std::abs(dmean2d_x);
+      dL_dmean2d_abs.y += std::abs(dmean2d_y);
 
       // d(power)/d(Σ^{-1}) then chain to d(Σ)
       float dL_dinv_a = dL_dpower * (-0.5f * dx * dx);
@@ -1092,10 +1103,19 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
       grad_gs.means[gauss_idx] += glm::transpose(W) * dL_dmean_cam_J;
     }
 
-    // 6. Densification: accumulate absgrad and counter
-    float absgrad_mean2d = std::sqrt(dL_dmean2d.x * dL_dmean2d.x + dL_dmean2d.y * dL_dmean2d.y);
-    dinfo[gauss_idx].accum_absgrad_mean2d += absgrad_mean2d;
-    dinfo[gauss_idx].accum_grad_mean2d += std::sqrt(dL_dmean2d.x * dL_dmean2d.x + dL_dmean2d.y * dL_dmean2d.y);
+    // 6. Densification: accumulate signed and absolute gradients
+    // Scale to NDC space: multiply by (0.5 * w, 0.5 * h) to convert screen-space
+    // gradients to NDC-space gradients (matching FastGS behavior).
+    // Signed: components cancel across pixels -> smaller norm (directional info)
+    // Absolute: components always add -> larger norm (magnitude for under-reconstruction)
+    float scale_x = 0.5f * static_cast<float>(width);
+    float scale_y = 0.5f * static_cast<float>(height);
+    dinfo[gauss_idx].accum_grad_mean2d += std::sqrt(
+        (dL_dmean2d.x * scale_x) * (dL_dmean2d.x * scale_x) +
+        (dL_dmean2d.y * scale_y) * (dL_dmean2d.y * scale_y));
+    dinfo[gauss_idx].accum_absgrad_mean2d += std::sqrt(
+        (dL_dmean2d_abs.x * scale_x) * (dL_dmean2d_abs.x * scale_x) +
+        (dL_dmean2d_abs.y * scale_y) * (dL_dmean2d_abs.y * scale_y));
     dinfo[gauss_idx].accum_counter += 1.0f;
   }
 
