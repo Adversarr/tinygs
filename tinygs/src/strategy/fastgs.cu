@@ -177,6 +177,59 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
   // Match the temporary render dtype to the active train output dtype.
   const DataType render_dtype = ctx.fwd_output.image.data_type;
+  if (render_dtype != DataType::Float16 && render_dtype != DataType::Float32) {
+    throw std::runtime_error("FastGS metric scoring expects Float16 or Float32 render dtype.");
+  }
+
+  // IMPORTANT: use the active training resolution from ctx (progressive resolution aware),
+  // not the raw dataset image size.
+  const int width = static_cast<int>(ctx.fwd_input.width);
+  const int height = static_cast<int>(ctx.fwd_input.height);
+  const int n_pixels = width * height;
+  ImageShape rgb_shape{static_cast<uint32_t>(width), static_cast<uint32_t>(height), 3};
+  const int padded_w = static_cast<int>(rgb_shape.padded_width());
+  const int padded_h = static_cast<int>(rgb_shape.padded_height());
+  const uint32_t tiled_w = rgb_shape.tiled_width();
+  const size_t rgb_padded_size = static_cast<size_t>(rgb_shape.padded_size());
+
+  // Reuse scratch buffers across all sampled cameras.
+  GPUMemory<float> render_buf_f32;
+  GPUMemory<float16_t> render_buf_f16;
+  GPUMemory<float> metric_render_buf_f32;
+  GPUMemory<float16_t> metric_render_buf_f16;
+  if (render_dtype == DataType::Float16) {
+    render_buf_f16.resize(rgb_padded_size);
+    metric_render_buf_f16.resize(rgb_padded_size);
+  } else {
+    render_buf_f32.resize(rgb_padded_size);
+    metric_render_buf_f32.resize(rgb_padded_size);
+  }
+
+  GPUMemory<float> gt_gpu(rgb_padded_size);
+  GPUMemory<float> rendered_f32(rgb_padded_size);
+  GPUMemory<float> l1_loss_buf(rgb_padded_size);
+  GPUMemory<float> ssim_loss_buf(rgb_padded_size);
+  GPUBuffer<float> l1_map(ctx.stream, n_pixels);
+  auto metric_map = std::make_shared<GPUBuffer<int>>(ctx.stream, n_pixels);
+  auto metric_counts = std::make_shared<GPUBuffer<int>>(ctx.stream, num_gaussians);
+  Image gt_image(rgb_shape, DataType::Float32, gt_gpu.data());
+
+  // Shared loss contexts reused for every camera.
+  L1Loss l1_loss;
+  FusedSSIMLoss ssim_loss;
+  LossContext l1_ctx;
+  l1_ctx.pred = Image(rgb_shape, DataType::Float32, rendered_f32.data());
+  l1_ctx.target = gt_image;
+  l1_ctx.loss = Image(rgb_shape, DataType::Float32, l1_loss_buf.data());
+  l1_ctx.grad = Image();
+  l1_ctx.stream = ctx.stream;
+
+  LossContext ssim_ctx;
+  ssim_ctx.pred = Image(rgb_shape, DataType::Float32, rendered_f32.data());
+  ssim_ctx.target = gt_image;
+  ssim_ctx.loss = Image(rgb_shape, DataType::Float32, ssim_loss_buf.data());
+  ssim_ctx.grad = Image();
+  ssim_ctx.stream = ctx.stream;
 
   // Number of cameras to render
   const int num_cameras = std::min(m_metric_num_cameras, static_cast<int>(dataset_size));
@@ -200,19 +253,10 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     }
   }
 
-  // Photometric losses reused per camera.
-  L1Loss l1_loss;
-  FusedSSIMLoss ssim_loss;
-
   for (int cam_i = 0; cam_i < num_cameras; cam_i++) {
     // Pick a sampled camera
     const size_t idx = sampled_indices[static_cast<size_t>(cam_i)];
     auto data = (*dataset)[idx];
-
-    // IMPORTANT: use the active training resolution from ctx (progressive resolution aware),
-    // not the raw dataset image size.
-    const int width = static_cast<int>(ctx.fwd_input.width);
-    const int height = static_cast<int>(ctx.fwd_input.height);
 
     // -- First render: get the rendered image (no metric counting) --
     RasterizeContext render_ctx;
@@ -229,55 +273,33 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     render_ctx.fwd_input.far = ctx.fwd_input.far;
     render_ctx.fwd_input.timestamp = data.timestamp;
 
-    // Allocate output image buffer using active training dtype.
-    ImageShape rgb_shape{static_cast<uint32_t>(width), static_cast<uint32_t>(height), 3};
-    GPUMemory<float> render_buf_f32;
-    GPUMemory<float16_t> render_buf_f16;
     if (render_dtype == DataType::Float16) {
-      render_buf_f16 = GPUMemory<float16_t>(rgb_shape.padded_size());
       render_buf_f16.memset(0);
       render_ctx.fwd_output.image = Image(rgb_shape, DataType::Float16, render_buf_f16.data());
-    } else if (render_dtype == DataType::Float32) {
-      render_buf_f32 = GPUMemory<float>(rgb_shape.padded_size());
+    } else {
       render_buf_f32.memset(0);
       render_ctx.fwd_output.image = Image(rgb_shape, DataType::Float32, render_buf_f32.data());
-    } else {
-      throw std::runtime_error("FastGS metric scoring expects Float16 or Float32 render dtype.");
     }
 
     m_rasterizer->forward(render_ctx);
     CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
 
     // Transfer GT to GPU
-    const auto& rendered_image = render_ctx.fwd_output.image;
-    const int padded_w = rendered_image.shape.padded_width();
-    const int padded_h = rendered_image.shape.padded_height();
-
-    GPUMemory<float> gt_gpu(padded_w * padded_h * 3);
-    Image gt_image;
-    gt_image.shape = rendered_image.shape;
-    gt_image.data_type = DataType::Float32;
-    gt_image.data = gt_gpu.data();
     m_dataloader->transfer_gpu(ctx.stream, gt_image, data.image);
     CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
 
     // Convert rendered image to Float32 if needed, then compute metrics in Float32.
-    GPUMemory<float> rendered_f32(padded_w * padded_h * 3);
-    if (rendered_image.data_type == DataType::Float16) {
+    if (render_dtype == DataType::Float16) {
       half_to_float_gpu(rendered_f32.data(),
-        reinterpret_cast<const float16_t*>(rendered_image.data),
-        rendered_image.shape.padded_size(),
+        reinterpret_cast<const float16_t*>(render_ctx.fwd_output.image.data),
+        rgb_padded_size,
         ctx.stream);
     } else {
-      CUDA_CHECK_THROW(cudaMemcpyAsync(rendered_f32.data(), rendered_image.data,
-        rendered_image.shape.padded_size() * sizeof(float), cudaMemcpyDeviceToDevice, ctx.stream));
+      CUDA_CHECK_THROW(cudaMemcpyAsync(rendered_f32.data(), render_ctx.fwd_output.image.data,
+        rgb_padded_size * sizeof(float), cudaMemcpyDeviceToDevice, ctx.stream));
     }
 
     // Compute per-pixel L1 map and threshold into binary metric map.
-    const int n_pixels = width * height;
-    const uint32_t tiled_w = rendered_image.shape.padded_width() >> 3;
-    GPUBuffer<float> l1_map(ctx.stream, n_pixels);
-    GPUBuffer<int> metric_map(ctx.stream, n_pixels);
     linear_kernel(compute_l1_map_kernel, 0, ctx.stream, n_pixels,
         rendered_f32.data(),
         static_cast<const float*>(gt_image.data),
@@ -304,7 +326,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
     linear_kernel(threshold_metric_map_kernel, 0, ctx.stream, n_pixels,
         l1_map.data(),
-        metric_map.data(),
+        metric_map->data(),
         m_loss_thresh,
         min_l1,
         inv_range,
@@ -314,32 +336,17 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     //   l1_weight * mean(L1) + ssim_weight * mean(1 - SSIM)
     float photometric_loss_h = 0.0f;
     {
-      ImageShape loss_shape{static_cast<uint32_t>(width), static_cast<uint32_t>(height), 3};
-      GPUMemory<float> l1_loss_buf(loss_shape.padded_size());
       l1_loss_buf.memset(0);
-      GPUMemory<float> ssim_loss_buf(loss_shape.padded_size());
       ssim_loss_buf.memset(0);
 
-      LossContext l1_ctx;
-      l1_ctx.pred = Image(loss_shape, DataType::Float32, rendered_f32.data());
-      l1_ctx.target = gt_image;
-      l1_ctx.loss = Image(loss_shape, DataType::Float32, l1_loss_buf.data());
-      l1_ctx.grad = Image();
-      l1_ctx.stream = ctx.stream;
       l1_loss.evaluate(l1_ctx, 1.0f);
 
-      LossContext ssim_ctx;
-      ssim_ctx.pred = Image(loss_shape, DataType::Float32, rendered_f32.data());
-      ssim_ctx.target = gt_image;
-      ssim_ctx.loss = Image(loss_shape, DataType::Float32, ssim_loss_buf.data());
-      ssim_ctx.grad = Image();
-      ssim_ctx.stream = ctx.stream;
       ssim_loss.evaluate(ssim_ctx, 1.0f);
 
       auto l1_loss_begin = thrust::device_pointer_cast(l1_loss_buf.data());
-      auto l1_loss_end = l1_loss_begin + static_cast<int>(loss_shape.padded_size());
+      auto l1_loss_end = l1_loss_begin + static_cast<int>(rgb_padded_size);
       auto ssim_loss_begin = thrust::device_pointer_cast(ssim_loss_buf.data());
-      auto ssim_loss_end = ssim_loss_begin + static_cast<int>(loss_shape.padded_size());
+      auto ssim_loss_end = ssim_loss_begin + static_cast<int>(rgb_padded_size);
       const float l1_term = thrust::reduce(exec, l1_loss_begin, l1_loss_end, 0.0f, thrust::plus<float>());
       const float ssim_term = thrust::reduce(exec, ssim_loss_begin, ssim_loss_end, 0.0f, thrust::plus<float>());
       photometric_loss_h = m_photometric_l1_weight * l1_term +
@@ -355,22 +362,17 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
     metric_ctx.fwd_input = render_ctx.fwd_input;  // same camera
 
-    // Allocate output image buffer for metric render (content unused, but rasterizer needs it)
-    GPUMemory<float> metric_render_buf_f32;
-    GPUMemory<float16_t> metric_render_buf_f16;
     if (render_dtype == DataType::Float16) {
-      metric_render_buf_f16 = GPUMemory<float16_t>(rgb_shape.padded_size());
       metric_render_buf_f16.memset(0);
       metric_ctx.fwd_output.image = Image(rgb_shape, DataType::Float16, metric_render_buf_f16.data());
     } else {
-      metric_render_buf_f32 = GPUMemory<float>(rgb_shape.padded_size());
       metric_render_buf_f32.memset(0);
       metric_ctx.fwd_output.image = Image(rgb_shape, DataType::Float32, metric_render_buf_f32.data());
     }
 
     // Set metric_map and metric_counts
-    metric_ctx.metric_map = std::make_shared<GPUBuffer<int>>(std::move(metric_map));
-    metric_ctx.metric_counts = std::make_shared<GPUBuffer<int>>(ctx.stream, num_gaussians);
+    metric_ctx.metric_map = metric_map;
+    metric_ctx.metric_counts = metric_counts;
     metric_ctx.metric_counts->memset_async(ctx.stream, 0);
 
     m_rasterizer->forward_metric(metric_ctx);
@@ -378,7 +380,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
     // Accumulate results
     exec = thrust::cuda::par.on(ctx.stream);
-    const int* d_accum_counts = metric_ctx.metric_counts->data();
+    const int* d_accum_counts = metric_counts->data();
     float* d_full_score = thrust::raw_pointer_cast(full_metric_score.data());
     int* d_full_counts = thrust::raw_pointer_cast(full_metric_counts.data());
     const float ploss = photometric_loss_h;
