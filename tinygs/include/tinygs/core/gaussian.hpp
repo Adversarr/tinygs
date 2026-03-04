@@ -22,7 +22,7 @@ constexpr int kSHDegreeNumCoeffs[] = {1, 3, 5, 7};
 struct Gaussian3d {
   std::vector<vec3> means;
   std::vector<float> opacities;
-  std::vector<vec4> rotations;
+  std::vector<vec4> rotations;  ///< Quaternion stored as (w, x, y, z)
   std::vector<vec3> scales;
   std::vector<vec3> sh0;  ///< Degree 0: 1 coeff/Gaussian (DC term)
   std::vector<vec3> sh1;  ///< Degree 1: 3 coeffs/Gaussian

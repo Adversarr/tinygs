@@ -332,6 +332,8 @@ The scale (`KHR_gaussian_splatting:SCALE`) and rotation (`KHR_gaussian_splatting
 
 `KHR_gaussian_splatting:ROTATION` is stored as a unit quaternion in the order (x, y, z, w), where `w` is the scalar component. This quaternion represents the rotation from the local space of the Gaussian to global space.
 
+> TinyGS note: this KHR order is `(x, y, z, w)`, but TinyGS internal training buffers store quaternions as `(w, x, y, z)` to match legacy 3DGS codepaths. Convert explicitly at import/export boundaries.
+
 Together, the scale and rotation can be used to reconstruct the full covariance matrix of the Gaussian splat for rendering purposes. Combined with the position attribute, these values define the identity and shape of the ellipsoid in 3D space.
 
 More details on how to interpret these attributes for rendering can be found in the [3D Gaussian Splatting for Real-Time Radiance Field Rendering](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) paper.

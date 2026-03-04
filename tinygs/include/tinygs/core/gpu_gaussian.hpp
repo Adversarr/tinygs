@@ -96,7 +96,7 @@ private:
 
   thrust::device_vector<vec3> m_means;       ///< 3D positions
   thrust::device_vector<float> m_opacities;  ///< Opacity values (logit space)
-  thrust::device_vector<vec4> m_rotations;   ///< Rotation quaternions
+  thrust::device_vector<vec4> m_rotations;   ///< Rotation quaternions, stored as (w, x, y, z)
   thrust::device_vector<vec3> m_scales;      ///< Scale factors (log space)
 
   /// SH coefficient buffers: channel-first SoA layout (RR..GG..BB per coefficient).

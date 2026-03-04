@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
   cxxopts::Options options("single_gs", "Single Gaussian Splatting");
   options.add_options()
     ("h,help", "Print help")
-    ("r,rasterizer", "Rasterizer to use", cxxopts::value<std::string>()->default_value("default"))
+    ("r,rasterizer", "Rasterizer to use", cxxopts::value<std::string>()->default_value("fastgs"))
     ("o1,opacity1", "Opacity of the Gaussian 1", cxxopts::value<float>()->default_value("0.6"))
     ("o2,opacity2", "Opacity of the Gaussian 2", cxxopts::value<float>()->default_value("0.6"))
     ("s1,scale1", "Scale of the Gaussian 1", cxxopts::value<float>()->default_value("0.1"))

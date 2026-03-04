@@ -2,6 +2,7 @@
 #include "tinygs/rasterizer/fastgs.hpp"
 #include "tinygs/rasterizer/default.hpp"
 #include "tinygs/rasterizer/gsplat.hpp"
+#include "tinygs/rasterizer/cpu.hpp"
 
 namespace tinygs {
 
@@ -47,6 +48,8 @@ std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_
     return std::make_unique<DefaultRasterizer>();
   } else if (lower_rasterizer_type == "fastgs") {
     return std::make_unique<FastGSRasterizer>();
+  } else if (lower_rasterizer_type == "cpu") {
+    return std::make_unique<CPUReferenceRasterizer>();
   } else {
     throw std::runtime_error("Unknown rasterizer type: " + rasterizer_type);
   }

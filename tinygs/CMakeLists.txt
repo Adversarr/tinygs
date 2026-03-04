@@ -61,6 +61,7 @@ set(TINYGS_SOURCES
     # "src/rasterizer/gsplat/backward.cu"
     # "src/rasterizer/gsplat/forward.cu"
     "src/rasterizer/rasterizer.cpp"
+    "src/rasterizer/cpu.cpp"
     
     # Strategy
     "src/strategy/absgs.cu"
