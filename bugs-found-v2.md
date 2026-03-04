@@ -4,6 +4,28 @@ This document catalogs bugs, potential issues, and code quality concerns discove
 
 ---
 
+## FastGS FP16 Backward Notes (2026-03)
+
+These are known limitations in the fp16 rasterizer path that are currently documented (not fixed in this patch):
+
+1. **Color quantization mismatch in backward path**
+    - **Location:** `tinygs/src/rasterizer/fastgs_ours_fp16/kernels_forward.cuh` + `tinygs/src/rasterizer/fastgs_ours_fp16/kernels_backward.cuh`
+    - **Details:** Forward stores per-primitive color as `uchar3` (`float32uchar3`, saturated to `[0,1]` then quantized to 8-bit). Backward propagates a continuous gradient to SH via `PrimitiveInfoGradient::color_rg` / `conic_c_color_b`, which cannot represent exact derivative through quantization boundaries.
+
+2. **Half-precision accumulation in blend backward**
+    - **Location:** `tinygs/src/rasterizer/fastgs_ours_fp16/kernels_backward.cuh`
+    - **Details:** Per-thread accumulators for mean/conic/color/opacity partials are mostly `__half2`. For large contributor counts, accumulation rounding is higher than fp32 and can increase FD mismatch.
+
+3. **Half-precision global gradient atomics**
+    - **Location:** `tinygs/src/rasterizer/fastgs_ours_fp16/kernels_backward.cuh` + `tinygs/src/rasterizer/fastgs_ours_fp16/rasterization_config.h`
+    - **Details:** Intermediate per-primitive gradients are stored as `PrimitiveInfoGradient` (`__half2` fields) and updated by half2 atomics. This can lose small contributions when accumulated with larger ones.
+
+4. **Approximate exponential in fp16 blend backward math**
+    - **Location:** `tinygs/src/rasterizer/fastgs_ours_fp16/rasterization_config.h` (`fast_exp_approx`) and its use in backward kernels
+    - **Details:** Uses `ex2.approx.f16x2`-based approximation, which is faster but less accurate than full fp32 `expf`, especially in tails.
+
+---
+
 ## Critical Bugs
 
 ### 1. Division by Zero in `reduce.cu` and `stat.cu`

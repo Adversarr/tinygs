@@ -240,8 +240,7 @@ __global__ void preprocess_backward_cu(
         __half2float(grad.conic_c_color_b.x));
     const float3 dL_dcov2d = determinant_rcp_sq * make_float3(
                 2.0f * bc * dL_dconic.y - cc * dL_dconic.x - bb * dL_dconic.z,
-                // GPT-5 claims here should have a 2.0f, but the reference does not have it
-                /* 2.0f * */ (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
+                2.0f * (bc * dL_dconic.x - (ac + bb) * dL_dconic.y + ab * dL_dconic.z),
                 2.0f * ab * dL_dconic.y - bb * dL_dconic.x - aa * dL_dconic.z);
 
     // 3d covariance gradient
@@ -638,6 +637,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
     __half2 color_r{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
     __half2 color_g{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
     __half2 color_b{CUDART_ZERO_FP16, CUDART_ZERO_FP16};  // Inf-free
+    __half2 color_grad_factor_r{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
+    __half2 color_grad_factor_g{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
+    __half2 color_grad_factor_b{CUDART_ZERO_FP16, CUDART_ZERO_FP16};
 
     if (valid_primitive) {
         primitive_idx = instance_primitive_indices[instance_idx];
@@ -654,6 +656,15 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
         color_r = make_half2(__ushort2half_rn(info.rgb.x), __ushort2half_rn(info.rgb.x));
         color_g = make_half2(__ushort2half_rn(info.rgb.y), __ushort2half_rn(info.rgb.y));
         color_b = make_half2(__ushort2half_rn(info.rgb.z), __ushort2half_rn(info.rgb.z));
+        color_grad_factor_r = make_half2(
+            (info.rgb.x > 0 && info.rgb.x < 255) ? CUDART_ONE_FP16 : CUDART_ZERO_FP16,
+            (info.rgb.x > 0 && info.rgb.x < 255) ? CUDART_ONE_FP16 : CUDART_ZERO_FP16);
+        color_grad_factor_g = make_half2(
+            (info.rgb.y > 0 && info.rgb.y < 255) ? CUDART_ONE_FP16 : CUDART_ZERO_FP16,
+            (info.rgb.y > 0 && info.rgb.y < 255) ? CUDART_ONE_FP16 : CUDART_ZERO_FP16);
+        color_grad_factor_b = make_half2(
+            (info.rgb.z > 0 && info.rgb.z < 255) ? CUDART_ONE_FP16 : CUDART_ZERO_FP16,
+            (info.rgb.z > 0 && info.rgb.z < 255) ? CUDART_ONE_FP16 : CUDART_ZERO_FP16);
     }
 
     conic_x = __hmul2(conic_x, h_16_2);
@@ -820,12 +831,7 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
             const __half2 off_x = make_half2(off_xy.x, off_xy.x);
             const __half2 off_y = make_half2(off_xy.y, off_xy.y);
-
-            // 1. if idx >= config::block_size_blend, dx_dy will be out of bound, and we will not use it
-            // 2. if idx > block_size_blend acturally, we have already set the values to zero to make zero results
-#ifdef TINYGS_SAFE_MATH
             const uint32_t valid_pixel = __hlt2_mask(off_xy, dist_to_boundaries);
-#endif
             __half2 delta_x = __hfma2(hinv_16, __hneg2(off_x), mean2d_x);
             __half2 delta_y = __hfma2(hinv_16, __hneg2(off_y), mean2d_y);
             REGup.grad_color_r = warp.shfl_up(REGup.grad_color_r, 1);
@@ -836,15 +842,13 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 conic_z_dy = __hmul2(conic_z, delta_y); // conic.z * delta.y
             const __half2 conic_y_dy = __hmul2(conic_y, delta_y); // conic.y * delta.y
             REGup.grad_color_b = warp.shfl_up(REGup.grad_color_b, 1);
-#ifdef TINYGS_SAFE_MATH
             uint32_t enable_mask = valid_primitive & valid_pixel;
-#endif
             const __half2 conic_z_dyy = __hmul2(delta_y, conic_z_dy);
             const __half2 conic_y_dxy = __hmul2(delta_x, conic_y_dy);
-#ifdef TINYGS_SAFE_MATH
-            enable_mask &= __brev(valid_pixel);
-#endif
             REGup.last_contributor_ui32 = warp.shfl_up(REGup.last_contributor_ui32, 1);
+            const uint32_t tile_primitive_idx_u16x2 =
+                (static_cast<uint32_t>(tile_primitive_idx) << 16) | static_cast<uint32_t>(tile_primitive_idx);
+            enable_mask &= __vcmpltu2(tile_primitive_idx_u16x2, REGup.last_contributor_ui32);
 
             const __half2 quad = __hfma2(delta_x, conic_x_dx, conic_z_dyy);
             if (lane_idx == 0) {
@@ -856,26 +860,15 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const __half2 gaussian = fast_exp_approx(__hneg2(sigma_over_2_h));
             const __half2 prepare_dl_dmean2d_y = __hadd2(conic_y_dx, conic_z_dy);
 
-            // const bool skip = !valid_general || tile_primitive_idx >= REG.parts.grad_color_pixel_b_last_contributor.y;
-#ifdef TINYGS_SAFE_MATH
-            enable_mask &= __vcmpltu2(tile_primitive_idx_ui32, REGup.last_contributor_ui32); // last update point of enable_mask
-#endif
-
             __half2 alpha_prepare = __hmul2(opacity, gaussian);
-            // alpha is set to zero if not enabled.
-            // const float color_dot_grad_color_pixel = __half2float(dot3(color, reinterpret_cast<const packed_half2x2&>(REG)));
-#ifdef TINYGS_SAFE_MATH
             reinterpret_cast<uint32_t&>(alpha_prepare) &= enable_mask;
-#endif
             const __half2 color_dot_grad_color_pixel = doth3(  // scaled by SCALE
                 color_r, color_g, color_b,
                 REGup.grad_color_r, REGup.grad_color_g, REGup.grad_color_b);
 
             __half2 alpha = __hmin2(alpha_prepare, h_max_fragment_alpha_2);
-#ifdef TINYGS_SAFE_MATH
             reinterpret_cast<uint32_t&>(delta_x) &= enable_mask; // now ensure it does not has Nan or inf.
             reinterpret_cast<uint32_t&>(delta_y) &= enable_mask; // now ensure it does not has Nan or inf.
-#endif
             // we have set the maximum transmittance to be about 0.99, and alpha is always larger than half precision.
             const __half2& transmittance = REGlow.transmittance;
             const __half2 blending_weight = __hmul2(transmittance, alpha);
@@ -888,9 +881,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             const uint32_t alpha_unsaturated_mask = ~__hge2_mask(alpha_prepare, h_max_fragment_alpha_2);
 
             // --- color gradient ---
-            dl_dcolor_accum_r = __hfma2(blending_weight, REGup.grad_color_r, dl_dcolor_accum_r);
-            dl_dcolor_accum_g = __hfma2(blending_weight, REGup.grad_color_g, dl_dcolor_accum_g);
-            dl_dcolor_accum_b = __hfma2(blending_weight, REGup.grad_color_b, dl_dcolor_accum_b);
+            dl_dcolor_accum_r = __hfma2(__hmul2(blending_weight, color_grad_factor_r), REGup.grad_color_r, dl_dcolor_accum_r);
+            dl_dcolor_accum_g = __hfma2(__hmul2(blending_weight, color_grad_factor_g), REGup.grad_color_g, dl_dcolor_accum_g);
+            dl_dcolor_accum_b = __hfma2(__hmul2(blending_weight, color_grad_factor_b), REGup.grad_color_b, dl_dcolor_accum_b);
 
             // --- update reg ---
             // color_pixel_after -= blending_weight * color;
@@ -931,20 +924,14 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
             __half2 dL_dconic_x = __hmul2(dL_draw_opacity_partial, dxdx);
             __half2 dL_dconic_y = __hmul2(dL_draw_opacity_partial, dxdy);
             __half2 dL_dconic_z = __hmul2(dL_draw_opacity_partial, dydy);
-#ifdef TINYGS_SAFE_MATH
             reinterpret_cast<uint32_t&>(dL_dconic_x) &= enable_mask;
-#endif
             dl_dconic_accum_x = __hadd2(dL_dconic_x, dl_dconic_accum_x);
             REGlow.color_after_g = warp.shfl_up(REGlow.color_after_g, 1);
 
-#ifdef TINYGS_SAFE_MATH
             reinterpret_cast<uint32_t&>(dL_dconic_y) &= enable_mask;
-#endif
             dl_dconic_accum_y = __hadd2(dL_dconic_y, dl_dconic_accum_y);
 
-#ifdef TINYGS_SAFE_MATH
             reinterpret_cast<uint32_t&>(dL_dconic_z) &= enable_mask;
-#endif
             dl_dconic_accum_z = __hadd2(dL_dconic_z, dl_dconic_accum_z);
             REGlow.color_after_b = warp.shfl_up(REGlow.color_after_b, 1);
 
@@ -952,13 +939,9 @@ __global__ __launch_bounds__(32 * config::blend_bwd_n_warps) void blend_backward
 
             // const float2 dL_dmean2d = dL_draw_opacity_partial * prepare_dl_dmean2d;
             __half2 dL_dmean2d_x = __hmul2(dL_draw_opacity_partial, prepare_dl_dmean2d_x);
-#ifdef TINYGS_SAFE_MATH
             reinterpret_cast<uint32_t&>(dL_dmean2d_x) &= enable_mask;
-#endif
             __half2 dL_dmean2d_y = __hmul2(dL_draw_opacity_partial, prepare_dl_dmean2d_y);
-#ifdef TINYGS_SAFE_MATH
             reinterpret_cast<uint32_t&>(dL_dmean2d_y) &= enable_mask;
-#endif
 
             dl_dmean2d_accum_x = __hadd2(dL_dmean2d_x, dl_dmean2d_accum_x);
             dl_dmean2d_accum_y = __hadd2(dL_dmean2d_y, dl_dmean2d_accum_y);

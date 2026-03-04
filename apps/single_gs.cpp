@@ -7,6 +7,7 @@
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 
+#include "tinygs/common.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/random/pcg32.hpp"
@@ -18,6 +19,7 @@ int main(int argc, char** argv) {
   options.add_options()
     ("h,help", "Print help")
     ("r,rasterizer", "Rasterizer to use", cxxopts::value<std::string>()->default_value("fastgs"))
+    ("fp16", "Use FP16 precision for output image", cxxopts::value<bool>()->default_value("false"))
     ("o1,opacity1", "Opacity of the Gaussian 1", cxxopts::value<float>()->default_value("0.6"))
     ("o2,opacity2", "Opacity of the Gaussian 2", cxxopts::value<float>()->default_value("0.6"))
     ("s1,scale1", "Scale of the Gaussian 1", cxxopts::value<float>()->default_value("0.1"))
@@ -38,12 +40,14 @@ int main(int argc, char** argv) {
   bool run_fd_check = result["fd-check"].as<bool>();
   float fd_eps = result["fd-eps"].as<float>();
   std::string rasterizer = result["rasterizer"].as<std::string>();
+  bool use_fp16 = result["fp16"].as<bool>();
 
   std::cout<< "opacity1: " << opacity1 << std::endl;
   std::cout<< "opacity2: " << opacity2 << std::endl;
   std::cout<< "scale1: " << scale1 << std::endl;
   std::cout<< "scale2: " << scale2 << std::endl;
   std::cout<< "rasterizer: " << rasterizer << std::endl;
+  std::cout<< "fp16: " << (use_fp16 ? "true" : "false") << std::endl;
   std::cout<< "fd_check: " << (run_fd_check ? "true" : "false") << std::endl;
   std::cout<< "fd_eps: " << fd_eps << std::endl;
 
@@ -98,11 +102,55 @@ int main(int argc, char** argv) {
 
   io.input.w2c = extrinsics.get_w2c();
 
-  tinygs::GPUMemory<float> out_image(width * height * 3);
-  io.output.image.shape.width = width;
-  io.output.image.shape.height = height;
-  io.output.image.shape.channel = 3;
-  io.output.image.data = out_image.data();
+  DataType out_data_type = use_fp16 ? DataType::Float16 : DataType::Float32;
+  int total_pixels = width * height;
+
+  tinygs::ImageShape shape;
+  shape.width = static_cast<uint32_t>(width);
+  shape.height = static_cast<uint32_t>(height);
+  shape.channel = 3;
+  int padded_size = shape.padded_size();
+  int pad_width = shape.padded_width();
+  int channel_stride = shape.padded_height() * pad_width;
+
+  tinygs::GPUMemory<float> out_image_fp32;
+  tinygs::GPUMemory<float16_t> out_image_fp16;
+  tinygs::GPUMemory<float> out_image_convert;
+
+  if (use_fp16) {
+    out_image_fp16.resize(padded_size);
+    io.output.image.data = out_image_fp16.data();
+    out_image_convert.resize(padded_size);
+  } else {
+    out_image_fp32.resize(padded_size);
+    io.output.image.data = out_image_fp32.data();
+  }
+  io.output.image.shape = shape;
+  io.output.image.data_type = out_data_type;
+
+  auto get_image_as_linear_hwc = [&]() -> std::vector<float> {
+    std::vector<float> tiled_data(padded_size);
+    if (use_fp16) {
+      half_to_float_gpu(out_image_convert.data(), out_image_fp16.data(), padded_size);
+      out_image_convert.copy_to_host(tiled_data);
+    } else {
+      out_image_fp32.copy_to_host(tiled_data);
+    }
+    std::vector<float> linear_hwc(total_pixels * 3);
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        int pixel_offset = get_linear_index(y, x, pad_width);
+        int r_idx = pixel_offset + 0 * channel_stride;
+        int g_idx = pixel_offset + 1 * channel_stride;
+        int b_idx = pixel_offset + 2 * channel_stride;
+        int out_idx = (y * width + x) * 3;
+        linear_hwc[out_idx + 0] = tiled_data[r_idx];
+        linear_hwc[out_idx + 1] = tiled_data[g_idx];
+        linear_hwc[out_idx + 2] = tiled_data[b_idx];
+      }
+    }
+    return linear_hwc;
+  };
 
   tinygs::RasterizeContext params;
   params.inference = true;
@@ -115,24 +163,38 @@ int main(int argc, char** argv) {
   params.fwd_input = io.input;
   params.fwd_output = io.output;
 
-  int total_pixels = width * height;
-
-  // Fixed random output gradient for reproducible scalar loss:
-  // L = sum_i (out_image[i] * out_image_grad[i])
-  GPUMemory<float> out_image_grad(width * height * 3);
-  std::vector<float> out_image_grad_host(width * height * 3);
+  GPUMemory<float> out_image_grad_fp32;
+  GPUMemory<float16_t> out_image_grad_fp16;
+  std::vector<float> out_image_grad_host(total_pixels * 3);
   pcg32 rng(0, 1u);
-  for (int i = 0; i < width * height * 3; ++i) {
+  for (int i = 0; i < total_pixels * 3; ++i) {
     out_image_grad_host[i] = (static_cast<float>(rng.next_uint(256)) / 255.0f) / total_pixels;
   }
-  out_image_grad.copy_from_host(out_image_grad_host);
+
+  std::vector<float> out_image_grad_tiled(padded_size);
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      int pixel_offset = get_linear_index(y, x, pad_width);
+      int in_idx = (y * width + x) * 3;
+      out_image_grad_tiled[pixel_offset + 0 * channel_stride] = out_image_grad_host[in_idx + 0];
+      out_image_grad_tiled[pixel_offset + 1 * channel_stride] = out_image_grad_host[in_idx + 1];
+      out_image_grad_tiled[pixel_offset + 2 * channel_stride] = out_image_grad_host[in_idx + 2];
+    }
+  }
+
+  if (use_fp16) {
+    out_image_grad_fp16.resize(padded_size);
+    float_to_half_gpu(out_image_grad_fp16.data(), out_image_grad_tiled.data(), padded_size);
+  } else {
+    out_image_grad_fp32.resize(padded_size);
+    out_image_grad_fp32.copy_from_host(out_image_grad_tiled);
+  }
 
   auto eval_scalar_loss = [&](const Gaussian3d& g) -> double {
     gpu_gaussian->copy_from_host(g);
     rast->forward(params);
 
-    std::vector<float> pred(width * height * 3);
-    out_image.copy_to_host(pred);
+    std::vector<float> pred = get_image_as_linear_hwc();
 
     double loss = 0.0;
     for (size_t i = 0; i < pred.size(); ++i) {
@@ -144,17 +206,11 @@ int main(int argc, char** argv) {
   rast->forward(params);
 
   cv::Mat image(height, width, CV_8UC3);
-  std::vector<float> image_host(width * height * 3);
-  out_image.copy_to_host(image_host);
-  std::vector<uchar> image_host_8uc3(width * height * 3);
-  for (int i = 0; i < width * height * 3; ++i) {
+  std::vector<float> image_host = get_image_as_linear_hwc();
+  std::vector<uchar> image_host_8uc3(total_pixels * 3);
+  for (int i = 0; i < total_pixels * 3; ++i) {
     image_host_8uc3[i] = static_cast<uchar>(image_host[i] * 255.0f);
   }
-
-  tinygs::ImageShape shape;
-  shape.width = static_cast<uint32_t>(width);
-  shape.height = static_cast<uint32_t>(height);
-  shape.channel = 3;
   to_cv2(image.data, image_host_8uc3.data(), shape);
 
   // Compute comprehensive image statistics for each channel
@@ -200,7 +256,9 @@ int main(int argc, char** argv) {
 
   // backward pass
   std::shared_ptr<GPUGaussian3d> grad = gpu_gaussian->clone();
-  params.grad_output.image = Image(shape, DataType::Float32, out_image_grad.data());
+  void* grad_image_data = use_fp16 ? static_cast<void*>(out_image_grad_fp16.data())
+                                   : static_cast<void*>(out_image_grad_fp32.data());
+  params.grad_output.image = Image(shape, out_data_type, grad_image_data);
   params.gaussians_grad = grad;
   grad->memset(0);
   rast->backward(params);
