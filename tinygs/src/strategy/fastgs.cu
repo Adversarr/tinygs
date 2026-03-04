@@ -21,9 +21,12 @@
 #include <thrust/sort.h>
 #include <nvtx3/nvtx3.hpp>
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
+#include <cstdio>
 #include <limits>
 #include <numeric>
+#include <string>
 #include <vector>
 
 #include "tinygs/cuda/common_device.cuh"
@@ -36,6 +39,251 @@
 #include "tinygs/utils/image_format.hpp"
 
 namespace tinygs {
+
+namespace {
+
+struct NumericMoments {
+  long long count = 0;
+  long long finite_count = 0;
+  long long non_finite_count = 0;
+  double sum = 0.0;
+  double sum_sq = 0.0;
+  float min_value = FLT_MAX;
+  float max_value = -FLT_MAX;
+};
+
+struct NumericMomentsAdd {
+  __host__ __device__ NumericMoments operator()(
+      const NumericMoments& a,
+      const NumericMoments& b) const {
+    NumericMoments out;
+    out.count = a.count + b.count;
+    out.finite_count = a.finite_count + b.finite_count;
+    out.non_finite_count = a.non_finite_count + b.non_finite_count;
+    out.sum = a.sum + b.sum;
+    out.sum_sq = a.sum_sq + b.sum_sq;
+    out.min_value = fminf(a.min_value, b.min_value);
+    out.max_value = fmaxf(a.max_value, b.max_value);
+    return out;
+  }
+};
+
+struct DuplicateVerboseStats {
+  long long total = 0;
+  long long counter_non_positive = 0;
+  long long importance_unavailable = 0;
+  long long importance_pass = 0;
+  long long importance_fail = 0;
+  long long grad_non_finite_before_sanitize = 0;
+  long long absgrad_non_finite_before_sanitize = 0;
+  long long small_scale = 0;
+  long long large_scale = 0;
+  long long grad_pass = 0;
+  long long absgrad_pass = 0;
+  long long clone = 0;
+  long long split = 0;
+  long long reject_importance = 0;
+  long long reject_small_grad = 0;
+  long long reject_large_absgrad = 0;
+};
+
+struct DuplicateVerboseStatsAdd {
+  __host__ __device__ DuplicateVerboseStats operator()(
+      const DuplicateVerboseStats& a,
+      const DuplicateVerboseStats& b) const {
+    DuplicateVerboseStats out;
+    out.total = a.total + b.total;
+    out.counter_non_positive = a.counter_non_positive + b.counter_non_positive;
+    out.importance_unavailable = a.importance_unavailable + b.importance_unavailable;
+    out.importance_pass = a.importance_pass + b.importance_pass;
+    out.importance_fail = a.importance_fail + b.importance_fail;
+    out.grad_non_finite_before_sanitize =
+        a.grad_non_finite_before_sanitize + b.grad_non_finite_before_sanitize;
+    out.absgrad_non_finite_before_sanitize =
+        a.absgrad_non_finite_before_sanitize + b.absgrad_non_finite_before_sanitize;
+    out.small_scale = a.small_scale + b.small_scale;
+    out.large_scale = a.large_scale + b.large_scale;
+    out.grad_pass = a.grad_pass + b.grad_pass;
+    out.absgrad_pass = a.absgrad_pass + b.absgrad_pass;
+    out.clone = a.clone + b.clone;
+    out.split = a.split + b.split;
+    out.reject_importance = a.reject_importance + b.reject_importance;
+    out.reject_small_grad = a.reject_small_grad + b.reject_small_grad;
+    out.reject_large_absgrad = a.reject_large_absgrad + b.reject_large_absgrad;
+    return out;
+  }
+};
+
+struct PruneReasonStats {
+  long long selected = 0;
+  long long low_opacity = 0;
+  long long large_world = 0;
+  long long large_screen = 0;
+  long long degenerate_rotation = 0;
+  long long only_low_opacity = 0;
+  long long only_large_world = 0;
+  long long only_large_screen = 0;
+  long long only_degenerate_rotation = 0;
+  long long multi_reason = 0;
+};
+
+struct PruneReasonStatsAdd {
+  __host__ __device__ PruneReasonStats operator()(
+      const PruneReasonStats& a,
+      const PruneReasonStats& b) const {
+    PruneReasonStats out;
+    out.selected = a.selected + b.selected;
+    out.low_opacity = a.low_opacity + b.low_opacity;
+    out.large_world = a.large_world + b.large_world;
+    out.large_screen = a.large_screen + b.large_screen;
+    out.degenerate_rotation = a.degenerate_rotation + b.degenerate_rotation;
+    out.only_low_opacity = a.only_low_opacity + b.only_low_opacity;
+    out.only_large_world = a.only_large_world + b.only_large_world;
+    out.only_large_screen = a.only_large_screen + b.only_large_screen;
+    out.only_degenerate_rotation = a.only_degenerate_rotation + b.only_degenerate_rotation;
+    out.multi_reason = a.multi_reason + b.multi_reason;
+    return out;
+  }
+};
+
+struct FinalPruneReasonStats {
+  long long removed = 0;
+  long long low_opacity = 0;
+  long long high_pruning_score = 0;
+  long long only_low_opacity = 0;
+  long long only_high_pruning_score = 0;
+  long long both_low_and_high = 0;
+};
+
+struct FinalPruneReasonStatsAdd {
+  __host__ __device__ FinalPruneReasonStats operator()(
+      const FinalPruneReasonStats& a,
+      const FinalPruneReasonStats& b) const {
+    FinalPruneReasonStats out;
+    out.removed = a.removed + b.removed;
+    out.low_opacity = a.low_opacity + b.low_opacity;
+    out.high_pruning_score = a.high_pruning_score + b.high_pruning_score;
+    out.only_low_opacity = a.only_low_opacity + b.only_low_opacity;
+    out.only_high_pruning_score = a.only_high_pruning_score + b.only_high_pruning_score;
+    out.both_low_and_high = a.both_low_and_high + b.both_low_and_high;
+    return out;
+  }
+};
+
+NumericMoments reduce_numeric_moments(
+    cudaStream_t stream,
+    const float* values,
+    int n,
+    const char* mask = nullptr,
+    bool include_mask_nonzero = true) {
+  auto exec = thrust::cuda::par.on(stream);
+  const NumericMoments zero{};
+  return thrust::transform_reduce(
+      exec,
+      thrust::make_counting_iterator<int>(0),
+      thrust::make_counting_iterator<int>(n),
+      [values, mask, include_mask_nonzero] __device__(int i) -> NumericMoments {
+        NumericMoments out{};
+        if (mask != nullptr) {
+          const bool mask_selected = mask[i] != 0;
+          if (mask_selected != include_mask_nonzero) return out;
+        }
+        out.count = 1;
+        const float value = values[i];
+        if (isfinite(value)) {
+          out.finite_count = 1;
+          out.sum = static_cast<double>(value);
+          out.sum_sq = static_cast<double>(value) * static_cast<double>(value);
+          out.min_value = value;
+          out.max_value = value;
+        } else {
+          out.non_finite_count = 1;
+        }
+        return out;
+      },
+      zero,
+      NumericMomentsAdd{});
+}
+
+long long count_above_threshold(
+    cudaStream_t stream,
+    const float* values,
+    int n,
+    float threshold,
+    const char* mask = nullptr,
+    bool include_mask_nonzero = true) {
+  auto exec = thrust::cuda::par.on(stream);
+  return thrust::transform_reduce(
+      exec,
+      thrust::make_counting_iterator<int>(0),
+      thrust::make_counting_iterator<int>(n),
+      [values, threshold, mask, include_mask_nonzero] __device__(int i) -> long long {
+        if (mask != nullptr) {
+          const bool mask_selected = mask[i] != 0;
+          if (mask_selected != include_mask_nonzero) return 0;
+        }
+        const float value = values[i];
+        return (isfinite(value) && value > threshold) ? 1 : 0;
+      },
+      0ll,
+      thrust::plus<long long>());
+}
+
+void log_numeric_moments(const std::string& label, const NumericMoments& stats) {
+  if (stats.count == 0) {
+    printf("[FastGS][Verbose] %s: count=0\n", label.c_str());
+    return;
+  }
+  if (stats.finite_count == 0) {
+    printf("[FastGS][Verbose] %s: count=%lld finite=0 non_finite=%lld\n",
+           label.c_str(), stats.count, stats.non_finite_count);
+    return;
+  }
+  const double mean = stats.sum / static_cast<double>(stats.finite_count);
+  const double var = std::max(0.0, stats.sum_sq / static_cast<double>(stats.finite_count) - mean * mean);
+  const double stddev = std::sqrt(var);
+  printf(
+      "[FastGS][Verbose] %s: count=%lld finite=%lld non_finite=%lld min=%.6g max=%.6g mean=%.6g std=%.6g\n",
+      label.c_str(),
+      stats.count,
+      stats.finite_count,
+      stats.non_finite_count,
+      stats.min_value,
+      stats.max_value,
+      mean,
+      stddev);
+}
+
+void log_prune_reason_stats(const std::string& label, const PruneReasonStats& stats) {
+  printf(
+      "[FastGS][Verbose] %s: selected=%lld | low_opacity=%lld large_ws=%lld large_ss=%lld degenerate=%lld | "
+      "only(low/ws/ss/deg)=%lld/%lld/%lld/%lld multi_reason=%lld\n",
+      label.c_str(),
+      stats.selected,
+      stats.low_opacity,
+      stats.large_world,
+      stats.large_screen,
+      stats.degenerate_rotation,
+      stats.only_low_opacity,
+      stats.only_large_world,
+      stats.only_large_screen,
+      stats.only_degenerate_rotation,
+      stats.multi_reason);
+}
+
+void log_final_prune_reason_stats(const FinalPruneReasonStats& stats) {
+  printf(
+      "[FastGS][Verbose] final_prune.reasons: removed=%lld low_opacity=%lld high_pruning_score=%lld "
+      "only_low=%lld only_high_score=%lld both=%lld\n",
+      stats.removed,
+      stats.low_opacity,
+      stats.high_pruning_score,
+      stats.only_low_opacity,
+      stats.only_high_pruning_score,
+      stats.both_low_and_high);
+}
+
+}  // namespace
 
 FastGSStrategy::FastGSStrategy(
     std::shared_ptr<GPUGaussian3d> gaussians,
@@ -233,6 +481,19 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
   // Number of cameras to render
   const int num_cameras = std::min(m_metric_num_cameras, static_cast<int>(dataset_size));
+  if (m_print_verbose_stats) {
+    printf(
+        "[FastGS][Verbose] compute_gaussian_score(densify=%d): gaussians=%zu dataset=%zu sampled_cameras=%d "
+        "loss_thresh=%.6g normalize_metric_l1=%d photometric(l1,ssim)=(%.6g, %.6g)\n",
+        densify,
+        num_gaussians,
+        dataset_size,
+        num_cameras,
+        m_loss_thresh,
+        m_normalize_metric_l1,
+        m_photometric_l1_weight,
+        m_photometric_ssim_weight);
+  }
 
   // Build sampled camera indices.
   std::vector<size_t> sampled_indices(static_cast<size_t>(num_cameras), 0);
@@ -394,6 +655,60 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
           thrust::plus<int>());
     }
 
+    if (m_print_verbose_stats) {
+      const long long metric_pixels = thrust::transform_reduce(
+          exec,
+          thrust::make_counting_iterator<int>(0),
+          thrust::make_counting_iterator<int>(n_pixels),
+          [d_metric_map = metric_map->data()] __device__(int i) -> long long {
+            return d_metric_map[i] > 0 ? 1 : 0;
+          },
+          0ll,
+          thrust::plus<long long>());
+      const long long nonzero_metric_gaussians = thrust::transform_reduce(
+          exec,
+          thrust::make_counting_iterator<int>(0),
+          thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+          [d_accum_counts] __device__(int i) -> long long {
+            return d_accum_counts[i] > 0 ? 1 : 0;
+          },
+          0ll,
+          thrust::plus<long long>());
+      const long long metric_count_sum = thrust::transform_reduce(
+          exec,
+          thrust::make_counting_iterator<int>(0),
+          thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+          [d_accum_counts] __device__(int i) -> long long {
+            return static_cast<long long>(d_accum_counts[i]);
+          },
+          0ll,
+          thrust::plus<long long>());
+      const int max_metric_count = thrust::transform_reduce(
+          exec,
+          thrust::make_counting_iterator<int>(0),
+          thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+          [d_accum_counts] __device__(int i) -> int { return d_accum_counts[i]; },
+          0,
+          thrust::maximum<int>());
+      const double metric_pixel_ratio =
+          n_pixels > 0 ? static_cast<double>(metric_pixels) / static_cast<double>(n_pixels) : 0.0;
+      printf(
+          "[FastGS][Verbose] Score camera %d/%d (dataset idx=%zu): "
+          "l1[min,max]=(%.6g,%.6g) metric_pixels=%lld (%.2f%%) photometric_loss=%.6g "
+          "gaussians_hit=%lld metric_count_sum=%lld max_metric_count=%d\n",
+          cam_i + 1,
+          num_cameras,
+          idx,
+          min_l1,
+          max_l1,
+          metric_pixels,
+          metric_pixel_ratio * 100.0,
+          photometric_loss_h,
+          nonzero_metric_gaussians,
+          metric_count_sum,
+          max_metric_count);
+    }
+
     // full_metric_score += photometric_loss * accum_loss_counts
     const int ng = static_cast<int>(num_gaussians);
     thrust::for_each(exec,
@@ -436,6 +751,95 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
         [inv_cams] __device__(int count) -> float {
           return floorf(static_cast<float>(count) * inv_cams);
         });
+  }
+
+  if (m_print_verbose_stats) {
+    auto exec = thrust::cuda::par.on(ctx.stream);
+    const NumericMoments raw_metric_score_stats = reduce_numeric_moments(
+        ctx.stream,
+        thrust::raw_pointer_cast(full_metric_score.data()),
+        static_cast<int>(num_gaussians));
+    log_numeric_moments("score.raw_metric_score", raw_metric_score_stats);
+
+    const long long active_metric_counts = thrust::transform_reduce(
+        exec,
+        full_metric_counts.begin(),
+        full_metric_counts.end(),
+        [] __device__(int c) -> long long { return c > 0 ? 1 : 0; },
+        0ll,
+        thrust::plus<long long>());
+    const long long metric_count_sum = thrust::transform_reduce(
+        exec,
+        full_metric_counts.begin(),
+        full_metric_counts.end(),
+        [] __device__(int c) -> long long { return static_cast<long long>(c); },
+        0ll,
+        thrust::plus<long long>());
+    int min_metric_count = 0;
+    int max_metric_count = 0;
+    if (num_gaussians > 0) {
+      min_metric_count = thrust::reduce(
+          exec,
+          full_metric_counts.begin(),
+          full_metric_counts.end(),
+          std::numeric_limits<int>::max(),
+          thrust::minimum<int>());
+      max_metric_count = thrust::reduce(
+          exec,
+          full_metric_counts.begin(),
+          full_metric_counts.end(),
+          std::numeric_limits<int>::lowest(),
+          thrust::maximum<int>());
+    }
+    const double mean_metric_count = num_gaussians > 0
+        ? static_cast<double>(metric_count_sum) / static_cast<double>(num_gaussians)
+        : 0.0;
+    printf(
+        "[FastGS][Verbose] score.metric_counts: sum=%lld active=%lld min=%d max=%d mean=%.6g\n",
+        metric_count_sum,
+        active_metric_counts,
+        min_metric_count,
+        max_metric_count,
+        mean_metric_count);
+
+    const float* d_pruning = thrust::raw_pointer_cast(m_pruning_score.data());
+    const NumericMoments pruning_stats = reduce_numeric_moments(
+        ctx.stream,
+        d_pruning,
+        static_cast<int>(num_gaussians));
+    const long long pruning_gt_05 = count_above_threshold(
+        ctx.stream,
+        d_pruning,
+        static_cast<int>(num_gaussians),
+        0.5f);
+    const long long pruning_gt_09 = count_above_threshold(
+        ctx.stream,
+        d_pruning,
+        static_cast<int>(num_gaussians),
+        0.9f);
+    log_numeric_moments("score.pruning_score", pruning_stats);
+    printf(
+        "[FastGS][Verbose] score.pruning_score threshold counts: >0.5=%lld >0.9=%lld\n",
+        pruning_gt_05,
+        pruning_gt_09);
+
+    if (densify) {
+      const float* d_importance = thrust::raw_pointer_cast(m_importance_score.data());
+      const NumericMoments importance_stats = reduce_numeric_moments(
+          ctx.stream,
+          d_importance,
+          static_cast<int>(num_gaussians));
+      const long long importance_gt_thresh = count_above_threshold(
+          ctx.stream,
+          d_importance,
+          static_cast<int>(num_gaussians),
+          m_importance_threshold);
+      log_numeric_moments("score.importance_score", importance_stats);
+      printf(
+          "[FastGS][Verbose] score.importance_score threshold count: >%.6g = %lld\n",
+          m_importance_threshold,
+          importance_gt_thresh);
+    }
   }
 
   CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
@@ -600,6 +1004,133 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
       thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
       [d_grow_flags] __device__(int i) -> int { return d_grow_flags[i] == kSplit ? 1 : 0; },
       0, thrust::plus<int>());
+
+  if (m_print_verbose_stats) {
+    const DuplicateVerboseStats verbose_stats = thrust::transform_reduce(
+        exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+        [d_densification_info, d_scale, d_importance,
+         clone_thresh, split_thresh, scale_boundary, importance_thresh,
+         sanitize_non_finite = m_sanitize_nan_gradients] __device__(int i) -> DuplicateVerboseStats {
+          DuplicateVerboseStats out{};
+          out.total = 1;
+          const float raw_counter = d_densification_info[i].accum_counter;
+          if (raw_counter <= 0.0f) out.counter_non_positive = 1;
+          const float counter = fmaxf(raw_counter, 1.0f);
+
+          float grad = d_densification_info[i].accum_grad_mean2d / counter;
+          float absgrad = d_densification_info[i].accum_absgrad_mean2d / counter;
+          if (!isfinite(grad)) out.grad_non_finite_before_sanitize = 1;
+          if (!isfinite(absgrad)) out.absgrad_non_finite_before_sanitize = 1;
+          if (sanitize_non_finite) {
+            if (!isfinite(grad)) grad = 0.0f;
+            if (!isfinite(absgrad)) absgrad = 0.0f;
+          }
+
+          const float max_scale = max(activate_scale(d_scale[i]));
+          const bool is_small = max_scale <= scale_boundary;
+          if (is_small) {
+            out.small_scale = 1;
+          } else {
+            out.large_scale = 1;
+          }
+
+          if (grad >= clone_thresh) out.grad_pass = 1;
+          if (absgrad >= split_thresh) out.absgrad_pass = 1;
+
+          bool importance_ok = true;
+          if (d_importance == nullptr) {
+            out.importance_unavailable = 1;
+          } else {
+            importance_ok = d_importance[i] > importance_thresh;
+            if (importance_ok) {
+              out.importance_pass = 1;
+            } else {
+              out.importance_fail = 1;
+            }
+          }
+
+          if (!importance_ok) {
+            out.reject_importance = 1;
+          } else if (is_small) {
+            if (grad >= clone_thresh) {
+              out.clone = 1;
+            } else {
+              out.reject_small_grad = 1;
+            }
+          } else {
+            if (absgrad >= split_thresh) {
+              out.split = 1;
+            } else {
+              out.reject_large_absgrad = 1;
+            }
+          }
+          return out;
+        },
+        DuplicateVerboseStats{},
+        DuplicateVerboseStatsAdd{});
+
+    printf(
+        "[FastGS][Verbose] duplicate thresholds: clone_grad>=%.6g split_absgrad>=%.6g "
+        "scale_boundary=%.6g importance_thresh=%.6g has_importance=%d\n",
+        clone_thresh,
+        split_thresh,
+        scale_boundary,
+        importance_thresh,
+        has_importance);
+    printf(
+        "[FastGS][Verbose] duplicate decisions: total=%lld clone=%lld split=%lld "
+        "reject_importance=%lld reject_small_scale_grad=%lld reject_large_scale_absgrad=%lld\n",
+        verbose_stats.total,
+        verbose_stats.clone,
+        verbose_stats.split,
+        verbose_stats.reject_importance,
+        verbose_stats.reject_small_grad,
+        verbose_stats.reject_large_absgrad);
+    printf(
+        "[FastGS][Verbose] duplicate predicate coverage: "
+        "counter<=0=%lld importance(pass/fail/unavailable)=%lld/%lld/%lld "
+        "scale(small/large)=%lld/%lld grad_pass=%lld absgrad_pass=%lld "
+        "non_finite_before_sanitize(grad/absgrad)=%lld/%lld\n",
+        verbose_stats.counter_non_positive,
+        verbose_stats.importance_pass,
+        verbose_stats.importance_fail,
+        verbose_stats.importance_unavailable,
+        verbose_stats.small_scale,
+        verbose_stats.large_scale,
+        verbose_stats.grad_pass,
+        verbose_stats.absgrad_pass,
+        verbose_stats.grad_non_finite_before_sanitize,
+        verbose_stats.absgrad_non_finite_before_sanitize);
+
+    if (has_importance) {
+      const float* d_importance_score = thrust::raw_pointer_cast(m_importance_score.data());
+      const NumericMoments importance_moments = reduce_numeric_moments(
+          ctx.stream,
+          d_importance_score,
+          static_cast<int>(num_gaussians));
+      const long long selected_by_importance = count_above_threshold(
+          ctx.stream,
+          d_importance_score,
+          static_cast<int>(num_gaussians),
+          importance_thresh);
+      log_numeric_moments("duplicate.importance_score", importance_moments);
+      printf(
+          "[FastGS][Verbose] duplicate.importance_score >%.6g: %lld / %zu\n",
+          importance_thresh,
+          selected_by_importance,
+          num_gaussians);
+    }
+    if (m_pruning_score.size() == num_gaussians) {
+      const float* d_pruning_score = thrust::raw_pointer_cast(m_pruning_score.data());
+      const NumericMoments pruning_moments = reduce_numeric_moments(
+          ctx.stream,
+          d_pruning_score,
+          static_cast<int>(num_gaussians));
+      log_numeric_moments("duplicate.pruning_score", pruning_moments);
+    }
+  }
 
   if (num_clones == 0 && num_splits == 0) return;
 
@@ -799,6 +1330,7 @@ void FastGSStrategy::prune(const RasterizeContext& ctx) {
   const auto num_gaussians = m_gaussians->size();
   const int original_num_gaussians = ctx.densification_info->size();
   const auto abs_ss_threshold = max(ctx.fwd_input.width, ctx.fwd_input.height) * m_params.max_screen_size;
+  const bool prune_large = this_step() > m_params.reset_every;
 
   // Identify standard prune candidates (same criteria as default)
   thrust::device_vector<char> standard_prune(num_gaussians, 0);
@@ -813,7 +1345,7 @@ void FastGSStrategy::prune(const RasterizeContext& ctx) {
        rotation = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
         prune_degenerate_rotation = m_prune_degenerate_rotation,
 pruning_scale_threshold = m_params.pruning_scale_threshold,
-        prune_large = this_step() > m_params.reset_every,
+        prune_large,
         prune_large_ss = m_prune_large_ss,
         max_radii_threshold = abs_ss_threshold,
        original_num_gaussians,
@@ -835,6 +1367,89 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
   // Count standard candidates
   int num_standard_candidates = thrust::reduce(exec,
       standard_prune.begin(), standard_prune.end(), 0, thrust::plus<int>());
+  const bool has_pruning_scores = (m_pruning_score.size() == num_gaussians);
+  char* d_standard_prune = thrust::raw_pointer_cast(standard_prune.data());
+
+  if (m_print_verbose_stats) {
+    printf(
+        "[FastGS][Verbose] prune setup: total=%zu candidates=%d budget_ratio=%.6g prune_large=%d "
+        "prune_large_ss=%d prune_degenerate_rotation=%d has_pruning_scores=%d\n",
+        num_gaussians,
+        num_standard_candidates,
+        m_prune_budget_ratio,
+        prune_large,
+        m_prune_large_ss,
+        m_prune_degenerate_rotation,
+        has_pruning_scores);
+    const PruneReasonStats candidate_reasons = thrust::transform_reduce(
+        exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+        [d_standard_prune,
+         d_opacity,
+         scale = thrust::raw_pointer_cast(m_gaussians->scales().data()),
+         scene_scale = m_gaussians->scene_scale(),
+         rotation = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
+         prune_degenerate_rotation = m_prune_degenerate_rotation,
+         pruning_scale_threshold = m_params.pruning_scale_threshold,
+         prune_large,
+         prune_large_ss = m_prune_large_ss,
+         max_radii_threshold = abs_ss_threshold,
+         original_num_gaussians,
+         deninfo = ctx.densification_info->data(),
+         min_opacity = m_params.pruning_opacity_threshold] __device__(int i) -> PruneReasonStats {
+          PruneReasonStats out{};
+          if (d_standard_prune[i] == 0) return out;
+
+          const bool low_opacity = activate_opacity(d_opacity[i]) <= min_opacity;
+          const bool large_ws = prune_large &&
+                                (max(activate_scale(scale[i])) >= pruning_scale_threshold * scene_scale);
+          const bool large_ss = prune_large && prune_large_ss && i < original_num_gaussians &&
+                                deninfo[i].max_radii_screen >= max_radii_threshold;
+          const bool degenerate_rotation = prune_degenerate_rotation &&
+                                           (sum(abs(rotation[i])) <= FLT_EPSILON);
+          const int reason_count =
+              static_cast<int>(low_opacity) +
+              static_cast<int>(large_ws) +
+              static_cast<int>(large_ss) +
+              static_cast<int>(degenerate_rotation);
+
+          out.selected = 1;
+          if (low_opacity) out.low_opacity = 1;
+          if (large_ws) out.large_world = 1;
+          if (large_ss) out.large_screen = 1;
+          if (degenerate_rotation) out.degenerate_rotation = 1;
+
+          if (reason_count >= 2) {
+            out.multi_reason = 1;
+          } else if (reason_count == 1) {
+            if (low_opacity) out.only_low_opacity = 1;
+            if (large_ws) out.only_large_world = 1;
+            if (large_ss) out.only_large_screen = 1;
+            if (degenerate_rotation) out.only_degenerate_rotation = 1;
+          }
+          return out;
+        },
+        PruneReasonStats{},
+        PruneReasonStatsAdd{});
+    log_prune_reason_stats("prune.candidate_reasons", candidate_reasons);
+
+    if (has_pruning_scores) {
+      const float* d_pruning_score = thrust::raw_pointer_cast(m_pruning_score.data());
+      const NumericMoments all_score_stats = reduce_numeric_moments(
+          ctx.stream,
+          d_pruning_score,
+          static_cast<int>(num_gaussians));
+      const NumericMoments candidate_score_stats = reduce_numeric_moments(
+          ctx.stream,
+          d_pruning_score,
+          static_cast<int>(num_gaussians),
+          d_standard_prune,
+          true);
+      log_numeric_moments("prune.pruning_score_all", all_score_stats);
+      log_numeric_moments("prune.pruning_score_candidates", candidate_score_stats);
+    }
+  }
 
   if (num_standard_candidates == 0) {
     log_info("[FastGS] No prune candidates.");
@@ -851,9 +1466,11 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
   // Build is_alive flag — use budget-based selection if we have pruning scores,
   // otherwise fall back to pruning all candidates.
   thrust::device_vector<char> is_alive(num_gaussians, 1);
-  const bool has_pruning_scores = (m_pruning_score.size() == num_gaussians);
+  const char* prune_mode = "fallback_all_candidates";
+  int target_pruned = num_standard_candidates;
 
   if (has_pruning_scores && m_use_multinomial_pruning && budget < num_standard_candidates) {
+    prune_mode = "multinomial_without_replacement";
     // Collect candidate indices
     thrust::device_vector<int> candidate_indices(num_standard_candidates);
     thrust::copy_if(exec,
@@ -888,6 +1505,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
 
     // Mark sampled candidates as dead.
     const int actual_prune = sampled_positions.size();
+    target_pruned = actual_prune;
     thrust::for_each(exec,
         thrust::make_counting_iterator<int>(0),
         thrust::make_counting_iterator<int>(actual_prune),
@@ -899,6 +1517,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
           d_is_alive[gaussian_idx] = 0;
         });
     } else if (has_pruning_scores && !m_use_multinomial_pruning && budget < num_standard_candidates) {
+    prune_mode = "deterministic_top_weight";
     // Deterministic fallback: sort candidates by weight and take top budget.
     thrust::device_vector<int> candidate_indices(num_standard_candidates);
     thrust::copy_if(exec,
@@ -926,6 +1545,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
       sorted_indices.begin(), thrust::greater<float>());
 
     const int actual_prune = std::min(budget, num_standard_candidates);
+    target_pruned = actual_prune;
     thrust::for_each(exec,
       thrust::make_counting_iterator<int>(0),
       thrust::make_counting_iterator<int>(actual_prune),
@@ -939,6 +1559,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
   } else {
     log_warning("[FastGS] No pruning scores or budget >= candidates ({}), pruning all standard candidates.",
                 num_standard_candidates);
+    target_pruned = num_standard_candidates;
     // No pruning scores or budget >= candidates: prune all standard candidates
     thrust::for_each(exec,
         thrust::make_counting_iterator<int>(0),
@@ -951,6 +1572,86 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
   int nums_kept = thrust::reduce(exec, is_alive.begin(), is_alive.end(), 0, thrust::plus<int>());
   log_info("[FastGS] Prune: removed {} (kept {}, budget was {})",
            num_gaussians - nums_kept, nums_kept, budget);
+  if (m_print_verbose_stats) {
+    const char* d_is_alive = thrust::raw_pointer_cast(is_alive.data());
+    const PruneReasonStats removed_reasons = thrust::transform_reduce(
+        exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+        [d_is_alive,
+         d_opacity,
+         scale = thrust::raw_pointer_cast(m_gaussians->scales().data()),
+         scene_scale = m_gaussians->scene_scale(),
+         rotation = thrust::raw_pointer_cast(m_gaussians->rotations().data()),
+         prune_degenerate_rotation = m_prune_degenerate_rotation,
+         pruning_scale_threshold = m_params.pruning_scale_threshold,
+         prune_large,
+         prune_large_ss = m_prune_large_ss,
+         max_radii_threshold = abs_ss_threshold,
+         original_num_gaussians,
+         deninfo = ctx.densification_info->data(),
+         min_opacity = m_params.pruning_opacity_threshold] __device__(int i) -> PruneReasonStats {
+          PruneReasonStats out{};
+          if (d_is_alive[i] != 0) return out;
+
+          const bool low_opacity = activate_opacity(d_opacity[i]) <= min_opacity;
+          const bool large_ws = prune_large &&
+                                (max(activate_scale(scale[i])) >= pruning_scale_threshold * scene_scale);
+          const bool large_ss = prune_large && prune_large_ss && i < original_num_gaussians &&
+                                deninfo[i].max_radii_screen >= max_radii_threshold;
+          const bool degenerate_rotation = prune_degenerate_rotation &&
+                                           (sum(abs(rotation[i])) <= FLT_EPSILON);
+          const int reason_count =
+              static_cast<int>(low_opacity) +
+              static_cast<int>(large_ws) +
+              static_cast<int>(large_ss) +
+              static_cast<int>(degenerate_rotation);
+
+          out.selected = 1;
+          if (low_opacity) out.low_opacity = 1;
+          if (large_ws) out.large_world = 1;
+          if (large_ss) out.large_screen = 1;
+          if (degenerate_rotation) out.degenerate_rotation = 1;
+
+          if (reason_count >= 2) {
+            out.multi_reason = 1;
+          } else if (reason_count == 1) {
+            if (low_opacity) out.only_low_opacity = 1;
+            if (large_ws) out.only_large_world = 1;
+            if (large_ss) out.only_large_screen = 1;
+            if (degenerate_rotation) out.only_degenerate_rotation = 1;
+          }
+          return out;
+        },
+        PruneReasonStats{},
+        PruneReasonStatsAdd{});
+    printf(
+        "[FastGS][Verbose] prune selection mode=%s budget=%d target_pruned=%d actually_removed=%zu\n",
+        prune_mode,
+        budget,
+        target_pruned,
+        num_gaussians - nums_kept);
+    log_prune_reason_stats("prune.removed_reasons", removed_reasons);
+
+    if (has_pruning_scores) {
+      const float* d_pruning_score = thrust::raw_pointer_cast(m_pruning_score.data());
+      const NumericMoments removed_score_stats = reduce_numeric_moments(
+          ctx.stream,
+          d_pruning_score,
+          static_cast<int>(num_gaussians),
+          d_is_alive,
+          false);
+      log_numeric_moments("prune.pruning_score_removed", removed_score_stats);
+      const long long removed_score_gt_09 = count_above_threshold(
+          ctx.stream,
+          d_pruning_score,
+          static_cast<int>(num_gaussians),
+          0.9f,
+          d_is_alive,
+          false);
+      printf("[FastGS][Verbose] prune.removed pruning_score >0.9: %lld\n", removed_score_gt_09);
+    }
+  }
   this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
 }
 
@@ -969,6 +1670,32 @@ void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
   const float* d_ps = has_pruning ? thrust::raw_pointer_cast(m_pruning_score.data()) : nullptr;
   const float score_thresh = m_final_prune_score_threshold;
   const float opacity_thresh = m_final_prune_opacity_threshold;
+  if (m_print_verbose_stats) {
+    printf(
+        "[FastGS][Verbose] final_prune setup: total=%zu has_pruning_scores=%d score_thresh=%.6g "
+        "opacity_thresh=%.6g\n",
+        num_gaussians,
+        has_pruning,
+        score_thresh,
+        opacity_thresh);
+    if (has_pruning) {
+      const NumericMoments score_stats = reduce_numeric_moments(
+          ctx.stream,
+          d_ps,
+          static_cast<int>(num_gaussians));
+      log_numeric_moments("final_prune.pruning_score_all", score_stats);
+      const long long score_gt_thresh = count_above_threshold(
+          ctx.stream,
+          d_ps,
+          static_cast<int>(num_gaussians),
+          score_thresh);
+      printf(
+          "[FastGS][Verbose] final_prune.pruning_score >%.6g: %lld / %zu\n",
+          score_thresh,
+          score_gt_thresh,
+          num_gaussians);
+    }
+  }
 
   thrust::for_each(exec,
       thrust::make_counting_iterator<int>(0),
@@ -985,6 +1712,43 @@ void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
   int nums_kept = thrust::reduce(exec, is_alive.begin(), is_alive.end(), 0, thrust::plus<int>());
   log_info("[FastGS] Final prune: removed {} (kept {})",
            num_gaussians - nums_kept, nums_kept);
+  if (m_print_verbose_stats) {
+    const char* d_is_alive = thrust::raw_pointer_cast(is_alive.data());
+    const FinalPruneReasonStats reason_stats = thrust::transform_reduce(
+        exec,
+        thrust::make_counting_iterator<int>(0),
+        thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
+        [d_is_alive, d_opacity, d_ps, score_thresh, opacity_thresh] __device__(int i) -> FinalPruneReasonStats {
+          FinalPruneReasonStats out{};
+          if (d_is_alive[i] != 0) return out;
+          const bool low_opacity = activate_opacity(d_opacity[i]) < opacity_thresh;
+          const bool high_pruning_score = (d_ps != nullptr && d_ps[i] > score_thresh);
+          out.removed = 1;
+          if (low_opacity) out.low_opacity = 1;
+          if (high_pruning_score) out.high_pruning_score = 1;
+          if (low_opacity && high_pruning_score) {
+            out.both_low_and_high = 1;
+          } else if (low_opacity) {
+            out.only_low_opacity = 1;
+          } else if (high_pruning_score) {
+            out.only_high_pruning_score = 1;
+          }
+          return out;
+        },
+        FinalPruneReasonStats{},
+        FinalPruneReasonStatsAdd{});
+    log_final_prune_reason_stats(reason_stats);
+
+    if (has_pruning) {
+      const NumericMoments removed_score_stats = reduce_numeric_moments(
+          ctx.stream,
+          d_ps,
+          static_cast<int>(num_gaussians),
+          d_is_alive,
+          false);
+      log_numeric_moments("final_prune.pruning_score_removed", removed_score_stats);
+    }
+  }
   this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
 
   // Reset densification info
@@ -1016,6 +1780,7 @@ void FastGSStrategy::set_params(const json& config) {
   if (config.contains("use_multinomial_pruning")) m_use_multinomial_pruning = config["use_multinomial_pruning"].get<bool>();
   if (config.contains("prune_degenerate_rotation")) m_prune_degenerate_rotation = config["prune_degenerate_rotation"].get<bool>();
   if (config.contains("prune_large_ss"))         m_prune_large_ss = config["prune_large_ss"].get<bool>();
+  if (config.contains("print_verbose_stats"))    m_print_verbose_stats = config["print_verbose_stats"].get<bool>();
   if (config.contains("final_prune_score_threshold"))
     m_final_prune_score_threshold = config["final_prune_score_threshold"].get<float>();
   if (config.contains("final_prune_opacity_threshold"))
@@ -1054,6 +1819,7 @@ json FastGSStrategy::get_params() const {
   params["use_multinomial_pruning"] = m_use_multinomial_pruning;
   params["prune_degenerate_rotation"] = m_prune_degenerate_rotation;
   params["prune_large_ss"] = m_prune_large_ss;
+  params["print_verbose_stats"] = m_print_verbose_stats;
   params["final_prune_score_threshold"] = m_final_prune_score_threshold;
   params["final_prune_opacity_threshold"] = m_final_prune_opacity_threshold;
   params["final_prune_start"] = m_final_prune_start;
