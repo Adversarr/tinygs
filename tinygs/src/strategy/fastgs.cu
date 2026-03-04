@@ -62,26 +62,31 @@ void FastGSStrategy::set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) 
 // ---------------------------------------------------------------------------
 
 /// @brief Compute per-pixel mean L1 loss across 3 channels.
-///        Supports Float32 (CHW padded) images.
+///        Supports Float32 (CHW tiled 8x8) images.
 __global__ void compute_l1_map_kernel(
     int n_pixels,
-    const float* __restrict__ rendered,    // CHW padded image (rendered)
-    const float* __restrict__ gt,          // CHW padded image (ground truth)
-  float* __restrict__ l1_map,            // H*W output mean-L1 map
-    int padded_w,                          // padded width (pixels per row per channel)
-    int padded_h,                          // padded height
-    int width,                             // actual width
-  int height) {                          // actual height
+    const float* __restrict__ rendered,    // CHW tiled image (rendered)
+    const float* __restrict__ gt,          // CHW tiled image (ground truth)
+    float* __restrict__ l1_map,            // H*W output mean-L1 map (flat)
+    uint32_t tiled_w,                      // padded_width / 8 (tiles per row)
+    uint32_t padded_w,                     // padded width (pixels per row per channel)
+    uint32_t padded_h,                     // padded height
+    uint32_t width,                        // actual width
+    uint32_t height) {                     // actual height
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= n_pixels) return;
-  const int py = idx / width;
-  const int px = idx % width;
+  const uint32_t py = idx / width;
+  const uint32_t px = idx % width;
   if (py >= height) return;
 
-  // Accumulate L1 across 3 channels in CHW layout
+  // Tiled linear index for 8x8 tile storage
+  const uint32_t linear_idx = get_linear_index_tiled(py, px, tiled_w);
+  const uint32_t channel_stride = padded_w * padded_h;
+
+  // Accumulate L1 across 3 channels in CHW tiled layout
   float l1_sum = 0.0f;
   for (int c = 0; c < 3; c++) {
-    const int offset = c * padded_w * padded_h + py * padded_w + px;
+    const uint32_t offset = c * channel_stride + linear_idx;
     l1_sum += fabsf(fminf(fmaxf(rendered[offset], 0.0f), 1.0f) - gt[offset]);
   }
   l1_map[idx] = l1_sum / 3.0f;
@@ -270,13 +275,18 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
     // Compute per-pixel L1 map and threshold into binary metric map.
     const int n_pixels = width * height;
+    const uint32_t tiled_w = rendered_image.shape.padded_width() >> 3;
     GPUBuffer<float> l1_map(ctx.stream, n_pixels);
     GPUBuffer<int> metric_map(ctx.stream, n_pixels);
     linear_kernel(compute_l1_map_kernel, 0, ctx.stream, n_pixels,
-      rendered_f32.data(),
+        rendered_f32.data(),
         static_cast<const float*>(gt_image.data),
         l1_map.data(),
-        padded_w, padded_h, width, height);
+        tiled_w,
+        static_cast<uint32_t>(padded_w),
+        static_cast<uint32_t>(padded_h),
+        static_cast<uint32_t>(width),
+        static_cast<uint32_t>(height));
 
     auto exec = thrust::cuda::par.on(ctx.stream);
     auto l1_begin = thrust::device_pointer_cast(l1_map.data());

@@ -44,6 +44,7 @@ ctest --test-dir build/Release --output-on-failure
 - Keep patches surgical and module-local; if adding files, update explicit CMake target lists.
 - Pass `cudaStream_t` explicitly through call chains; do not add hidden/default-stream behavior.
 - Config parsing convention: required fields via `.at(...)`, optional fields via `contains(...)`.
+- Images use 8x8 tiled storage (use `get_linear_index_tiled()`); exception: `metric_map`/`metric_counts` are flat.
 
 ## Integration Points
 - Dependency/linkage integration is centralized in `cmake/dependencies.cmake`, root `CMakeLists.txt`, and `tinygs/CMakeLists.txt`.

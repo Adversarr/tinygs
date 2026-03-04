@@ -215,6 +215,32 @@ Buffers are reused across forward/backward passes to minimize allocations.
 
 ---
 
+## Indexing Bugs and Limitations
+
+### Known Issues
+
+1. **FP16 key truncation (fastgs_ours_fp16)**
+   - **Location:** `tinygs/src/rasterizer/fastgs_ours_fp16/kernels_forward.cuh:538`
+   - **Problem:** `tile_key` is written as `ushort` into a `uint` key buffer, while the cooperative path uses full `uint` at line 586. If tile index exceeds 65535, keys overflow/corrupt ordering.
+   - **Impact:** Incorrect tile ordering for grids with >65535 tiles (e.g., >1044×1044 at 16×16 tiles).
+
+2. **Key-width limit (fastgs_ours and fastgs_ours_fp16)**
+   - **Location:** `tinygs/src/rasterizer/fastgs_ours/kernels_forward.cuh:496` and `tinygs/src/rasterizer/fastgs_ours_fp16/kernels_forward.cuh:540`
+   - **Problem:** Keys are stored as `ushort`, and radix sort uses 16-bit width at `tinygs/src/rasterizer/fastgs_ours/forward.cu:219`.
+   - **Impact:** Hard-limits safe tile index range to 65535. Larger grids will fail or produce incorrect results.
+
+3. **Screen-bounds storage cap**
+   - **Location:** `tinygs/src/rasterizer/fastgs_ours/kernels_forward.cuh:406` (FP32) and `tinygs/src/rasterizer/fastgs_ours_fp16/kernels_forward.cuh:437` (FP16)
+   - **Problem:** Tile bounds are cast to `ushort` in `primitive_screen_bounds`. Large grids can overflow.
+   - **Impact:** Truncated bounds for grids with >65535 tiles. Debug asserts catch this, but release builds silently truncate.
+
+### Metric Mode Indexing
+
+- **Correct behavior:** Rendered/GT images use 8×8 tiled storage (`get_linear_index_tiled`), while `metric_map` and `metric_counts` remain flat row-major (`y * width + x`).
+- **Implementation:** `tinygs/src/strategy/fastgs.cu:66-93` correctly uses tiled indexing for L1 computation and flat indexing for metric map access.
+
+---
+
 ## Usage Example
 
 ```cpp

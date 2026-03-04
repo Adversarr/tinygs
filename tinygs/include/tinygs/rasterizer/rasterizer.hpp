@@ -45,8 +45,14 @@ struct RasterizeContext {
   ///        for pixels flagged in `metric_map`. Used by FastGS strategy.
   bool metric_mode = false;
 
-  /// @brief Per-pixel binary flag (H*W ints). Pixels with value != 0 contribute to
-  ///        metric_counts for each Gaussian that covers them.
+  /// @brief Per-pixel binary flag (H*W ints, FLAT row-major storage).
+  ///        Pixels with value != 0 contribute to metric_counts for each Gaussian
+  ///        that covers them.
+  ///
+  ///        IMPORTANT: Unlike other image buffers in this codebase which use 8x8
+  ///        tiled storage, metric_map uses FLAT row-major indexing:
+  ///          pixel_idx = y * width + x
+  ///        This is intentional since metric_map is a flag array, not an image.
   mutable std::shared_ptr<GPUBuffer<int>> metric_map;
 
   /// @brief Per-Gaussian metric counts (N ints). Incremented atomically during

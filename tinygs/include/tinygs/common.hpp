@@ -240,6 +240,23 @@ TINYGS_HOST_DEVICE inline float logit(const float x) {
   return -logf(1.0f / (fminf(fmaxf(x, 1e-9f), 1.0f - 1e-9f)) - 1.0f);
 }
 
+// =============================================================================
+// Image Storage Convention (CRITICAL)
+// =============================================================================
+// All images in this codebase (rendered output, ground truth, loss buffers)
+// use 8x8 TILED storage layout (AoSoA), NOT row-major. This includes:
+//   - Rasterizer output (fwd_output.image)
+//   - Dataloader output (GPUBatchOutput.image)
+//   - Loss function inputs/outputs
+//   - FastGS metric computation buffers
+//
+// Use get_linear_index_tiled(row, col, tiled_width) from common.hpp to compute
+// linear indices. The tiled_width = padded_width / 8.
+//
+// EXCEPTION: metric_map and metric_counts in RasterizeContext are FLAT arrays
+// (not tiled) since they are per-pixel/per-Gaussian flags, not images.
+// =============================================================================
+
 // AoSoA for images.
 constexpr uint32_t kImageTile      = 8;
 constexpr uint32_t kImageTileLog2  = 3;  // log2(8) = 3
