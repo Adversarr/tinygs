@@ -31,6 +31,7 @@ outputs
 *.nsys-rep
 config_train
 single_gs
+loss_psnr_check
 loss.png
 *.pt
 *.pth
