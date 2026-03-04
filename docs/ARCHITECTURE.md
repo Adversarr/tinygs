@@ -68,11 +68,10 @@ class GPUGaussian3d {
 Renders 3D Gaussians to 2D images using alpha-blending:
 
 **Implementations:**
-- `default`: Reference 3DGS implementation
 - `fastgs`: FastGS approximation (faster)
 - `fastgs_ours`: Custom FastGS variant
 - `fastgs_ours_fp16`: FP16-optimized variant
-- `3dgs_accel`: Accelerated with CUDA graphs
+- `cpu`: CPU reference implementation
 
 **Interface:**
 ```cpp

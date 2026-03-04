@@ -38,7 +38,7 @@ int main(int argc, char* argv[]) {
   j["initializer"] = initializer->get_params();
 
   std::shared_ptr<GPUGaussian3d> gs3d = std::make_shared<GPUGaussian3d>();
-  std::shared_ptr<RasterizerBase> rasterizer = create_rasterizer("default");
+  std::shared_ptr<RasterizerBase> rasterizer = create_rasterizer("fastgs");
   j["rasterizer"] = rasterizer->get_params();
 
   std::shared_ptr<OptimizerBase> opt = create_optimizer("adam", gs3d, gs3d);

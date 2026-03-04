@@ -1,6 +1,5 @@
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/rasterizer/fastgs.hpp"
-#include "tinygs/rasterizer/default.hpp"
 #include "tinygs/rasterizer/gsplat.hpp"
 #include "tinygs/rasterizer/cpu.hpp"
 
@@ -44,9 +43,7 @@ void RasterizerBase::set_params(const json& j) {
 
 std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type) {
   std::string lower_rasterizer_type = to_lower(rasterizer_type);
-  if (lower_rasterizer_type == "default") {
-    return std::make_unique<DefaultRasterizer>();
-  } else if (lower_rasterizer_type == "fastgs") {
+  if (lower_rasterizer_type == "fastgs") {
     return std::make_unique<FastGSRasterizer>();
   } else if (lower_rasterizer_type == "cpu") {
     return std::make_unique<CPUReferenceRasterizer>();

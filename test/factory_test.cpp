@@ -29,26 +29,17 @@ TEST(CreateDatasetTest, ThrowsOnUnknownType) {
     EXPECT_THROW(create_dataset("colmap"), std::runtime_error);
 }
 
-TEST(CreateRasterizerTest, CreatesDefaultRasterizer) {
-    auto rasterizer = create_rasterizer("default");
-    EXPECT_NE(rasterizer, nullptr);
-}
-
 TEST(CreateRasterizerTest, CreatesFastGSRasterizer) {
     auto rasterizer = create_rasterizer("fastgs");
     EXPECT_NE(rasterizer, nullptr);
 }
 
 TEST(CreateRasterizerTest, CreatesCaseInsensitive) {
-    auto r1 = create_rasterizer("DEFAULT");
-    auto r2 = create_rasterizer("Default");
-    auto r3 = create_rasterizer("FASTGS");
-    auto r4 = create_rasterizer("FastGS");
+    auto r1 = create_rasterizer("FASTGS");
+    auto r2 = create_rasterizer("FastGS");
     
     EXPECT_NE(r1, nullptr);
     EXPECT_NE(r2, nullptr);
-    EXPECT_NE(r3, nullptr);
-    EXPECT_NE(r4, nullptr);
 }
 
 TEST(CreateRasterizerTest, ThrowsOnUnknownType) {

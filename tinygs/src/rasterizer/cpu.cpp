@@ -21,7 +21,7 @@
 namespace tinygs {
 
 // ────────────────────────── SH Constants (Condon-Shortley phase) ──────────────────────────
-// Matches docs/KHR_gaussian_splatting.md Appendix A and 3dgs_accel/auxiliary.h.
+// Matches docs/KHR_gaussian_splatting.md Appendix A.
 static constexpr float kSH_C0 = 0.28209479177387814f;
 static constexpr float kSH_C1 = 0.4886025119029199f;
 static constexpr float kSH_C2[] = {

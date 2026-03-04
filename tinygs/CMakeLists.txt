@@ -48,10 +48,6 @@ set(TINYGS_SOURCES
     "src/random/multinomial.cu"
     
     # Rasterizer
-    "src/rasterizer/3dgs_accel/backward.cu"
-    "src/rasterizer/3dgs_accel/forward.cu"
-    "src/rasterizer/3dgs_accel/rasterizer_impl.cu"
-    "src/rasterizer/default.cu"
     "src/rasterizer/fastgs.cu"
     "src/rasterizer/fastgs_ours/backward.cu"
     "src/rasterizer/fastgs_ours/forward.cu"
