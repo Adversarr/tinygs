@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tinygs/core/image.hpp"
+#include "tinygs/platform/backend_types.hpp"
 namespace tinygs {
 
 /// @brief Shared context for loss computation.
@@ -14,7 +15,7 @@ struct LossContext {
   Image target;                  ///< Ground-truth image          [read-only]
   Image loss;                    ///< Per-pixel loss buffer       [read-write, accumulated]
   Image grad;                    ///< dL/d(pred) gradient buffer  [read-write, accumulated]
-  cudaStream_t stream = nullptr; ///< CUDA stream for all kernels
+  BackendStream stream = nullptr; ///< Backend stream for all kernels
 };
 
 /// @brief Abstract base class for per-pixel loss functions.

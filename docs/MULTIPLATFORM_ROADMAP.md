@@ -1,139 +1,144 @@
-# CUDA Header Cleanup Plan
+# Multi-Platform Roadmap (CUDA + HIP + Metal)
 
-**Goal:** Remove all CUDA and thrust dependencies from public headers to enable cross-platform API stability.
+## Scope
+- In scope: CUDA, HIP, Metal.
+- Out of scope for now: Vulkan (explicitly deferred due implementation complexity and maintenance overhead).
+- Objective: keep one trainer architecture and one public API, with backend-specific execution hidden behind platform seams.
 
----
+## Guiding Principles
+- Preserve current CUDA performance and behavior while introducing abstraction incrementally.
+- Isolate backend-specific types from public interfaces first (`BackendType`, `BackendStream`, backend factory/context).
+- Reuse shared algorithmic structure across CUDA/HIP/Metal where practical (loss orchestration, optimizer semantics, strategy flow, scheduling).
+- Keep fail-fast behavior for unsupported backends and unknown config values.
 
-## Reference: llama.cpp Cross-Platform Pattern
+## Current Codebase Status (Audit)
+Date: 2026-03-04
 
-**Backend abstraction:** Unified tensor interface (`ggml_backend`) with per-platform implementations (CUDA, Metal, HIP, Vulkan).
+### Architecture and coupling
+- Training pipeline is orchestrator-centric and stable (`dataloader -> rasterizer -> loss -> optimizer -> strategy`).
+- CUDA stream usage is pervasive across runtime-critical modules.
+- Factories exist for major components and already provide an extension seam.
+- Rasterizer/optimizer internals are CUDA-first and assume CUDA kernel launch + CUDA memory utilities.
 
-**Stream handling:** Each backend wraps its native stream internally:
-- CUDA: `cudaStream_t`
-- Metal: `MTLCommandBuffer`
-- CPU: No-op (synchronous)
+### Abstraction baseline
+- Added platform abstraction layer:
+  - `tinygs/include/tinygs/platform/backend_types.hpp`
+  - `tinygs/include/tinygs/platform/backend_context.hpp`
+  - `tinygs/include/tinygs/platform/backend_factory.hpp`
+  - `tinygs/src/platform/backend_factory.cpp`
+- `BackendType` currently supports: `cuda`, `hip`, `metal`.
+- Runtime behavior today:
+  - CUDA backend context is constructible.
+  - HIP/Metal fail fast with explicit "planned but not implemented yet" errors.
 
-**Backend selection:**
-- Compile-time: Enables which backends to include (CMake detects CUDA/Metal/HIP)
-- Runtime: Selects which enabled backend to use via hardware detection (`ggml_backend_init_best()`)
+### API migration status
+- Public interfaces now use `BackendStream` in critical orchestration surfaces:
+  - Gaussian ops (`clone_async`, `memset_async`, `reorder`)
+  - Dataloader transfer/next methods
+  - Loss/Rasterizer context stream fields
+  - Optimizer step interfaces
+  - Random/image utility stream parameters
+  - Orchestrator major stream member
 
-**Key insight:** Hide streams inside backend implementations. Public API never exposes platform-specific types. Computational graphs built once in platform-agnostic format, dispatched to available backend.
+### Configuration/runtime status
+- `apps/config_train` now reads backend config, creates backend context, and applies CUDA device selection.
+- Default/sample configs updated with explicit backend section (`cuda`, device `0`).
+- Backend setting is currently validated to CUDA-only runtime execution.
 
-**What llama.cpp abstracts:**
-- Tensor operations (mul, add, softmax, etc.)
-- Memory allocation
-- Graph execution
-- Backend enumeration/selection
-- Error status
+### Testing status
+- Test coverage has been strengthened this iteration:
+  - Re-enabled LR scheduler unit test target.
+  - Added backend type/factory tests for parsing, roundtrip, and fail-fast behavior.
+- Remaining gap: no HIP/Metal runtime test path yet (blocked by backend implementation).
 
-**What llama.cpp does NOT abstract:**
-- Kernel launch syntax
-- Thread hierarchy (blockIdx/threadIdx)
-- Math intrinsics, atomics, shared memory
+## Progressive Implementation Plan
 
-**Why:** Users don't write kernels—they build tensor graphs. Backends implement operations internally.
+## Phase 0: Foundation and Safety Rails
+- Deliverables:
+  - Backend enums/types/config parsing and factory/context layer.
+  - CUDA-only execution remains default and fully functional.
+  - Explicit errors for HIP/Metal selection.
+- Exit criteria:
+  - All existing CUDA tests pass.
+  - Configured backend selection works for CUDA and fails clearly for others.
 
-**Implication for tinygs:** Abstract at operation level (rasterize, optimize, compute_loss), not kernel level.
+## Phase 1: Stream and Launch Boundary Cleanup
+- Deliverables:
+  - Backend stream type used at module boundaries.
+  - Central conversion helpers at CUDA boundary (`to_cuda_stream`, `to_backend_stream`).
+  - No behavior change in CUDA code path.
+- Exit criteria:
+  - Build succeeds without regressions.
+  - Smoke training run succeeds with CUDA backend.
 
----
+## Phase 2: Backend Runtime Interface
+- Deliverables:
+  - Introduce backend runtime operations interface (stream create/destroy/sync, memcpy, memset, event/scratch ops).
+  - Replace direct orchestrator/runtime CUDA calls with backend runtime wrappers.
+- Exit criteria:
+  - CUDA backend uses runtime interface end-to-end.
+  - No direct CUDA runtime calls remain in backend-agnostic orchestration layer.
 
-## Current Blockers
+## Phase 3: HIP Backend Bring-up
+- Deliverables:
+  - HIP backend context + runtime implementation.
+  - HIP build target and compile-time guards.
+  - Shared kernels/utilities ported where practical; HIP-specific implementations where required.
+- Exit criteria:
+  - Functional HIP smoke training on a reference config.
+  - Core tests enabled under HIP build variant.
 
-| Header | Issue |
-|--------|-------|
-| `common.hpp` | `cuda_fp16.h`, `cuda_bf16.h` |
-| `cuda/gpu_memory.hpp` | `cuda.h`, `cudaStream_t` |
-| `cuda/common_host.hpp` | `cuda_runtime.h`, `cudaStream_t` in kernel launch helpers |
-| `cuda/cuda_graph.hpp` | `cuda.h`, `cuda_runtime.h`, `cudaStream_t` |
-| `cuda/multi_stream.hpp` | Heavy `cudaStream_t`/`cudaEvent_t` usage |
-| `core/gpu_gaussian.hpp` | `thrust::device_vector` in storage and return types |
-| `optim/adam.hpp` | `thrust::device_vector` in moment buffers |
-| `optim/adam_per_gaussian.hpp` | `thrust::device_vector` in step counts and moments |
-| `optim/optim.hpp` | `cudaStream_t` in `step()` interface |
-| `strategy/fastgs.hpp` | `thrust::device_vector` for importance/pruning scores |
-| `rasterizer/rasterizer.hpp` | `cudaStream_t` parameter |
-| `loss/loss.hpp` | `cudaStream_t` member |
-| `dataloader/dataloader.hpp` | `cudaStream_t` in `transfer_gpu()` |
-| `dataloader/simple.hpp` | `cudaStream_t` in `next()` |
-| `random/multinomial.hpp` | `cudaStream_t` parameters |
-| `utils/image_format.hpp` | `cudaStream_t` in GPU conversion functions |
-| `orchestrator.hpp` | Transitively includes all above |
+## Phase 4: Metal Backend Bring-up
+- Deliverables:
+  - Metal backend context + runtime operations.
+  - Metal rasterization/loss/optimizer dispatch strategy (likely split implementation files).
+  - Apple build path and CI lane.
+- Exit criteria:
+  - Functional Metal smoke training on a reference config.
+  - Core regression tests enabled under Metal-capable build.
 
----
+## Phase 5: Cross-Backend Parity and Hardening
+- Deliverables:
+  - Numerical parity budgets and tolerance checks across CUDA/HIP/Metal.
+  - Backend capability reporting and graceful fallback messages.
+  - Performance baseline tracking and regression gates.
+- Exit criteria:
+  - Defined parity thresholds met for representative scenes.
+  - CI matrix includes CUDA + HIP + Metal checks (where runners available).
 
-## Phase 1: Foundation Types
+## Testing Strengthening Plan
+- Unit tests:
+  - Backend config parsing and factory behavior.
+  - Scheduler and optimizer API contract tests (already improved this iteration).
+- Integration tests:
+  - End-to-end config wiring with backend selection.
+  - Factory composition checks in `config_train` path.
+- Smoke tests:
+  - Short training run on canonical config for CUDA each PR.
+  - Add HIP/Metal smoke lanes once each backend is executable.
+- Regression checks:
+  - Loss/metric sanity ranges.
+  - Basic throughput sanity to catch severe perf regressions.
 
-Create `tinygs/core/types.hpp` with opaque handles (`CudaStream = void*`, `DevicePtr = void*`).
+## Progress Tracker
 
-Create `tinygs/core/glm_types.hpp` with GLM typedefs only - no CUDA macros.
+## Iteration: 2026-03-04
+- [x] Replaced draft roadmap with phased CUDA/HIP/Metal plan (Vulkan deferred).
+- [x] Added backend abstraction headers and backend factory source.
+- [x] Migrated key public module stream interfaces to `BackendStream`.
+- [x] Added stream conversion helpers and compatibility launch wrappers.
+- [x] Wired backend parsing + CUDA device selection in `config_train`.
+- [x] Updated sample configs with explicit backend section.
+- [x] Re-enabled `tinygs_lr_scheduler_test` target.
+- [x] Added `tinygs_backend_types_test` target and tests.
+- [ ] Introduce backend runtime operation interface (Phase 2).
+- [ ] HIP runtime + kernel bring-up (Phase 3).
+- [ ] Metal runtime + kernel bring-up (Phase 4).
 
-**Verify:** These files must compile without CUDA toolkit installed.
-
----
-
-## Phase 2: GPUGaussianBase Interface
-
-Create `tinygs/core/gpu_gaussian_base.hpp` - pure abstract class with raw pointer accessors (`vec3* means_data()`, not `thrust::device_vector<vec3>& means()`).
-
-Update `gpu_gaussian.hpp` to inherit from base and implement raw pointer accessors via `thrust::raw_pointer_cast()`. Keep deprecated thrust accessors for backward compatibility.
-
-Update `gpu_gaussian.cu` to implement the new interface methods.
-
----
-
-## Phase 3: Context Objects
-
-Create `tinygs/rasterizer/rasterizer_types.hpp` with `RasterizeContextBase` containing only platform-independent fields (`CudaStream stream`, not `cudaStream_t`).
-
-Update `rasterizer.hpp` to use base context and accept `GPUGaussianBase*` instead of `GPUGaussian3d*`.
-
----
-
-## Phase 4: Module Interfaces
-
-Create base interfaces for each module:
-- `tinygs/optim/optim_base.hpp` → `OptimizerBaseInterface`
-- `tinygs/strategy/strategy_base.hpp` → `StrategyBaseInterface`
-- `tinygs/dataloader/dataloader_base.hpp` → `DataLoaderBaseInterface`
-- `tinygs/loss/loss_base.hpp` → `LossBaseInterface`
-
-Each uses `CudaStream` and `GPUGaussianBase` instead of CUDA types.
-
-Update existing headers to inherit from base interfaces.
-
----
-
-## Phase 5: Orchestrator Header
-
-Create `tinygs/orchestrator_types.hpp` with `OrchestratorConfig` and `TrainingState` (no CUDA fields).
-
-Update `orchestrator.hpp` to:
-- Use `GPUGaussianBase*` instead of `GPUGaussian3d*`
-- Use `CudaStream` instead of `cudaStream_t`
-- Move `GPUMemory<T>` buffers to internal `Impl` struct (Pimpl pattern)
-
-Create `tinygs/src/orchestrator_impl.hpp` for CUDA-specific internals used by `.cu` file.
-
----
-
-## Phase 6: Build System
-
-Add `TINYGS_NO_CUDA` CMake option.
-
-Add compile test that includes all `_base.hpp` and `types.hpp` files without CUDA toolkit.
-
-Add CI workflow to verify header cleanliness.
-
----
-
-## Phase 7: Migration
-
-Document old API → new API mappings with deprecation timeline.
-
-Add `[[deprecated]]` attributes to old API functions.
-
----
-
-## Execution Order
-
-Start with Phase 1 (no dependencies, immediately verifiable). Each subsequent phase depends on the previous. Phases 2 and 5 have highest risk - test thoroughly.
+## Risks and Mitigations
+- Risk: stream/memory APIs stay CUDA-leaky in orchestrator and strategy internals.
+  - Mitigation: Phase 2 runtime interface with strict layering rules.
+- Risk: parity divergence across backends in optimizer/loss numerics.
+  - Mitigation: add parity tests with explicit tolerances before enabling default backend switching.
+- Risk: test coverage lags behind backend expansion.
+  - Mitigation: every phase includes required unit + smoke gates before phase completion.

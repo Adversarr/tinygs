@@ -3,6 +3,7 @@
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
+#include "tinygs/platform/backend_types.hpp"
 
 namespace tinygs {
 
@@ -22,8 +23,8 @@ struct RasterizeContext {
   ///        for back-propagation, reducing memory usage during inference.
   bool inference = false;
 
-  /// @brief CUDA stream on which all forward/backward kernels are launched.
-  cudaStream_t stream = nullptr;
+  /// @brief Backend stream on which all forward/backward kernels are launched.
+  BackendStream stream = nullptr;
 
   /// @brief Global gradient scaler applied during backward pass to stabilize
   ///        mixed-precision training (typically 128 for FP16, 1 for FP32).

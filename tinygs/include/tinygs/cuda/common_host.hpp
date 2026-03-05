@@ -31,6 +31,7 @@
 
 #include <functional>
 #include <tinygs/common.hpp>
+#include <tinygs/platform/backend_types.hpp>
 // #include <tinygs/cpp_api.h>
 
 #include <cuda_runtime.h>
@@ -266,7 +267,16 @@ private:
 	std::function<void()> m_callback;
 };
 
+inline cudaStream_t to_cuda_stream(BackendStream stream) {
+  return reinterpret_cast<cudaStream_t>(stream);
+}
+
+inline BackendStream to_backend_stream(cudaStream_t stream) {
+  return reinterpret_cast<BackendStream>(stream);
+}
+
 #if defined(__CUDACC__) || (defined(__clang__) && defined(__CUDA__))
+
 template <typename K, typename T, typename ... Types>
 inline void linear_kernel(K kernel, uint32_t shmem_size, cudaStream_t stream, T n_elements, Types ... args) {
 	if (n_elements <= 0) {

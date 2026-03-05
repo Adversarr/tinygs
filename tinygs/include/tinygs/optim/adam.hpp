@@ -39,8 +39,8 @@ public:
   void reset() override;
   
   /// @brief Perform one optimization step
-  void step(float scale, cudaStream_t stream) override;
-  void step(const GroupStepConfig& step_config, cudaStream_t stream) override;
+  void step(float scale, BackendStream stream) override;
+  void step(const GroupStepConfig& step_config, BackendStream stream) override;
   
   /// @brief Remove optimizer state for flagged gaussians
   void remove(char* kept_flag, int num_kept) override;
@@ -65,8 +65,8 @@ public:
 
 private:
 
-  void step_adam(float scale, cudaStream_t stream);
-  void step_adamw(float scale, cudaStream_t stream);
+  void step_adam(float scale, BackendStream stream);
+  void step_adamw(float scale, BackendStream stream);
 
   AdamParameters m_adam_params;
   uint32_t m_global_steps = 0;

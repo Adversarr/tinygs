@@ -85,7 +85,7 @@ float OptimizerBase::get_lr(OptimParamGroup group) const {
   return m_global_lr;
 }
 
-void OptimizerBase::step(const GroupStepConfig& step_config, cudaStream_t stream) {
+void OptimizerBase::step(const GroupStepConfig& step_config, BackendStream stream) {
   if (!step_config.any_update()) {
     return;
   }

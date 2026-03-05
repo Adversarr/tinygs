@@ -50,38 +50,39 @@ GPUBuffer<int> multinomial_cuda_with_replacement(
   int K, 
   int num_samples, 
   int seed,
-  cudaStream_t stream)
+  BackendStream stream)
 {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   if (K <= 0 || num_samples <= 0) {
       throw std::runtime_error(fmt::format("Invalid K={} or num_samples={}", K, num_samples));
   }
 
-  auto b_cdf = GPUBuffer<float>(stream, K);
+  auto b_cdf = GPUBuffer<float>(cuda_stream, K);
   float* d_cdf = b_cdf.data();
-  CUDA_CHECK_THROW(cudaMemcpyAsync(d_cdf, d_weights, sizeof(float) * K, cudaMemcpyDeviceToDevice, stream));
+  CUDA_CHECK_THROW(cudaMemcpyAsync(d_cdf, d_weights, sizeof(float) * K, cudaMemcpyDeviceToDevice, cuda_stream));
 
   void* d_temp = nullptr;
   size_t temp_bytes = 0;
-  CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K, stream));
-  auto b_temp = GPUBuffer<uint8_t>(stream, temp_bytes);
+  CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K, cuda_stream));
+  auto b_temp = GPUBuffer<uint8_t>(cuda_stream, temp_bytes);
   d_temp = b_temp.data();
-  CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K, stream));
+  CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K, cuda_stream));
 
   float h_total = 0.0f;
-  CUDA_CHECK_THROW(cudaMemcpyAsync(&h_total, d_cdf + (K - 1), sizeof(float), cudaMemcpyDeviceToHost, stream));
-  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  CUDA_CHECK_THROW(cudaMemcpyAsync(&h_total, d_cdf + (K - 1), sizeof(float), cudaMemcpyDeviceToHost, cuda_stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
 
   if (!(h_total > 0.0f) || !isfinite(h_total)) {
       throw std::runtime_error(fmt::format("Invalid weights: h_total={:.4e}", h_total));
   }
 
-  auto b_out = GPUBuffer<int>(stream, num_samples);
+  auto b_out = GPUBuffer<int>(cuda_stream, num_samples);
   int* d_out = b_out.data();
 
   int threads = 256;
   int blocks = (num_samples + threads - 1) / threads;
-  multinomial_sample_kernel<<<blocks, threads, 0, stream>>>(d_cdf, K, h_total, num_samples, seed, d_out);
-  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  multinomial_sample_kernel<<<blocks, threads, 0, cuda_stream>>>(d_cdf, K, h_total, num_samples, seed, d_out);
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
   return b_out;
 }
 
@@ -145,16 +146,17 @@ GPUBuffer<int> multinomial_cuda_cpu(
   int K,
   int num_samples,
   int seed,
-  cudaStream_t stream)
+  BackendStream stream)
 {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   std::vector<float> h_weights(K);
-  CUDA_CHECK_THROW(cudaMemcpyAsync(h_weights.data(), d_weights, sizeof(float) * K, cudaMemcpyDeviceToHost, stream));
-  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  CUDA_CHECK_THROW(cudaMemcpyAsync(h_weights.data(), d_weights, sizeof(float) * K, cudaMemcpyDeviceToHost, cuda_stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
 
   auto h_out = multinomial_cpu_with_replacement(h_weights.data(), K, num_samples, seed);
-  auto b_out = GPUBuffer<int>(stream, num_samples);
-  CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, stream));
-  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  auto b_out = GPUBuffer<int>(cuda_stream, num_samples);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, cuda_stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
   return b_out;
 }
 
@@ -213,16 +215,17 @@ GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
   int K,
   int num_samples,
   int seed,
-  cudaStream_t stream)
+  BackendStream stream)
 {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   std::vector<float> h_weights(K);
-  CUDA_CHECK_THROW(cudaMemcpyAsync(h_weights.data(), d_weights, sizeof(float) * K, cudaMemcpyDeviceToHost, stream));
-  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  CUDA_CHECK_THROW(cudaMemcpyAsync(h_weights.data(), d_weights, sizeof(float) * K, cudaMemcpyDeviceToHost, cuda_stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
 
   auto h_out = multinomial_cpu_without_replacement(h_weights.data(), K, num_samples, seed);
-  auto b_out = GPUBuffer<int>(stream, num_samples);
-  CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, stream));
-  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  auto b_out = GPUBuffer<int>(cuda_stream, num_samples);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, cuda_stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
   return b_out;
 }
 

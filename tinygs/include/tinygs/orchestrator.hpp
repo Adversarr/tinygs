@@ -17,6 +17,7 @@
 #include "tinygs/pose_opt/pose_opt.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/strategy/strategy.hpp"
+#include "tinygs/platform/backend_types.hpp"
 
 namespace tinygs {
 
@@ -261,8 +262,8 @@ private:
   RasterizeContext m_rasterize_ctx;
   LossContext m_loss_ctx;
 
-  // cuda stream for training, do not block.
-  cudaStream_t m_major_stream = 0;
+  // Backend stream for training, do not block.
+  BackendStream m_major_stream = nullptr;
 
   // Active render/loss data type used for buffers
   DataType m_active_data_type = DataType::Float32;

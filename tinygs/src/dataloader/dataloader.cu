@@ -120,8 +120,9 @@ void DataLoaderBase::set_output_shape(const ImageShape &shape) {
 /// @param stream CUDA stream for async operations
 /// @param gpu_data Destination GPU image
 /// @param host_data Source host image
-void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
+void DataLoaderBase::transfer_gpu(BackendStream stream, const Image &gpu_data,
                                   const Image &host_data) {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   std::lock_guard lock(m_mutex);
   // Avoid NVTX ranges here because this function is called from
   // both main and background threads.
@@ -146,7 +147,7 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
       (gpu_data.data_type == DataType::Float16 ? sizeof(__half) : sizeof(uint8_t));
     const size_t bytes = static_cast<size_t>(gpu_data.shape.padded_size()) * elem_size;
     CUDA_CHECK_THROW(cudaMemcpyAsync(gpu_data.data, host_data.data, bytes,
-                                     cudaMemcpyHostToDevice, stream));
+                                     cudaMemcpyHostToDevice, cuda_stream));
   } 
   // Case 2: Converting from UInt8 host data
   else if (host_data.data_type == DataType::UInt8) {
@@ -159,7 +160,7 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
     char *raw_data = m_raw_data.data();
     CUDA_CHECK_THROW(cudaMemcpyAsync(raw_data, host_data.data,
                                      src_total_bytes, cudaMemcpyHostToDevice,
-                                     stream));
+                                     cuda_stream));
 
     // Case 2a: Same shape - just convert data type
     if (same_shape) {
@@ -168,11 +169,11 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
         // Convert UInt8 to Float32
         if (total_elements % 4 == 0) {
           convert_u8_float_packed4<<<(total_elements / 4 + 255) / 256, 256, 0,
-                                     stream>>>(
+                                     cuda_stream>>>(
               reinterpret_cast<const unsigned char *>(raw_data),
               reinterpret_cast<float *>(gpu_data.data), total_elements / 4);
         } else {
-          convert_u8_float<<<(total_elements + 255) / 256, 256, 0, stream>>>(
+          convert_u8_float<<<(total_elements + 255) / 256, 256, 0, cuda_stream>>>(
               reinterpret_cast<const unsigned char *>(raw_data),
               reinterpret_cast<float *>(gpu_data.data), total_elements);
         }
@@ -180,11 +181,11 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
       else if (gpu_data.data_type == DataType::Float16) {
         // Convert UInt8 to FP16
         if (total_elements % 4 == 0) {
-          convert_u8_half_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, stream>>>(
+          convert_u8_half_packed4<<<(total_elements / 4 + 255) / 256, 256, 0, cuda_stream>>>(
               reinterpret_cast<const unsigned char *>(raw_data),
               reinterpret_cast<__half *>(gpu_data.data), total_elements / 4);
         } else {
-          convert_u8_half<<<(total_elements + 255) / 256, 256, 0, stream>>>(
+          convert_u8_half<<<(total_elements + 255) / 256, 256, 0, cuda_stream>>>(
               reinterpret_cast<const unsigned char *>(raw_data),
               reinterpret_cast<__half *>(gpu_data.data), total_elements);
         }
@@ -192,7 +193,7 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
       else if (gpu_data.data_type == DataType::UInt8) {
         // Same-shape UInt8 -> UInt8: device-to-device copy
         CUDA_CHECK_THROW(cudaMemcpyAsync(gpu_data.data, raw_data,
-                                         src_total_bytes, cudaMemcpyDeviceToDevice, stream));
+                                         src_total_bytes, cudaMemcpyDeviceToDevice, cuda_stream));
       } else {
         throw std::runtime_error("Unsupported GPU image data type for UInt8 host.");
       }
@@ -213,7 +214,7 @@ void DataLoaderBase::transfer_gpu(cudaStream_t stream, const Image &gpu_data,
   else {
     throw std::runtime_error("Unsupported host image data type for transfer.");
   }
-  CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
 }
 
 /// @brief Transfer image data from host to GPU using default stream

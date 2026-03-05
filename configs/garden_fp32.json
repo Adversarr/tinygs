@@ -1,4 +1,8 @@
 {
+  "backend": {
+    "type": "cuda",
+    "device": 0
+  },
   "dataloader": {
     "type": "async",
     "data_type": "float32"

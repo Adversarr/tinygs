@@ -44,6 +44,9 @@ set(TINYGS_SOURCES
     "src/pose_opt/sgdm.cpp"
     "src/pose_opt/adamw.cpp"
 
+    # Platform
+    "src/platform/backend_factory.cpp"
+
     # Random utilities
     "src/random/multinomial.cu"
     

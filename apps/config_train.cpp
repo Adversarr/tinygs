@@ -4,10 +4,12 @@
 #include <opencv2/opencv.hpp>
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
+#include "tinygs/cuda/common_host.hpp"
 #include "tinygs/dataset/dataset.hpp"
 #include "tinygs/initialization/initialization.hpp"
 #include "tinygs/optim/lr_scheduler.hpp"
 #include "tinygs/optim/optim.hpp"
+#include "tinygs/platform/backend_factory.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/orchestrator.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
@@ -66,6 +68,24 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
       throw std::runtime_error("Config file must be a JSON object.");
     }
   }
+
+  // backend
+  BackendConfig backend_config;
+  if (config.contains("backend")) {
+    if (!config.at("backend").is_object()) {
+      throw std::runtime_error("backend config must be an object.");
+    }
+    backend_config.from_json(config.at("backend"));
+  } else {
+    log_warning("No backend section in config, defaulting to CUDA device 0.");
+  }
+  auto backend_ctx = create_backend_context(backend_config);
+  if (backend_ctx->type() != BackendType::Cuda) {
+    throw std::runtime_error(
+        "Only CUDA backend is available in this build; HIP/Metal are planned.");
+  }
+  set_cuda_device(backend_ctx->device());
+  log_info("Using backend={} device={}", to_string(backend_ctx->type()), backend_ctx->device());
 
   // orchestrator
   auto orchestrator = std::make_shared<Orchestrator>();

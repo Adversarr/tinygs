@@ -4,6 +4,7 @@
 
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/common.hpp"
+#include "tinygs/platform/backend_types.hpp"
 
 namespace tinygs {
 
@@ -114,10 +115,10 @@ public:
   /// @brief Perform one optimization step.
   /// @param scale Combined scale factor: `(1 / grad_scaler) / accumulate_grad_steps`.
   /// @param stream CUDA stream for all kernels.
-  virtual void step(float scale, cudaStream_t stream) = 0;
+  virtual void step(float scale, BackendStream stream) = 0;
 
   /// @brief Perform one optimization step with per-group update/scale controls.
-  virtual void step(const GroupStepConfig& step_config, cudaStream_t stream);
+  virtual void step(const GroupStepConfig& step_config, BackendStream stream);
 
   /// @brief Reset all internal momentum / variance buffers (e.g. after reinit).
   virtual void reset();

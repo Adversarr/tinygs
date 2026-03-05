@@ -14,7 +14,7 @@ public:
 
   /// @brief Get next batch from dataset
   /// @param stream CUDA stream for data transfer
-  GPUBatchInputOutput next(cudaStream_t stream);
+  GPUBatchInputOutput next(BackendStream stream);
   GPUBatchInputOutput next() override;
 
   /// Set the parameters for the dataloader.

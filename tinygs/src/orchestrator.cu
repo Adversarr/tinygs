@@ -26,8 +26,9 @@ namespace tinygs {
 
 static inline void debug_cuda_stage_check(const OrchestratorConfig& cfg,
                                           size_t step,
-                                          cudaStream_t stream,
+                                          BackendStream stream,
                                           const char* stage_name) {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   if (!cfg.debug_cuda_check_each_stage && !cfg.debug_cuda_sync_each_stage) {
     return;
   }
@@ -44,33 +45,34 @@ static inline void debug_cuda_stage_check(const OrchestratorConfig& cfg,
     // streams (e.g., async dataloader stream) are surfaced at the nearest stage.
     CUDA_CHECK_THROW(cudaDeviceSynchronize());
   } else {
-    CUDA_CHECK_THROW(cudaStreamSynchronize(stream));
+    CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
   }
   if (cfg.debug_cuda_check_each_stage) {
     CUDA_CHECK_THROW(cudaPeekAtLastError());
   }
 }
 
-static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaStream_t stream) {
+static thrust::device_vector<uint> reorder(const vec3* positions, uint n, BackendStream stream) {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   thrust::device_vector<uint> idx_in(n), idx_out(n);
   thrust::device_vector<uint> enc_in(n), enc_out(n);
 
   thrust::copy(
-    thrust::cuda::par.on(stream),
+    thrust::cuda::par.on(cuda_stream),
     thrust::make_counting_iterator<uint>(0),
     thrust::make_counting_iterator<uint>(n),
     idx_in.begin()
   );
 
   vec3 min_pos = thrust::reduce(
-    thrust::cuda::par.on(stream),
+    thrust::cuda::par.on(cuda_stream),
     positions, positions + n,
     vec3(FLT_MAX, FLT_MAX, FLT_MAX),
     [] __host__ __device__ (const vec3& a, const vec3& b) -> vec3 { return vec3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z)); }
   );
 
   vec3 max_pos = thrust::reduce(
-    thrust::cuda::par.on(stream),
+    thrust::cuda::par.on(cuda_stream),
     positions, positions + n,
     vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX),
     [] __host__ __device__ (const vec3& a, const vec3& b) -> vec3 { return vec3(fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z)); }
@@ -82,7 +84,7 @@ static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaSt
   const float inv_dz = 1.0f / std::max(max_pos.z - min_pos.z, 1e-8f);
 
   thrust::transform(
-    thrust::cuda::par.on(stream),
+    thrust::cuda::par.on(cuda_stream),
     positions, positions + n,
     enc_in.begin(), [min_pos, inv_dx, inv_dy, inv_dz] __device__ (const vec3& p) -> uint {
       // Normalize position to [0,1] within the bounding box
@@ -108,7 +110,7 @@ static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaSt
     thrust::raw_pointer_cast(enc_out.data()),
     thrust::raw_pointer_cast(idx_in.data()),
     thrust::raw_pointer_cast(idx_out.data()),
-    n, 0, 30, stream
+    n, 0, 30, cuda_stream
   );
 
   // Allocate temporary storage and perform sort
@@ -120,7 +122,7 @@ static thrust::device_vector<uint> reorder(const vec3* positions, uint n, cudaSt
     thrust::raw_pointer_cast(enc_out.data()),
     thrust::raw_pointer_cast(idx_in.data()),
     thrust::raw_pointer_cast(idx_out.data()),
-    n, 0, 30, stream
+    n, 0, 30, cuda_stream
   );
   
 
@@ -210,8 +212,8 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("debug_cuda_log_each_stage")) debug_cuda_log_each_stage = j["debug_cuda_log_each_stage"].get<bool>();
 }
 
-void mean(const vec3* data, size_t size, vec3& out, cudaStream_t stream) {
-  auto exec = thrust::cuda::par.on(stream);
+void mean(const vec3* data, size_t size, vec3& out, BackendStream stream) {
+  auto exec = thrust::cuda::par.on(to_cuda_stream(stream));
   out = thrust::transform_reduce(
     exec,
     data,
@@ -369,7 +371,7 @@ void Orchestrator::train_step() {
   // TODO: async, not in the major/default stream.
   // Clear gradients and buffers
   auto clear_group_gradients = [this](OptimParamGroup group) {
-    auto exec = thrust::cuda::par.on(m_major_stream);
+    auto exec = thrust::cuda::par.on(to_cuda_stream(m_major_stream));
     switch (group) {
       case OptimParamGroup::Means:
         thrust::fill(exec, m_gradients->means().begin(), m_gradients->means().end(), vec3(0.0f));
@@ -552,7 +554,7 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
     m_rasterizer->forward(m_rasterize_ctx);
 
     // Wait for the rasterization to finish
-    cudaStreamSynchronize(m_major_stream);
+    cudaStreamSynchronize(to_cuda_stream(m_major_stream));
 
     // Export the rasterized image if enabled
     if (m_config.export_rasterized) {
@@ -658,7 +660,7 @@ float Orchestrator::accumulate_loss() {
   if (!m_loss_buffer) {
     return 0.0f;
   }
-  CUDA_CHECK_THROW(cudaStreamSynchronize(m_loss_ctx.stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(m_loss_ctx.stream)));
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
   //? the unused pixels in the padded area are set to zero during loss computation
   //! fix the shape is not compatible with the tile-based design.
@@ -708,9 +710,11 @@ void Orchestrator::update_config(const OrchestratorConfig& config) {
 
 void Orchestrator::initialize() {
   if (m_major_stream) {
-    CUDA_CHECK_THROW(cudaStreamDestroy(m_major_stream));
+    CUDA_CHECK_THROW(cudaStreamDestroy(to_cuda_stream(m_major_stream)));
   }
-  CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&m_major_stream, cudaStreamNonBlocking));
+  cudaStream_t major_stream = nullptr;
+  CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&major_stream, cudaStreamNonBlocking));
+  m_major_stream = to_backend_stream(major_stream);
 
   m_loss_ctx.stream = m_rasterize_ctx.stream = m_major_stream;
 

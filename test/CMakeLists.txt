@@ -169,7 +169,39 @@ set_target_properties(tinygs_lr_scheduler_factory_test PROPERTIES
 
 gtest_discover_tests(tinygs_lr_scheduler_factory_test)
 
-message(STATUS "Skipping tinygs_lr_scheduler_test: mock is incompatible with current OptimizerBase interface")
+add_executable(tinygs_lr_scheduler_test
+    lr_scheduler_test.cpp
+)
+
+target_link_libraries(tinygs_lr_scheduler_test
+    PRIVATE
+        tinygs::tinygs
+        GTest::gtest_main
+)
+
+set_target_properties(tinygs_lr_scheduler_test PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+gtest_discover_tests(tinygs_lr_scheduler_test)
+
+add_executable(tinygs_backend_types_test
+    backend_types_test.cpp
+)
+
+target_link_libraries(tinygs_backend_types_test
+    PRIVATE
+        tinygs::tinygs
+        GTest::gtest_main
+)
+
+set_target_properties(tinygs_backend_types_test PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+gtest_discover_tests(tinygs_backend_types_test)
 
 add_executable(tinygs_optimizer_factory_test
     optimizer_factory_test.cpp
@@ -289,4 +321,3 @@ set_target_properties(tinygs_tile_utils_test PROPERTIES
 )
 
 gtest_discover_tests(tinygs_tile_utils_test)
-

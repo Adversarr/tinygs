@@ -195,15 +195,16 @@ void GPUGaussian3d::copy_to_host(Gaussian3d& gaussians) {
 // memset
 // ============================================================================
 
-void GPUGaussian3d::memset_async(char value, cudaStream_t stream) {
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_means.data()), value, sizeof(float3) * m_means.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_opacities.data()), value, sizeof(float) * m_opacities.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_rotations.data()), value, sizeof(float4) * m_rotations.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_scales.data()), value, sizeof(float3) * m_scales.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh0.data()), value, sizeof(float) * m_sh0.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh1.data()), value, sizeof(float) * m_sh1.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh2.data()), value, sizeof(float) * m_sh2.size(), stream));
-  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh3.data()), value, sizeof(float) * m_sh3.size(), stream));
+void GPUGaussian3d::memset_async(char value, BackendStream stream) {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_means.data()), value, sizeof(float3) * m_means.size(), cuda_stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_opacities.data()), value, sizeof(float) * m_opacities.size(), cuda_stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_rotations.data()), value, sizeof(float4) * m_rotations.size(), cuda_stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_scales.data()), value, sizeof(float3) * m_scales.size(), cuda_stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh0.data()), value, sizeof(float) * m_sh0.size(), cuda_stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh1.data()), value, sizeof(float) * m_sh1.size(), cuda_stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh2.data()), value, sizeof(float) * m_sh2.size(), cuda_stream));
+  CUDA_CHECK_THROW(cudaMemsetAsync(thrust::raw_pointer_cast(m_sh3.data()), value, sizeof(float) * m_sh3.size(), cuda_stream));
 }
 
 void GPUGaussian3d::memset(char value) {
@@ -298,15 +299,16 @@ static void gather_soa_sh(
     thrust::device_vector<float>& dst,
     const IndexType* mapping,
     int new_N, int old_N, int num_coeffs,
-    cudaStream_t stream = 0) {
+    BackendStream stream = nullptr) {
   if (num_coeffs == 0 || new_N == 0) {
     dst.resize(num_coeffs * 3 * new_N);
     return;
   }
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   dst.resize(num_coeffs * 3 * new_N);
   int total = new_N * num_coeffs * 3;
   int blocks = (total + 255) / 256;
-  gather_soa_sh_kernel<IndexType><<<blocks, 256, 0, stream>>>(
+  gather_soa_sh_kernel<IndexType><<<blocks, 256, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(src.data()),
       thrust::raw_pointer_cast(dst.data()),
       mapping,
@@ -417,7 +419,8 @@ void GPUGaussian3d::append(int num_dup) {
 static void copy_sh_async(
     thrust::device_vector<float>& dst,
     const thrust::device_vector<float>& src,
-    cudaStream_t stream) {
+    BackendStream stream) {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   dst.resize(src.size());
   if (src.empty()) return;
   CUDA_CHECK_THROW(cudaMemcpyAsync(
@@ -425,7 +428,7 @@ static void copy_sh_async(
       thrust::raw_pointer_cast(src.data()),
       sizeof(float) * src.size(),
       cudaMemcpyDeviceToDevice,
-      stream));
+      cuda_stream));
 }
 
 /// @brief Sync memcpy helper for a SoA SH buffer.
@@ -441,7 +444,8 @@ static void copy_sh_sync(
       cudaMemcpyDeviceToDevice));
 }
 
-std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {
+std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(BackendStream stream) {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   auto gaussians = std::make_unique<GPUGaussian3d>();
   gaussians->m_current_sh_degree = m_current_sh_degree;
   gaussians->m_scene_scale = m_scene_scale;
@@ -455,19 +459,19 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(cudaStream_t stream) {
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_means.data()),
       thrust::raw_pointer_cast(m_means.data()),
-      sizeof(float3) * m_means.size(), cudaMemcpyDeviceToDevice, stream));
+      sizeof(float3) * m_means.size(), cudaMemcpyDeviceToDevice, cuda_stream));
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_opacities.data()),
       thrust::raw_pointer_cast(m_opacities.data()),
-      sizeof(float) * m_opacities.size(), cudaMemcpyDeviceToDevice, stream));
+      sizeof(float) * m_opacities.size(), cudaMemcpyDeviceToDevice, cuda_stream));
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_rotations.data()),
       thrust::raw_pointer_cast(m_rotations.data()),
-      sizeof(float4) * m_rotations.size(), cudaMemcpyDeviceToDevice, stream));
+      sizeof(float4) * m_rotations.size(), cudaMemcpyDeviceToDevice, cuda_stream));
   CUDA_CHECK_THROW(cudaMemcpyAsync(
       thrust::raw_pointer_cast(gaussians->m_scales.data()),
       thrust::raw_pointer_cast(m_scales.data()),
-      sizeof(float3) * m_scales.size(), cudaMemcpyDeviceToDevice, stream));
+      sizeof(float3) * m_scales.size(), cudaMemcpyDeviceToDevice, cuda_stream));
 
   // SH buffers
   copy_sh_async(gaussians->m_sh0, m_sh0, stream);
@@ -519,9 +523,10 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
 // reorder
 // ============================================================================
 
-void GPUGaussian3d::reorder(uint* indices, cudaStream_t stream) {
+void GPUGaussian3d::reorder(uint* indices, BackendStream stream) {
   NVTX3_FUNC_RANGE();
   const int N = static_cast<int>(size());
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
 
   // Create temporary vectors for base fields
   thrust::device_vector<vec3> means(N);
@@ -530,7 +535,7 @@ void GPUGaussian3d::reorder(uint* indices, cudaStream_t stream) {
   thrust::device_vector<vec3> scales(N);
 
   const int grid = (N + 255) / 256;
-  copy_gaussian_base_items<uint><<<grid, 256, 0, stream>>>(
+  copy_gaussian_base_items<uint><<<grid, 256, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_means.data()),
       thrust::raw_pointer_cast(means.data()),
       thrust::raw_pointer_cast(m_opacities.data()),

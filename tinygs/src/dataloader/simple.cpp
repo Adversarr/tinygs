@@ -34,7 +34,7 @@ void SimpleDataLoader::generate_permutation() {
   m_current_index = 0;
 }
 
-GPUBatchInputOutput SimpleDataLoader::next(cudaStream_t stream) {
+GPUBatchInputOutput SimpleDataLoader::next(BackendStream stream) {
   // Check if we've consumed the entire permutation
   if (m_current_index >= m_permutation.size()) {
     // Generate a new permutation and reset index
@@ -78,7 +78,7 @@ GPUBatchInputOutput SimpleDataLoader::next() {
   DL_FUNC_RANGE();
 
   auto r = next(nullptr);
-  CUDA_CHECK_THROW(cudaStreamSynchronize(nullptr));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(nullptr)));
   return std::move(r);
 }
 

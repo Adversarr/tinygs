@@ -1,6 +1,7 @@
 #pragma once
 
 #include "tinygs/core/gaussian.hpp"
+#include "tinygs/platform/backend_types.hpp"
 
 #include <thrust/device_vector.h>
 
@@ -67,10 +68,10 @@ public:
     return sh_degree_num_coeffs(degree) * 3 * static_cast<int>(size());
   }
 
-  std::unique_ptr<GPUGaussian3d> clone_async(cudaStream_t stream = nullptr);
+  std::unique_ptr<GPUGaussian3d> clone_async(BackendStream stream = nullptr);
   std::unique_ptr<GPUGaussian3d> clone();
 
-  void memset_async(char value, cudaStream_t stream);
+  void memset_async(char value, BackendStream stream);
   void memset(char value);
 
   void remove(char* kept_flag, int num_kept);
@@ -78,7 +79,7 @@ public:
   /// @brief Reorder gaussians according to the indices.
   //         It performs a gather: new[i] = old[indices[i]]
   /// @note the indices buffer must be on device memory.
-  void reorder(uint* indices, cudaStream_t stream = nullptr);
+  void reorder(uint* indices, BackendStream stream = nullptr);
 
   void append(int num_dup);
 

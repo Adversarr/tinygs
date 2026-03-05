@@ -46,11 +46,11 @@ __global__ void float_to_half_kernel(int n, const float *src, float16_t *dst) {
   dst[idx] = __float2half(src[idx]);
 }
 
-void half_to_float_gpu(float* dst, const float16_t* src, int n, cudaStream_t stream) {
+void half_to_float_gpu(float* dst, const float16_t* src, int n, BackendStream stream) {
     linear_kernel(half_to_float_kernel, 0, stream, n, src, dst);
 }
 
-void float_to_half_gpu(float16_t* dst, const float* src, int n, cudaStream_t stream) {
+void float_to_half_gpu(float16_t* dst, const float* src, int n, BackendStream stream) {
     linear_kernel(float_to_half_kernel, 0, stream, n, src, dst);
 }
 

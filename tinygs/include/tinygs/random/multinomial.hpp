@@ -1,6 +1,7 @@
 #pragma once
 
 #include <tinygs/cuda/gpu_memory.hpp>
+#include <tinygs/platform/backend_types.hpp>
 #include <vector>
 #include <memory>
 
@@ -16,7 +17,7 @@ GPUBuffer<int> multinomial_cuda_with_replacement(
     int K,
     int num_samples,
     int seed,
-    cudaStream_t stream = nullptr
+    BackendStream stream = nullptr
 );
 
 /// @brief CPU implementation of multinomial sampling (with replacement)
@@ -37,7 +38,7 @@ GPUBuffer<int> multinomial_cuda_cpu(
     int K,
     int num_samples,
     int seed,
-    cudaStream_t stream = nullptr
+    BackendStream stream = nullptr
 );
 
 /// @brief CPU implementation of multinomial sampling (without replacement) on GPU
@@ -48,7 +49,7 @@ GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
     int K,
     int num_samples,
     int seed,
-    cudaStream_t stream = nullptr
+    BackendStream stream = nullptr
 );
 
 /// @brief CPU implementation of multinomial sampling (without replacement)

@@ -9,35 +9,22 @@ using namespace tinygs;
 
 class MockOptimizer : public OptimizerBase {
 public:
-    MockOptimizer() : m_lr(1.0f) {}
+    MockOptimizer() : OptimizerBase(nullptr, nullptr) {}
     
-    void step(float scale, cudaStream_t stream) override { 
+    void step(float scale, BackendStream stream) override { 
         (void)scale; 
         (void)stream;
     }
-    void step(const GroupStepConfig& step_config, cudaStream_t stream) override {
+    void step(const GroupStepConfig& step_config, BackendStream stream) override {
         (void)step_config;
         (void)stream;
     }
-    void zero_grad() override {}
-    void set_lr(OptimParamGroup group, float lr) override { 
-        (void)group;
-        m_lr = lr; 
-    }
-    float get_lr(OptimParamGroup group) const override { 
-        (void)group;
-        return m_lr; 
-    }
-    json get_params() const override { return json::object(); }
-    void set_params(const json& params) override { (void)params; }
     void reset(int* indices, int num_reset) override { 
         (void)indices;
         (void)num_reset;
     }
     void reorder(uint* indices) override { (void)indices; }
     void reset_opacity() override {}
-    
-    float m_lr;
 };
 
 TEST(ConstantLRTest, ReturnsConstantValue) {
@@ -54,10 +41,10 @@ TEST(ConstantLRTest, UpdatesOptimizerLR) {
     auto optimizer = std::make_shared<MockOptimizer>();
     ConstantLR scheduler(optimizer, OptimParamGroup::Means, 0.25f);
     
-    EXPECT_FLOAT_EQ(optimizer->m_lr, 0.25f);
+    EXPECT_FLOAT_EQ(optimizer->get_lr(OptimParamGroup::Means), 0.25f);
     
     scheduler.step();
-    EXPECT_FLOAT_EQ(optimizer->m_lr, 0.25f);
+    EXPECT_FLOAT_EQ(optimizer->get_lr(OptimParamGroup::Means), 0.25f);
 }
 
 TEST(ConstantLRTest, ResetDoesNothing) {
@@ -86,7 +73,7 @@ TEST(ConstantLRTest, SetParamsUpdatesLR) {
     scheduler.set_params(new_params);
     
     EXPECT_FLOAT_EQ(scheduler.get_lr(), 0.33f);
-    EXPECT_FLOAT_EQ(optimizer->m_lr, 0.33f);
+    EXPECT_FLOAT_EQ(optimizer->get_lr(OptimParamGroup::Means), 0.33f);
 }
 
 TEST(ExponentialLRTest, InitialLRIsSet) {
@@ -113,11 +100,11 @@ TEST(ExponentialLRTest, UpdatesOptimizerLR) {
     auto optimizer = std::make_shared<MockOptimizer>();
     ExponentialLR scheduler(optimizer, OptimParamGroup::Means, 2.0f, 0.8f);
     
-    EXPECT_FLOAT_EQ(optimizer->m_lr, 2.0f);
+    EXPECT_FLOAT_EQ(optimizer->get_lr(OptimParamGroup::Means), 2.0f);
     
     scheduler.step();
     float expected = 2.0f * std::pow(0.8f, 0);
-    EXPECT_FLOAT_EQ(optimizer->m_lr, expected);
+    EXPECT_FLOAT_EQ(optimizer->get_lr(OptimParamGroup::Means), expected);
 }
 
 TEST(ExponentialLRTest, ResetRestoresInitialLR) {
@@ -130,7 +117,7 @@ TEST(ExponentialLRTest, ResetRestoresInitialLR) {
     
     scheduler.reset();
     EXPECT_FLOAT_EQ(scheduler.get_lr(), 1.0f);
-    EXPECT_FLOAT_EQ(optimizer->m_lr, 1.0f);
+    EXPECT_FLOAT_EQ(optimizer->get_lr(OptimParamGroup::Means), 1.0f);
 }
 
 TEST(ExponentialLRTest, GetParamsReturnsCorrectType) {

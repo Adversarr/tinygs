@@ -2,6 +2,7 @@
 #include "tinygs/core/image.hpp"
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/dataset/dataset.hpp"
+#include "tinygs/platform/backend_types.hpp"
 
 namespace tinygs {
 
@@ -81,7 +82,7 @@ public:
    * @note When data types differ, assumes host data is UInt8 and converts to float on GPU
    * @note Uses internal buffer (m_raw_data) for intermediate storage during type conversion
    */
-  void transfer_gpu(cudaStream_t stream, const Image& gpu_data, const Image& host_data);
+  void transfer_gpu(BackendStream stream, const Image& gpu_data, const Image& host_data);
 
   void transfer_gpu(const Image &gpu_data, const Image &host_data);
 

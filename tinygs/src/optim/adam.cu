@@ -142,7 +142,7 @@ struct m_step {
 
 
 
-void Adam::step(float scale, cudaStream_t stream) {
+void Adam::step(float scale, BackendStream stream) {
   if (m_adam_params.decouple_decay) {
     step_adamw(scale, stream);
   } else {
@@ -150,7 +150,8 @@ void Adam::step(float scale, cudaStream_t stream) {
   }
 }
 
-void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
+void Adam::step(const GroupStepConfig& step_config, BackendStream stream) {
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   if (!step_config.any_update()) {
     return;
   }
@@ -188,7 +189,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
                                                          static_cast<double>(m_means_steps)));
     const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
                                                                    static_cast<double>(m_means_steps))));
-    adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
+    adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, cuda_stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->means().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_means_first.data())),
@@ -210,7 +211,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
                                                          static_cast<double>(m_opacities_steps)));
     const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
                                                                    static_cast<double>(m_opacities_steps))));
-    adam<<<div_round_up<uint>(n, block_size), block_size, 0, stream>>>(
+    adam<<<div_round_up<uint>(n, block_size), block_size, 0, cuda_stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->opacities().data()),
       (const float*) thrust::raw_pointer_cast(m_gaussians_grad->opacities().data()),
       (float*) thrust::raw_pointer_cast(m_opacities_first.data()),
@@ -232,7 +233,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
                                                          static_cast<double>(m_rotations_steps)));
     const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
                                                                    static_cast<double>(m_rotations_steps))));
-    adam<<<div_round_up<uint>(n * 4, block_size), block_size, 0, stream>>>(
+    adam<<<div_round_up<uint>(n * 4, block_size), block_size, 0, cuda_stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->rotations().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_rotations_first.data())),
@@ -254,7 +255,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
                                                          static_cast<double>(m_scales_steps)));
     const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
                                                                    static_cast<double>(m_scales_steps))));
-    adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
+    adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, cuda_stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->scales().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_scales_first.data())),
@@ -276,7 +277,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
                                                          static_cast<double>(m_shs_steps)));
     const float bc2 = static_cast<float>(std::sqrt(1.0 - std::pow(static_cast<double>(m_adam_params.beta2),
                                                                    static_cast<double>(m_shs_steps))));
-    adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
+    adam<<<div_round_up<uint>(n * 3, block_size), block_size, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh0().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh0().data()),
       thrust::raw_pointer_cast(m_sh0_first.data()),
@@ -290,7 +291,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
       m_params.max_grad_1,
       0.0f,
       kAdamL1DecayNone);
-    adam<<<div_round_up<uint>(n * 9, block_size), block_size, 0, stream>>>(
+    adam<<<div_round_up<uint>(n * 9, block_size), block_size, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh1().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh1().data()),
       thrust::raw_pointer_cast(m_sh1_first.data()),
@@ -304,7 +305,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
       m_params.max_grad_1,
       0.0f,
       kAdamL1DecayNone);
-    adam<<<div_round_up<uint>(n * 15, block_size), block_size, 0, stream>>>(
+    adam<<<div_round_up<uint>(n * 15, block_size), block_size, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh2().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh2().data()),
       thrust::raw_pointer_cast(m_sh2_first.data()),
@@ -318,7 +319,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
       m_params.max_grad_1,
       0.0f,
       kAdamL1DecayNone);
-    adam<<<div_round_up<uint>(n * 21, block_size), block_size, 0, stream>>>(
+    adam<<<div_round_up<uint>(n * 21, block_size), block_size, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh3().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh3().data()),
       thrust::raw_pointer_cast(m_sh3_first.data()),
@@ -338,7 +339,7 @@ void Adam::step(const GroupStepConfig& step_config, cudaStream_t stream) {
 }
 
 
-void Adam::step_adam(float scale, cudaStream_t stream) {
+void Adam::step_adam(float scale, BackendStream stream) {
   GroupStepConfig step_config;
   step_config.update_means = true;
   step_config.update_shs = true;
@@ -354,8 +355,9 @@ void Adam::step_adam(float scale, cudaStream_t stream) {
 }
 
 
-void Adam::step_adamw(float scale, cudaStream_t stream) {
+void Adam::step_adamw(float scale, BackendStream stream) {
   NVTX3_FUNC_RANGE();
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   const float gradient_scale = scale;
   constexpr int block_size = 256;
 
@@ -381,7 +383,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
     range range(attr);
 
     // Means (3 floats per Gaussian)
-    adamw<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
+    adamw<<<div_round_up<uint>(n * 3, block_size), block_size, 0, cuda_stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->means().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_means_first.data())),
@@ -395,7 +397,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       m_params.max_grad_1);
 
     // Opacities (1 float per Gaussian)
-    adamw<<<div_round_up<uint>(n, block_size), block_size, 0, stream>>>(
+    adamw<<<div_round_up<uint>(n, block_size), block_size, 0, cuda_stream>>>(
       (float*) thrust::raw_pointer_cast(m_gaussians->opacities().data()),
       (const float*) thrust::raw_pointer_cast(m_gaussians_grad->opacities().data()),
       (float*) thrust::raw_pointer_cast(m_opacities_first.data()),
@@ -409,7 +411,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       m_params.max_grad_1);
 
     // Rotations (4 floats per Gaussian)
-    adamw<<<div_round_up<uint>(n * 4, block_size), block_size, 0, stream>>>(
+    adamw<<<div_round_up<uint>(n * 4, block_size), block_size, 0, cuda_stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->rotations().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->rotations().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_rotations_first.data())),
@@ -423,7 +425,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       m_params.max_grad_1);
 
     // Scales (3 floats per Gaussian)
-    adamw<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
+    adamw<<<div_round_up<uint>(n * 3, block_size), block_size, 0, cuda_stream>>>(
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
       reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians_grad->scales().data())),
       reinterpret_cast<float*>(thrust::raw_pointer_cast(m_scales_first.data())),
@@ -437,7 +439,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       m_params.max_grad_1);
 
     // SH degree 0 (1 coefficient, 3*N floats)
-    adamw<<<div_round_up<uint>(n * 3, block_size), block_size, 0, stream>>>(
+    adamw<<<div_round_up<uint>(n * 3, block_size), block_size, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh0().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh0().data()),
       thrust::raw_pointer_cast(m_sh0_first.data()),
@@ -451,7 +453,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       m_params.max_grad_1);
 
     // SH degree 1 (3 coefficients, 9*N floats)
-    adamw<<<div_round_up<uint>(n * 9, block_size), block_size, 0, stream>>>(
+    adamw<<<div_round_up<uint>(n * 9, block_size), block_size, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh1().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh1().data()),
       thrust::raw_pointer_cast(m_sh1_first.data()),
@@ -465,7 +467,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       m_params.max_grad_1);
 
     // SH degree 2 (5 coefficients, 15*N floats)
-    adamw<<<div_round_up<uint>(n * 15, block_size), block_size, 0, stream>>>(
+    adamw<<<div_round_up<uint>(n * 15, block_size), block_size, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh2().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh2().data()),
       thrust::raw_pointer_cast(m_sh2_first.data()),
@@ -479,7 +481,7 @@ void Adam::step_adamw(float scale, cudaStream_t stream) {
       m_params.max_grad_1);
 
     // SH degree 3 (7 coefficients, 21*N floats)
-    adamw<<<div_round_up<uint>(n * 21, block_size), block_size, 0, stream>>>(
+    adamw<<<div_round_up<uint>(n * 21, block_size), block_size, 0, cuda_stream>>>(
       thrust::raw_pointer_cast(m_gaussians->sh3().data()),
       thrust::raw_pointer_cast(m_gaussians_grad->sh3().data()),
       thrust::raw_pointer_cast(m_sh3_first.data()),
