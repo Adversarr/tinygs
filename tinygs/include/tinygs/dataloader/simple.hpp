@@ -7,7 +7,7 @@ namespace tinygs {
 /// @brief Basic dataloader without acceleration
 class SimpleDataLoader : public DataLoaderBase {
 public:
-  explicit SimpleDataLoader(std::shared_ptr<DatasetBase> dataset);
+  explicit SimpleDataLoader(std::shared_ptr<BackendRuntime> runtime, std::shared_ptr<DatasetBase> dataset);
 
   ~SimpleDataLoader() = default;
 

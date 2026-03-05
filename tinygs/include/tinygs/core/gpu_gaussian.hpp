@@ -1,5 +1,6 @@
 #pragma once
 
+#include "tinygs/core/device_span.hpp"
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/platform/backend_types.hpp"
 
@@ -8,24 +9,8 @@
 
 namespace tinygs {
 
-template <typename T>
-class DeviceSpan {
-public:
-  using value_type = T;
-
-  DeviceSpan() = default;
-  DeviceSpan(T* ptr, size_t size) : m_ptr(ptr), m_size(size) {}
-
-  T* data() const { return m_ptr; }
-  T* begin() const { return m_ptr; }
-  T* end() const { return m_ptr + m_size; }
-  size_t size() const { return m_size; }
-  T& operator[](size_t idx) const { return m_ptr[idx]; }
-
-private:
-  T* m_ptr = nullptr;
-  size_t m_size = 0;
-};
+class BackendRuntime;
+class BackendQueue;
 
 /// @brief GPU-side Gaussian data with SoA layout.
 ///
@@ -40,13 +25,15 @@ private:
 /// copy_from_host() / copy_to_host().
 class GPUGaussian3d {
 public:
-  GPUGaussian3d();
+  explicit GPUGaussian3d(std::shared_ptr<BackendRuntime> runtime);
 
   ~GPUGaussian3d();
 
-  void copy_from_host(const Gaussian3d &gaussians);
+  std::shared_ptr<BackendRuntime> runtime() const;
 
-  void copy_to_host(Gaussian3d& gaussians);
+  void copy_from_host(const Gaussian3d &gaussians, const std::shared_ptr<BackendQueue>& queue);
+
+  void copy_to_host(Gaussian3d& gaussians, const std::shared_ptr<BackendQueue>& queue);
 
   size_t size() const;
 
@@ -94,14 +81,14 @@ public:
   void memset_async(char value, BackendStream stream);
   void memset(char value);
 
-  void remove(char* kept_flag, int num_kept);
+  void remove(char* kept_flag, int num_kept, BackendStream stream = nullptr);
 
   /// @brief Reorder gaussians according to the indices.
   //         It performs a gather: new[i] = old[indices[i]]
   /// @note the indices buffer must be on device memory.
   void reorder(uint* indices, BackendStream stream = nullptr);
 
-  void append(int num_dup);
+  void append(int num_dup, const std::shared_ptr<BackendQueue>& queue);
 
   float scene_scale() const { return m_scene_scale; }
 

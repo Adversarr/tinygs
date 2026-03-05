@@ -33,10 +33,11 @@ static void reset_opacity(const std::shared_ptr<GPUGaussian3d>& gaussians, float
 }
 
 ImprovedStrategy::ImprovedStrategy(
+    std::shared_ptr<BackendRuntime> runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer)
-    : StrategyBase(gaussians, gaussians_grad, optimizer) {}
+    : StrategyBase(runtime, gaussians, gaussians_grad, optimizer) {}
 
 ImprovedStrategy::~ImprovedStrategy() = default;
 
@@ -81,7 +82,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
       step >= m_params.start_refine && step < m_params.end_refine) {
     // this scale is larger than default (10 vs. 2)
     reset_opacity(m_gaussians, 2.f * m_params.pruning_opacity_threshold, ctx.stream);
-    on_reset_opacity();
+    on_reset_opacity(ctx.queue);
   }
 
   if (m_noise_lr_init > 0) {
@@ -199,7 +200,7 @@ void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
                thrust::make_counting_iterator<int>(num_gaussians + num_grows), d_grow_indices_target);
 
   // Append and update optimizer state
-  StrategyBase::on_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows);
+  StrategyBase::on_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows, ctx.queue);
   if (static_cast<int>(m_gaussians->size()) != num_gaussians + num_grows) {
     log_error("Grow gaussians failed, expected {} gaussians, but got {}", num_gaussians + num_grows,
               m_gaussians->size());
@@ -350,7 +351,7 @@ void ImprovedStrategy::prune(const RasterizeContext& ctx) {
                                            [ia = is_alive.data()] __device__(int i) -> int { return ia[i] != 0 ? 1 : 0; },
                                            0, thrust::plus<int>());
 
-  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
+  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept, ctx.queue);
   log_info("Remove {} dead gaussians (kept {})", num_gaussians - nums_kept, nums_kept);
 }
 

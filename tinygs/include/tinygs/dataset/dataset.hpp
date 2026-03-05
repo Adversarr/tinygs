@@ -4,6 +4,7 @@
 #include "tinygs/core/camera_loader.hpp"
 #include "tinygs/core/image.hpp"
 #include "tinygs/core/pointcloud.hpp"
+#include "tinygs/platform/runtime_contract.hpp"
 namespace tinygs {
 
 /// @brief A single training/evaluation sample returned by DatasetBase::operator[].
@@ -24,7 +25,7 @@ struct Data {
 /// @brief Abstract base class for datasets that supply images + camera poses.
 ///
 /// Lifecycle:
-///   1. Construct via `create_dataset(type)`.
+///   1. Construct via `create_dataset(type, runtime)`.
 ///   2. Call `set_params(json)` to configure paths / options.
 ///   3. Call `load()` to read data from disk into host memory.
 ///   4. Access samples with `operator[]` and metadata with `size()` / `image_shape()`.
@@ -35,11 +36,14 @@ struct Data {
 /// Implementations: "image" (ImageDataset).
 class DatasetBase {
 public:
-  explicit DatasetBase() = default;
+  explicit DatasetBase(std::shared_ptr<BackendRuntime> runtime);
   DatasetBase(const DatasetBase&) = delete;
   DatasetBase& operator=(const DatasetBase&) = delete;
   DatasetBase(DatasetBase&&) = default;
   DatasetBase& operator=(DatasetBase&&) = default;
+
+  /// @brief Get the backend runtime
+  std::shared_ptr<BackendRuntime> runtime() const { return m_runtime; }
 
   /// @brief Load all images and camera data from disk.
   /// @pre `set_params()` must have been called with a valid configuration.
@@ -73,11 +77,14 @@ public:
   const SingleCameraLoader& get_camera_loader() const { return m_camera_loader; }
 
 protected:
+  std::shared_ptr<BackendRuntime> m_runtime;
   SingleCameraLoader m_camera_loader;
 };
 
 /// @brief Factory: create a dataset by type name.
 /// @param dataset_type One of: "image".
-std::unique_ptr<DatasetBase> create_dataset(const std::string& dataset_type);
+/// @param runtime Backend runtime for memory operations.
+std::unique_ptr<DatasetBase> create_dataset(const std::string& dataset_type,
+                                             std::shared_ptr<BackendRuntime> runtime);
 
 } // namespace tinygs

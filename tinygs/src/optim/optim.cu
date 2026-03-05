@@ -23,8 +23,12 @@ const char* to_string(OptimParamGroup group) {
   }
 }
 
-OptimizerBase::OptimizerBase(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad) :
-    m_gaussians(gaussians), m_gaussians_grad(gaussians_grad) {
+OptimizerBase::OptimizerBase(std::shared_ptr<BackendRuntime> runtime,
+                             std::shared_ptr<GPUGaussian3d> gaussians,
+                             std::shared_ptr<GPUGaussian3d> gaussians_grad)
+    : m_runtime(std::move(runtime)),
+      m_gaussians(gaussians),
+      m_gaussians_grad(gaussians_grad) {
 }
 
 void OptimizerBase::set_params(const json& config) {
@@ -102,7 +106,7 @@ void OptimizerBase::step(const GroupStepConfig& step_config, BackendStream strea
   step(s, stream);
 }
 
-void OptimizerBase::reset() {
+void OptimizerBase::reset(const std::shared_ptr<BackendQueue>& queue) {
   // nothing to do
 }
 
@@ -173,13 +177,14 @@ void GaussianOptimizationParams::from_json(const json& config) {
 }
 
 std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_type,
+                                                std::shared_ptr<BackendRuntime> runtime,
                                                 std::shared_ptr<GPUGaussian3d> gaussians,
                                                 std::shared_ptr<GPUGaussian3d> gaussians_grad) {
   std::string lower_optimizer_type = to_lower(optimizer_type);
   if (lower_optimizer_type == "adam") {
-    return std::make_unique<Adam>(gaussians, gaussians_grad);
+    return std::make_unique<Adam>(runtime, gaussians, gaussians_grad);
   } else if (lower_optimizer_type == "adam_per_gaussian" || lower_optimizer_type == "adam_pg") {
-    return std::make_unique<AdamPerGaussian>(gaussians, gaussians_grad);
+    return std::make_unique<AdamPerGaussian>(runtime, gaussians, gaussians_grad);
   } else {
     throw std::runtime_error(
         "Unknown optimizer type: " + optimizer_type +

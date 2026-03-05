@@ -15,10 +15,11 @@
 namespace tinygs {
 
 DefaultStrategy::DefaultStrategy(
+    std::shared_ptr<BackendRuntime> runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer
-) : StrategyBase(gaussians, gaussians_grad, optimizer) {
+) : StrategyBase(runtime, gaussians, gaussians_grad, optimizer) {
 }
 
 DefaultStrategy::~DefaultStrategy() = default;
@@ -64,7 +65,7 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
       step >= m_params.start_refine && step < m_params.end_refine) {
     reset_opacity(m_gaussians, 2 * m_params.pruning_opacity_threshold, ctx.stream);
-    on_reset_opacity();
+    on_reset_opacity(ctx.queue);
   }
 }
 
@@ -219,7 +220,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
       thrust::make_counting_iterator<int>(num_gaussians + num_grows),
       d_grow_indices_target);
 
-  StrategyBase::on_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows);
+  StrategyBase::on_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows, ctx.queue);
   // Now gaussians should have (num_gaussians + nums_duplicated) gaussians
   if (num_gaussians + num_grows != m_gaussians->size()) {
     log_error("Grow gaussians failed, expected {} gaussians, but got {}",
@@ -360,7 +361,7 @@ void DefaultStrategy::prune(const RasterizeContext& ctx) {
     thrust::plus<int>()
   );
 
-  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
+  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept, ctx.queue);
   log_info("Remove {} dead gaussians (kept {})", num_gaussians - nums_kept, nums_kept);
 }
 

@@ -3,14 +3,13 @@
 #include <memory>
 
 #include "tinygs/loss/loss.hpp"
-#include "tinygs/platform/runtime_contract.hpp"
 
 namespace tinygs {
 
 /// @brief Peak Signal-to-Noise Ratio metric
 class PsnrMetric : public MetricBase {
 public:
-  PsnrMetric();
+  explicit PsnrMetric(std::shared_ptr<BackendRuntime> runtime);
   ~PsnrMetric() override;
 
   /// @brief Evaluate PSNR metric
@@ -27,4 +26,4 @@ private:
   std::shared_ptr<BackendBuffer> m_sqr_diff;
 };
 
-} 
+} // namespace tinygs 

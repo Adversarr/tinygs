@@ -21,6 +21,10 @@
 
 namespace tinygs {
 
+CPUReferenceRasterizer::CPUReferenceRasterizer(std::shared_ptr<BackendRuntime> runtime)
+  : RasterizerBase(runtime) {
+}
+
 // ────────────────────────── SH Constants (Condon-Shortley phase) ──────────────────────────
 // Matches docs/KHR_gaussian_splatting.md Appendix A.
 static constexpr float kSH_C0 = 0.28209479177387814f;
@@ -283,7 +287,7 @@ void CPUReferenceRasterizer::forward(const RasterizeContext& ctx) {
 
   // Copy gaussian data from GPU to host
   Gaussian3d gs;
-  m_gaussians->copy_to_host(gs);
+  m_gaussians->copy_to_host(gs, ctx.queue);
   int sh_degree = m_gaussians->get_sh_degree();
 
   // ──── Per-Gaussian preprocessing ────
@@ -478,7 +482,7 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
 
   // Copy gaussian data from GPU
   Gaussian3d gs;
-  m_gaussians->copy_to_host(gs);
+  m_gaussians->copy_to_host(gs, ctx.queue);
   int sh_degree = m_gaussians->get_sh_degree();
 
   // Copy grad_output image from GPU (dL/d_image) — CHW-tiled
@@ -1121,7 +1125,7 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
   }
 
   // Copy gradients to GPU
-  ctx.gaussians_grad->copy_from_host(grad_gs);
+  ctx.gaussians_grad->copy_from_host(grad_gs, ctx.queue);
 
   // Copy densification info to GPU if present
   if (ctx.densification_info) {

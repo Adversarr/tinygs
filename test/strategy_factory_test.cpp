@@ -5,7 +5,7 @@
 
 TEST(StrategyFactoryTest, UnknownTypeThrows) {
     EXPECT_THROW(
-        tinygs::create_strategy("unknown_strategy", nullptr, nullptr, nullptr),
+        tinygs::create_strategy("unknown_strategy", nullptr, nullptr, nullptr, nullptr),
         std::runtime_error
     );
 }
@@ -26,7 +26,7 @@ TEST(StrategyFactoryTest, InvalidTypeVariantsThrow) {
 
     for (const char* type : invalid_types) {
         EXPECT_THROW(
-            tinygs::create_strategy(type, nullptr, nullptr, nullptr),
+            tinygs::create_strategy(type, nullptr, nullptr, nullptr, nullptr),
             std::runtime_error
         ) << "Expected throw for type: " << type;
     }
@@ -34,7 +34,7 @@ TEST(StrategyFactoryTest, InvalidTypeVariantsThrow) {
 
 TEST(StrategyFactoryTest, ErrorMessageContainsType) {
     try {
-        tinygs::create_strategy("test_strategy", nullptr, nullptr, nullptr);
+        tinygs::create_strategy("test_strategy", nullptr, nullptr, nullptr, nullptr);
         FAIL() << "Expected std::runtime_error";
     } catch (const std::runtime_error& e) {
         std::string msg = e.what();

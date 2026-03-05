@@ -288,8 +288,8 @@ struct AsyncDataLoader::Impl {
   ImageShape m_output_shape;
 };
 
-AsyncDataLoader::AsyncDataLoader(std::shared_ptr<DatasetBase> dataset) 
-  : DataLoaderBase(dataset), m_impl(std::make_unique<Impl>()) {
+AsyncDataLoader::AsyncDataLoader(std::shared_ptr<BackendRuntime> runtime, std::shared_ptr<DatasetBase> dataset) 
+  : DataLoaderBase(runtime, dataset), m_impl(std::make_unique<Impl>()) {
   m_impl->generate_permutation(m_dataset->size());
 }
 

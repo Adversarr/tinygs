@@ -6,7 +6,7 @@ namespace tinygs {
 
 class GsplatRasterizer final : public RasterizerBase {
 public:
-  GsplatRasterizer();
+  explicit GsplatRasterizer(std::shared_ptr<BackendRuntime> runtime);
 
   ~GsplatRasterizer() override;
 

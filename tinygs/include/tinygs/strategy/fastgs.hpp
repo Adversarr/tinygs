@@ -21,9 +21,10 @@ namespace tinygs {
 /// Reference: ref_impl/FastGS/scene/gaussian_model.py
 class FastGSStrategy : public StrategyBase {
 public:
-  explicit FastGSStrategy(std::shared_ptr<GPUGaussian3d> gaussians,
-                          std::shared_ptr<GPUGaussian3d> gaussians_grad,
-                          std::shared_ptr<OptimizerBase> optimizer);
+  explicit FastGSStrategy(std::shared_ptr<BackendRuntime> runtime,
+                           std::shared_ptr<GPUGaussian3d> gaussians,
+                           std::shared_ptr<GPUGaussian3d> gaussians_grad,
+                           std::shared_ptr<OptimizerBase> optimizer);
   ~FastGSStrategy() override;
 
   void reset() override;

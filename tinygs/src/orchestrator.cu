@@ -678,7 +678,7 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
 
   // Export PLY at eval end
   Gaussian3d gs_host;
-  m_gaussians->copy_to_host(gs_host);
+  m_gaussians->copy_to_host(gs_host, m_major_queue);
   save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features || m_state.should_stop);
 
   // Return mean metrics
@@ -1138,7 +1138,7 @@ void Orchestrator::reorder_gaussians() {
   // Apply reordering to gaussians
   m_gaussians->reorder(thrust::raw_pointer_cast(idx.data()), m_major_stream);
   m_gradients->reorder(thrust::raw_pointer_cast(idx.data()), m_major_stream);
-  m_optimizer->reorder(thrust::raw_pointer_cast(idx.data()));
+  m_optimizer->reorder(thrust::raw_pointer_cast(idx.data()), m_major_queue);
 
   if (m_rasterize_ctx.densification_info) {
     auto new_info = create_device_buffer_for<tinygs::DensificationInfo>(m_backend_runtime, n, "densification_reorder");

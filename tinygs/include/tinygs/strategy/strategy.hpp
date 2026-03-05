@@ -4,6 +4,7 @@
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/optim/optim.hpp"
+#include "tinygs/platform/runtime_contract.hpp"
 namespace tinygs {
 
 struct StrategyParams {
@@ -43,15 +44,20 @@ struct StrategyParams {
 
 class StrategyBase {
 public:
-  /// @brief Construct strategy with gaussians, gradients, and optimizer
+  /// @brief Construct strategy with runtime, gaussians, gradients, and optimizer
+  /// @param runtime Backend runtime for GPU operations
   /// @param gaussians GPU gaussians data
   /// @param gaussians_grad GPU gaussians gradients
   /// @param optimizer Optimizer for updating gaussians
-  explicit StrategyBase(std::shared_ptr<GPUGaussian3d> gaussians, 
-                       std::shared_ptr<GPUGaussian3d> gaussians_grad,
-                       std::shared_ptr<OptimizerBase> optimizer);
+  explicit StrategyBase(std::shared_ptr<BackendRuntime> runtime, 
+                        std::shared_ptr<GPUGaussian3d> gaussians, 
+                        std::shared_ptr<GPUGaussian3d> gaussians_grad,
+                        std::shared_ptr<OptimizerBase> optimizer);
 
   virtual ~StrategyBase() = default;
+
+  /// @brief Get the backend runtime
+  std::shared_ptr<BackendRuntime> runtime() const { return m_runtime; }
 
   /// @brief Execute one step of the strategy
   /// @param ctx Rasterization context containing densification info
@@ -83,13 +89,15 @@ protected:
   /// @brief Handle removal of gaussians and update optimizer state
   /// @param kept_flag Array indicating which gaussians to keep
   /// @param num_kept Number of gaussians being kept
-  void on_remove(char* kept_flag, int num_kept);
+  /// @param queue Queue for GPU operations
+  void on_remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue);
   
   /// @brief Handle duplication of gaussians and update optimizer state
   /// @param indices Original gaussian indices
   /// @param new_indices New gaussian indices after duplication
   /// @param num_duplications Number of gaussians being duplicated
-  void on_duplicate(int* indices, int* new_indices, int num_duplications);
+  /// @param queue Queue for GPU operations
+  void on_duplicate(int* indices, int* new_indices, int num_duplications, const std::shared_ptr<BackendQueue>& queue);
   
   /// @brief Handle reset of specific gaussians in optimizer
   /// @param indices Indices of gaussians to reset
@@ -97,11 +105,13 @@ protected:
   void on_reset(int* indices, int num_reset);
   
   /// @brief Handle opacity reset for all gaussians
-  void on_reset_opacity();
+  /// @param queue Queue for GPU operations
+  void on_reset_opacity(const std::shared_ptr<BackendQueue>& queue);
 
   /// @brief Get current step count
   int this_step() const noexcept { return m_step_count; }
 
+  std::shared_ptr<BackendRuntime> m_runtime;
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   std::shared_ptr<GPUGaussian3d> m_gaussians_grad;
   std::shared_ptr<OptimizerBase> m_optimizer;
@@ -113,12 +123,14 @@ private:
 
 /// @brief Create a strategy object
 /// @param strategy_type The type of strategy to create
+/// @param runtime Backend runtime for GPU operations
 /// @param gaussians The gaussians to optimize
 /// @param gaussians_grad The gradient of gaussians
 /// @param optimizer The optimizer to use
 std::unique_ptr<StrategyBase> create_strategy(const std::string& strategy_type,
-                                            std::shared_ptr<GPUGaussian3d> gaussians,
-                                            std::shared_ptr<GPUGaussian3d> gaussians_grad,
-                                            std::shared_ptr<OptimizerBase> optimizer);
+                                             std::shared_ptr<BackendRuntime> runtime,
+                                             std::shared_ptr<GPUGaussian3d> gaussians,
+                                             std::shared_ptr<GPUGaussian3d> gaussians_grad,
+                                             std::shared_ptr<OptimizerBase> optimizer);
 
 }  // namespace tinygs

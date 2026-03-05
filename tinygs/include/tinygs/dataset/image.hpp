@@ -25,8 +25,8 @@ namespace tinygs {
 /// extrinsics, intrinsics, and a non-owning pointer to the image buffer.
 class ImageDataset final : public DatasetBase {
 public:
-  ImageDataset();
-  explicit ImageDataset(const std::string& root_path);
+  explicit ImageDataset(std::shared_ptr<BackendRuntime> runtime);
+  ImageDataset(std::shared_ptr<BackendRuntime> runtime, const std::string& root_path);
   ~ImageDataset() override;
 
   ImageDataset(const ImageDataset&) = delete;

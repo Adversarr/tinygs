@@ -1,19 +1,22 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <thrust/device_vector.h>
+#include <memory>
 #include <thrust/execution_policy.h>
 #include <thrust/sequence.h>
+
+#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 
 namespace tinygs::optim_detail {
 
 template <typename IndexType>
 __global__ static void gather_soa_optim_kernel(const float* __restrict__ src,
-                                               float* __restrict__ dst,
-                                               const IndexType* __restrict__ mapping,
-                                               int num_items,
-                                               int num_channels,
-                                               int src_stride) {
+                                                float* __restrict__ dst,
+                                                const IndexType* __restrict__ mapping,
+                                                int num_items,
+                                                int num_channels,
+                                                int src_stride) {
   int tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid >= num_items * num_channels) {
     return;
@@ -23,60 +26,73 @@ __global__ static void gather_soa_optim_kernel(const float* __restrict__ src,
   dst[channel * num_items + item_idx] = src[channel * src_stride + mapping[item_idx]];
 }
 
-inline void gather_soa_optim_buffers(const thrust::device_vector<float>& src_first,
-                                     const thrust::device_vector<float>& src_second,
-                                     thrust::device_vector<float>& dst_first,
-                                     thrust::device_vector<float>& dst_second,
-                                     const unsigned int* mapping,
-                                     int num_items,
-                                     int num_channels,
-                                     int src_stride,
-                                     int block_size,
-                                     cudaStream_t stream = nullptr) {
+inline void gather_soa_optim_buffers(
+    const std::shared_ptr<BackendRuntime>& runtime,
+    const std::shared_ptr<BackendQueue>& queue,
+    const std::shared_ptr<BackendBuffer>& src_first,
+    const std::shared_ptr<BackendBuffer>& src_second,
+    std::shared_ptr<BackendBuffer>& dst_first,
+    std::shared_ptr<BackendBuffer>& dst_second,
+    const unsigned int* mapping,
+    int num_items,
+    int num_channels,
+    int src_stride,
+    int block_size) {
   int total = num_items * num_channels;
-  dst_first.resize(total, 0.f);
-  dst_second.resize(total, 0.f);
+  dst_first = create_device_buffer_for<float>(runtime, total, "optim_first");
+  dst_second = create_device_buffer_for<float>(runtime, total, "optim_second");
+  fill_buffer_zero(runtime, queue, dst_first);
+  fill_buffer_zero(runtime, queue, dst_second);
   if (total == 0) {
     return;
   }
+  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
   const int grid = (total + block_size - 1) / block_size;
   gather_soa_optim_kernel<unsigned int><<<grid, block_size, 0, stream>>>(
-      thrust::raw_pointer_cast(src_first.data()),
-      thrust::raw_pointer_cast(dst_first.data()),
+      buffer_data<float>(src_first),
+      buffer_data<float>(dst_first),
       mapping,
       num_items,
       num_channels,
       src_stride);
   gather_soa_optim_kernel<unsigned int><<<grid, block_size, 0, stream>>>(
-      thrust::raw_pointer_cast(src_second.data()),
-      thrust::raw_pointer_cast(dst_second.data()),
+      buffer_data<float>(src_second),
+      buffer_data<float>(dst_second),
       mapping,
       num_items,
       num_channels,
       src_stride);
 }
 
-inline void relayout_soa_optim(thrust::device_vector<float>& buf,
-                               int old_n,
-                               int new_n,
-                               int num_channels,
-                               int block_size,
-                               cudaStream_t stream = nullptr) {
+inline void relayout_soa_optim(
+    const std::shared_ptr<BackendRuntime>& runtime,
+    const std::shared_ptr<BackendQueue>& queue,
+    std::shared_ptr<BackendBuffer>& buf,
+    int old_n,
+    int new_n,
+    int num_channels,
+    int block_size) {
   if (old_n == 0 || new_n == 0) {
-    buf.assign(new_n * num_channels, 0.f);
+    buf = create_device_buffer_for<float>(runtime, new_n * num_channels, "optim_relayout");
+    fill_buffer_zero(runtime, queue, buf);
     return;
   }
 
-  thrust::device_vector<unsigned int> identity(old_n);
-  thrust::sequence(thrust::cuda::par.on(stream), identity.begin(), identity.end());
+  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
+  auto identity = create_device_buffer_for<unsigned int>(runtime, old_n, "identity_mapping");
+  thrust::sequence(thrust::cuda::par.on(stream),
+                   buffer_data<unsigned int>(identity),
+                   buffer_data<unsigned int>(identity) + old_n);
 
-  thrust::device_vector<float> new_buf(new_n * num_channels, 0.f);
+  auto new_buf = create_device_buffer_for<float>(runtime, new_n * num_channels, "optim_relayout");
+  fill_buffer_zero(runtime, queue, new_buf);
+  
   int total = old_n * num_channels;
   const int grid = (total + block_size - 1) / block_size;
   gather_soa_optim_kernel<unsigned int><<<grid, block_size, 0, stream>>>(
-      thrust::raw_pointer_cast(buf.data()),
-      thrust::raw_pointer_cast(new_buf.data()),
-      thrust::raw_pointer_cast(identity.data()),
+      buffer_data<float>(buf),
+      buffer_data<float>(new_buf),
+      buffer_data<unsigned int>(identity),
       old_n,
       num_channels,
       old_n);

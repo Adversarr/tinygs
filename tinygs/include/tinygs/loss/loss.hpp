@@ -2,7 +2,12 @@
 
 #include "tinygs/core/image.hpp"
 #include "tinygs/platform/backend_types.hpp"
+#include <memory>
+
 namespace tinygs {
+
+class BackendRuntime;
+class BackendBuffer;
 
 /// @brief Shared context for loss computation.
 ///
@@ -24,8 +29,10 @@ struct LossContext {
 /// so that multiple loss components can be composed.
 class LossBase {
 public:
-  LossBase() = default;
-  virtual ~LossBase() = default;
+  explicit LossBase(std::shared_ptr<BackendRuntime> runtime);
+  virtual ~LossBase();
+
+  std::shared_ptr<BackendRuntime> runtime() const;
 
   /// @brief Compute loss and accumulate scaled gradients into `ctx.grad`.
   /// @param ctx Loss context (pred, target, loss buffer, grad buffer).
@@ -35,12 +42,18 @@ public:
 
   /// @brief Human-readable name used for logging / CSV export.
   virtual std::string name() const = 0;
+
+private:
+  std::shared_ptr<BackendRuntime> m_runtime;
 };
 
 /// @brief Abstract base class for evaluation metrics (no gradient).
 class MetricBase {
 public:
-  virtual ~MetricBase() = default;
+  explicit MetricBase(std::shared_ptr<BackendRuntime> runtime);
+  virtual ~MetricBase();
+
+  std::shared_ptr<BackendRuntime> runtime() const;
 
   /// @brief Compute a scalar quality metric between predicted and target images.
   /// @param pred Predicted image (GPU memory).
@@ -50,14 +63,19 @@ public:
 
   /// @brief Human-readable name used for logging / CSV export.
   virtual std::string name() const = 0;
+
+private:
+  std::shared_ptr<BackendRuntime> m_runtime;
 };
 
 /// @brief Create loss object.
+/// @param runtime Backend runtime for buffer allocation.
 /// @param loss_type One of: "l1", "fused_ssim".
-std::unique_ptr<LossBase> create_loss(const std::string& loss_type);
+std::unique_ptr<LossBase> create_loss(std::shared_ptr<BackendRuntime> runtime, const std::string& loss_type);
 
 /// @brief Create metric object.
+/// @param runtime Backend runtime for buffer allocation.
 /// @param metric_type One of: "psnr".
-std::unique_ptr<MetricBase> create_metric(const std::string& metric_type);
+std::unique_ptr<MetricBase> create_metric(std::shared_ptr<BackendRuntime> runtime, const std::string& metric_type);
 
 } // namespace tinygs

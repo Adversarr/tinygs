@@ -283,16 +283,18 @@ void DataLoaderBase::reset() {
 
 /// @brief Create a dataloader of the specified type
 /// @param dataloader_type Type of dataloader to create ("simple" or "async")
+/// @param runtime Backend runtime for GPU operations
 /// @param dataset Dataset to load from
 /// @return Unique pointer to the created dataloader
 std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_type,
-                                                  std::shared_ptr<DatasetBase> dataset) {
+                                                   std::shared_ptr<BackendRuntime> runtime,
+                                                   std::shared_ptr<DatasetBase> dataset) {
   std::string lower_dataloader_type = to_lower(dataloader_type);
 
   if (lower_dataloader_type == "simple") {
-    return std::make_unique<SimpleDataLoader>(dataset);
+    return std::make_unique<SimpleDataLoader>(runtime, dataset);
   } else if (lower_dataloader_type == "async") {
-    return std::make_unique<AsyncDataLoader>(dataset);
+    return std::make_unique<AsyncDataLoader>(runtime, dataset);
   }
   throw std::runtime_error("Unknown dataloader type: " + dataloader_type);
 }
@@ -311,7 +313,8 @@ json DataLoaderBase::get_params() const {
 }
 
 /// @brief Constructor for DataLoaderBase
-DataLoaderBase::DataLoaderBase(std::shared_ptr<DatasetBase> dataset) : m_dataset(dataset) {
+DataLoaderBase::DataLoaderBase(std::shared_ptr<BackendRuntime> runtime, std::shared_ptr<DatasetBase> dataset) 
+  : m_runtime(runtime), m_dataset(dataset) {
   m_output_shape = dataset->image_shape();
   // m_raw_data starts null; allocated lazily in set_output_shape()
 }

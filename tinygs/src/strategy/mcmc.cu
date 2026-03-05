@@ -150,10 +150,11 @@ struct MCMCStrategy::Impl {
 };
 
 MCMCStrategy::MCMCStrategy(
+    std::shared_ptr<BackendRuntime> runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer
-) : StrategyBase(gaussians, gaussians_grad, optimizer) {
+) : StrategyBase(runtime, gaussians, gaussians_grad, optimizer) {
   init_binom();
 
   m_impl = std::make_unique<Impl>();
@@ -309,7 +310,8 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   on_duplicate(
         /* src_indices */ thrust::raw_pointer_cast(sampled_idxs.data()),
         /* dst_indices */ thrust::raw_pointer_cast(new_indices.data()),
-        /* num_indices */ num_to_add
+        /* num_indices */ num_to_add,
+        /* queue */ ctx.queue
     );
 
   // copy the parameters

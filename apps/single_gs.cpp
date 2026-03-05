@@ -198,7 +198,7 @@ int main(int argc, char** argv) {
   params.densification_info = tinygs::create_device_buffer_for<DensificationInfo>(
       params.runtime, gpu_gaussian->size(), "densification_info");
 
-  auto rast = create_rasterizer(rasterizer);
+  auto rast = create_rasterizer(rasterizer, runtime);
   rast->set_gaussians(gpu_gaussian);
   params.fwd_input = io.input;
   params.fwd_output = io.output;

@@ -5,7 +5,7 @@ namespace tinygs {
 
 class L2Loss : public LossBase {
 public:
-  L2Loss() = default;
+  using LossBase::LossBase;
   ~L2Loss() = default;
 
   void evaluate(LossContext ctx, float scale) override;

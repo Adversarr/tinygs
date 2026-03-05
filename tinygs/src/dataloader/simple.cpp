@@ -32,7 +32,8 @@ private:
 
 }  // namespace
 
-SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataLoaderBase(dataset), m_current_index(0) {
+SimpleDataLoader::SimpleDataLoader(std::shared_ptr<BackendRuntime> runtime, std::shared_ptr<DatasetBase> dataset) 
+  : DataLoaderBase(runtime, dataset), m_current_index(0) {
   m_rng.seed(0);
   generate_permutation();
   // Preallocate maximum GPU buffer once to avoid future reallocations

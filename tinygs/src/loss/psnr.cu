@@ -5,15 +5,6 @@
 #include <cuda_fp16.h>
 #include <cmath>
 
-
-// FastGS reference (image_utils.py):
-//   def psnr(img1, img2):
-//       mse = (((img1 - img2)) ** 2).view(img1.shape[0], -1).mean(1, keepdim=True)
-//       return 20 * torch.log10(1.0 / torch.sqrt(mse))
-//
-// Note: FastGS computes MSE per channel, then PSNR per channel, then averages.
-// This is NOT the same as computing MSE over all pixels and then PSNR.
-
 /**
  * Computes Peak Signal-to-Noise Ratio (PSNR) per-channel and averages.
  *
@@ -78,27 +69,9 @@ __global__ void psnr_squared_diff_kernel_f16_h2(int N_pairs, const __half2 *__re
 
 namespace tinygs {
 
-namespace {
-/// Minimal BackendBuffer using raw cudaMalloc (no runtime needed)
-class InternalCudaBuffer final : public BackendBuffer {
-public:
-  explicit InternalCudaBuffer(size_t bytes) : m_size(bytes) {
-    CUDA_CHECK_THROW(cudaMalloc(&m_data, bytes));
-  }
-  ~InternalCudaBuffer() override { if (m_data) cudaFree(m_data); }
-  BackendType backend_type() const noexcept override { return BackendType::Cuda; }
-  int device() const noexcept override { return 0; }
-  size_t size_bytes() const noexcept override { return m_size; }
-  const BufferDesc& desc() const noexcept override { static BufferDesc d; return d; }
-  void* data() const noexcept override { return m_data; }
-  void* native_handle() const noexcept override { return m_data; }
-private:
-  void* m_data = nullptr;
-  size_t m_size = 0;
-};
-} // namespace
+PsnrMetric::PsnrMetric(std::shared_ptr<BackendRuntime> runtime)
+    : MetricBase(std::move(runtime)) {}
 
-PsnrMetric::PsnrMetric() = default;
 PsnrMetric::~PsnrMetric() = default;
 
 float PsnrMetric::evaluate(Image pred, Image target) {
@@ -123,9 +96,9 @@ float PsnrMetric::evaluate(Image pred, Image target) {
 
   // Allocate temporary memory for squared differences
   if (!m_sqr_diff || buffer_count<float>(m_sqr_diff) < static_cast<size_t>(n)) {
-    m_sqr_diff = std::make_shared<InternalCudaBuffer>(n * sizeof(float));
+    m_sqr_diff = create_device_buffer_for<float>(runtime(), n, "psnr_sqr_diff");
   }
-  CUDA_CHECK_THROW(cudaMemset(m_sqr_diff->data(), 0, m_sqr_diff->size_bytes()));
+  CUDA_CHECK_THROW(cudaMemset(buffer_data<float>(m_sqr_diff), 0, m_sqr_diff->size_bytes()));
 
   float* squared_diff = buffer_data<float>(m_sqr_diff);
   // Compute squared differences

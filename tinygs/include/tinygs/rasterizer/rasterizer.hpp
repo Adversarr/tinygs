@@ -87,9 +87,15 @@ struct RasterizerParams {
 ///   - All CUDA work is enqueued on `ctx.stream`.
 class RasterizerBase {
 public:
+  explicit RasterizerBase(std::shared_ptr<BackendRuntime> runtime);
+  
+  /// @brief Constructor without runtime (for backward compatibility)
   RasterizerBase();
 
   virtual ~RasterizerBase() = default;
+
+  /// @brief Get the backend runtime
+  std::shared_ptr<BackendRuntime> runtime() const { return m_runtime; }
 
   /// @brief Render Gaussians into an image.
   /// @param params Fully-populated context (fwd_input must be set).
@@ -112,12 +118,15 @@ public:
   virtual void set_params(const json& j) = 0;
 
 protected:
+  std::shared_ptr<BackendRuntime> m_runtime;
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   RasterizerParams m_params;
 };
 
 /// @brief Factory function for creating rasterizers.
 /// @param rasterizer_type One of: "fastgs", "cpu".
-std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type);
+/// @param runtime Backend runtime for GPU operations.
+std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type,
+                                                   std::shared_ptr<BackendRuntime> runtime);
 
 }

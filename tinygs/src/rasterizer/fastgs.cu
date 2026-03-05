@@ -100,7 +100,8 @@ struct FastGSRasterizer::Impl {
   }
 };
 
-FastGSRasterizer::FastGSRasterizer() {
+FastGSRasterizer::FastGSRasterizer(std::shared_ptr<BackendRuntime> runtime)
+  : RasterizerBase(runtime) {
     m_impl = std::make_unique<Impl>();
 }
 

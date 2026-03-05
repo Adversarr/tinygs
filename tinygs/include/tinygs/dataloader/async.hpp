@@ -7,7 +7,7 @@ namespace tinygs {
 /// @brief Asynchronous dataloader, with internal cuda stream.
 class AsyncDataLoader : public DataLoaderBase {
 public:
-  explicit AsyncDataLoader(std::shared_ptr<DatasetBase> dataset);
+  explicit AsyncDataLoader(std::shared_ptr<BackendRuntime> runtime, std::shared_ptr<DatasetBase> dataset);
 
   /// @brief Destructor
   ~AsyncDataLoader();

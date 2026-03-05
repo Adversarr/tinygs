@@ -37,11 +37,13 @@ struct MCMCParams {
 
 class MCMCStrategy : public StrategyBase {
 public:
-  /// @brief Construct MCMC strategy with gaussians, gradients, and optimizer
+  /// @brief Construct MCMC strategy with runtime, gaussians, gradients, and optimizer
+  /// @param runtime Backend runtime for GPU operations
   /// @param gaussians GPU gaussians data
   /// @param gaussians_grad GPU gaussians gradients
   /// @param optimizer Optimizer for updating gaussians
-  MCMCStrategy(std::shared_ptr<GPUGaussian3d> gaussians,
+  MCMCStrategy(std::shared_ptr<BackendRuntime> runtime,
+               std::shared_ptr<GPUGaussian3d> gaussians,
                std::shared_ptr<GPUGaussian3d> gaussians_grad,
                std::shared_ptr<OptimizerBase> optimizer);
   virtual ~MCMCStrategy();

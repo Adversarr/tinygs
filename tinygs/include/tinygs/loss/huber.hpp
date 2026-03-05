@@ -5,7 +5,7 @@ namespace tinygs {
 
 class HuberLoss : public LossBase {
 public:
-  HuberLoss() = default;
+  using LossBase::LossBase;
   ~HuberLoss() = default;
 
   void evaluate(LossContext ctx, float scale) override;

@@ -5,6 +5,10 @@
 
 namespace tinygs {
 
+RasterizerBase::RasterizerBase(std::shared_ptr<BackendRuntime> runtime)
+  : m_runtime(runtime) {
+}
+
 RasterizerBase::RasterizerBase() {
 }
 
@@ -40,12 +44,13 @@ void RasterizerBase::set_params(const json& j) {
   m_params = params;
 }
 
-std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type) {
+std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type,
+                                                   std::shared_ptr<BackendRuntime> runtime) {
   std::string lower_rasterizer_type = to_lower(rasterizer_type);
   if (lower_rasterizer_type == "fastgs") {
-    return std::make_unique<FastGSRasterizer>();
+    return std::make_unique<FastGSRasterizer>(runtime);
   } else if (lower_rasterizer_type == "cpu") {
-    return std::make_unique<CPUReferenceRasterizer>();
+    return std::make_unique<CPUReferenceRasterizer>(runtime);
   } else {
     throw std::runtime_error("Unknown rasterizer type: " + rasterizer_type);
   }

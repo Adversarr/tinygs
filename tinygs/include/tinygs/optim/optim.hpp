@@ -5,8 +5,11 @@
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/common.hpp"
 #include "tinygs/platform/backend_types.hpp"
+#include "tinygs/platform/runtime_contract.hpp"
 
 namespace tinygs {
+
+class BackendRuntime;
 
 enum class OptimParamGroup {
   Means,
@@ -93,9 +96,13 @@ struct GaussianOptimizationParams {
 /// via parameter `decouple_decay=true`.
 class OptimizerBase {
 public:
-  OptimizerBase(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
+  OptimizerBase(std::shared_ptr<BackendRuntime> runtime,
+                std::shared_ptr<GPUGaussian3d> gaussians,
+                std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
   virtual ~OptimizerBase() = default;
+
+  std::shared_ptr<BackendRuntime> runtime() const { return m_runtime; }
 
   /// @brief Set the global learning rate multiplier (legacy helper).
   void set_lr(float new_lr);
@@ -121,18 +128,20 @@ public:
   virtual void step(const GroupStepConfig& step_config, BackendStream stream);
 
   /// @brief Reset all internal momentum / variance buffers (e.g. after reinit).
-  virtual void reset();
+  virtual void reset(const std::shared_ptr<BackendQueue>& queue);
 
   /// @brief Remove pruned Gaussians and shrink momentum buffers.
   /// @param kept_flag Per-Gaussian flag (1 = keep, 0 = remove); device memory.
   /// @param num_kept Total number of Gaussians after removal.
-  virtual void remove(char* kept_flag, int num_kept){}
+  /// @param queue Queue for GPU operations.
+  virtual void remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue){}
 
   /// @brief Expand momentum buffers after Gaussian duplication.
   /// @param indices Source indices for duplicated Gaussians; device memory.
   /// @param new_indices Destination indices in the expanded buffer; device memory.
   /// @param num_duplicate Number of new Gaussians added.
-  virtual void duplicate(int* indices, int* new_indices, int num_duplicate){}
+  /// @param queue Queue for GPU operations.
+  virtual void duplicate(int* indices, int* new_indices, int num_duplicate, const std::shared_ptr<BackendQueue>& queue){}
 
   /// @brief Zero out momentum buffers for specific Gaussians (e.g. after split).
   virtual void reset(int* indices, int num_reset) = 0;
@@ -140,10 +149,11 @@ public:
   /// @brief Reorder internal buffers to match a new Gaussian ordering.
   ///        Performs a gather: new[i] = old[indices[i]].
   /// @param indices New-to-old index mapping; device memory, length = num_gaussians.
-  virtual void reorder(uint* indices) = 0;
+  /// @param queue Queue for GPU operations.
+  virtual void reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) = 0;
 
   /// @brief Reset opacity values (implementation-specific clamping / reinit).
-  virtual void reset_opacity() = 0;
+  virtual void reset_opacity(const std::shared_ptr<BackendQueue>& queue) = 0;
 
   /// @brief Re-bind Gaussian pointers and reset all state.
   void set_gaussians(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
@@ -154,6 +164,7 @@ public:
   GaussianOptimizationParams get_optimization_params() const noexcept { return m_params; }
 
 protected:
+  std::shared_ptr<BackendRuntime> m_runtime;
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   std::shared_ptr<GPUGaussian3d> m_gaussians_grad;
 
@@ -168,9 +179,11 @@ protected:
 
 /// @brief Factory: create an optimizer by type name.
 /// @param optimizer_type One of: "adam", "adam_per_gaussian" (alias: "adam_pg").
+/// @param runtime Backend runtime for buffer allocation.
 /// @param gaussians Gaussian parameters to optimize.
 /// @param gaussians_grad Gradient buffer (same layout as gaussians).
 std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_type,
+                                                std::shared_ptr<BackendRuntime> runtime,
                                                 std::shared_ptr<GPUGaussian3d> gaussians,
                                                 std::shared_ptr<GPUGaussian3d> gaussians_grad);
 

@@ -18,10 +18,11 @@
 namespace tinygs {
 
 AbsGSStrategy::AbsGSStrategy(
+    std::shared_ptr<BackendRuntime> runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer)
-    : StrategyBase(gaussians, gaussians_grad, optimizer) {}
+    : StrategyBase(runtime, gaussians, gaussians_grad, optimizer) {}
 
 AbsGSStrategy::~AbsGSStrategy() = default;
 
@@ -63,7 +64,7 @@ void AbsGSStrategy::step_impl(const RasterizeContext& ctx) {
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
       step >= m_params.start_refine && step < m_params.end_refine) {
     reset_opacity_absgs(m_gaussians, 2.f * m_params.pruning_opacity_threshold, ctx.stream);
-    on_reset_opacity();
+    on_reset_opacity(ctx.queue);
   }
 }
 
@@ -154,7 +155,7 @@ void AbsGSStrategy::duplicate(const RasterizeContext& ctx) {
       d_grow_indices_target);
 
   // Resize Gaussians + optimizer buffers
-  StrategyBase::on_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows);
+  StrategyBase::on_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows, ctx.queue);
 
   // Generate random samples for split offsets
   thrust::device_vector<float> device_rng(num_grows * 6);
@@ -276,7 +277,7 @@ void AbsGSStrategy::prune(const RasterizeContext& ctx) {
       [ia = is_alive.data()] __device__(int i) -> int { return ia[i] != 0 ? 1 : 0; },
       0, thrust::plus<int>());
 
-  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
+  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept, ctx.queue);
   log_info("[AbsGS] Remove {} dead gaussians (kept {})", num_gaussians - nums_kept, nums_kept);
 }
 

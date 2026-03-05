@@ -6,7 +6,7 @@ namespace tinygs {
 /// @brief L1 loss implementation
 class L1Loss : public LossBase {
 public:
-  L1Loss() = default;
+  using LossBase::LossBase;
   ~L1Loss() = default;
 
   /// @brief Evaluate L1 loss and gradient

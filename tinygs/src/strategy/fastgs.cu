@@ -297,10 +297,11 @@ struct FastGSStrategy::Impl {
 #define m_pruning_score m_impl->m_pruning_score
 
 FastGSStrategy::FastGSStrategy(
+    std::shared_ptr<BackendRuntime> runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer)
-    : StrategyBase(gaussians, gaussians_grad, optimizer), m_impl(std::make_unique<Impl>()) {
+    : StrategyBase(runtime, gaussians, gaussians_grad, optimizer), m_impl(std::make_unique<Impl>()) {
   // Reference FastGS training defaults (ref_impl/FastGS/train_base.sh)
   // use densification every 500 iterations.
   m_params.refine_every = 500;
@@ -474,8 +475,8 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   Image gt_image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(gt_gpu.data()));
 
   // Shared loss contexts reused for every camera.
-  L1Loss l1_loss;
-  FusedSSIMLoss ssim_loss;
+  L1Loss l1_loss(ctx.runtime);
+  FusedSSIMLoss ssim_loss(ctx.runtime);
   LossContext l1_ctx;
   l1_ctx.pred = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(rendered_f32.data()));
   l1_ctx.target = gt_image;
@@ -903,7 +904,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
         0.8);
 
     // Reset opacity Adam state after clamping (reference: replace_tensor_to_optimizer zeros exp_avg/exp_avg_sq)
-    on_reset_opacity();
+    on_reset_opacity(ctx.queue);
 
     // Reset densification info since indices have changed
     size_t num_gaussians = m_gaussians->size();
@@ -929,7 +930,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
         static_cast<int>(m_gaussians->size()),
         thrust::raw_pointer_cast(m_gaussians->opacities().data()),
         m_opacity_reset_value);
-    on_reset_opacity();
+    on_reset_opacity(ctx.queue);
   }
 }
 
@@ -1170,7 +1171,8 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
     StrategyBase::on_duplicate(
         thrust::raw_pointer_cast(clone_src.data()),
         thrust::raw_pointer_cast(clone_target.data()),
-        num_clones);
+        num_clones,
+        ctx.queue);
 
     // Copy all raw parameters for clones (in deactivated space, matching reference)
     const int n_after_clone = static_cast<int>(m_gaussians->size());
@@ -1246,7 +1248,8 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
     StrategyBase::on_duplicate(
         thrust::raw_pointer_cast(split_src_expanded.data()),
         thrust::raw_pointer_cast(split_target.data()),
-        num_new_splits);
+        num_new_splits,
+        ctx.queue);
 
     // Generate N(0,1) random samples for position offsets: 3 floats per new Gaussian
     // Reference: samples = torch.normal(mean=0, std=activated_scale) = N(0,1) * activated_scale
@@ -1326,7 +1329,7 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
         });
 
     const int num_kept = size_total - num_splits;
-    this->on_remove(thrust::raw_pointer_cast(is_alive.data()), num_kept);
+    this->on_remove(thrust::raw_pointer_cast(is_alive.data()), num_kept, ctx.queue);
   }
 }
 
@@ -1663,7 +1666,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
       printf("[FastGS][Verbose] prune.removed pruning_score >0.9: %lld\n", removed_score_gt_09);
     }
   }
-  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
+  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept, ctx.queue);
 }
 
 // ---------------------------------------------------------------------------
@@ -1760,7 +1763,7 @@ void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
       log_numeric_moments("final_prune.pruning_score_removed", removed_score_stats);
     }
   }
-  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
+  this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept, ctx.queue);
 
   // Reset densification info
   ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, nums_kept);

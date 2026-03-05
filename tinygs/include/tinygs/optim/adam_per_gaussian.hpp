@@ -13,20 +13,22 @@ namespace tinygs {
 /// duplication start with t=0 and are incremented on the first optimizer step.
 class AdamPerGaussian final : public OptimizerBase {
 public:
-  AdamPerGaussian(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
+  AdamPerGaussian(std::shared_ptr<BackendRuntime> runtime,
+                  std::shared_ptr<GPUGaussian3d> gaussians,
+                  std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
   ~AdamPerGaussian() override;
 
-  void reset() override;
+  void reset(const std::shared_ptr<BackendQueue>& queue) override;
 
   void step(float scale, BackendStream stream) override;
   void step(const GroupStepConfig& step_config, BackendStream stream) override;
 
-  void remove(char* kept_flag, int num_kept) override;
-  void duplicate(int* indices, int* new_indices, int num_duplicate) override;
+  void remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) override;
+  void duplicate(int* indices, int* new_indices, int num_duplicate, const std::shared_ptr<BackendQueue>& queue) override;
   void reset(int* indices, int num_reset) override;
-  void reset_opacity() override;
-  void reorder(uint* indices) override;
+  void reset_opacity(const std::shared_ptr<BackendQueue>& queue) override;
+  void reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) override;
 
   void set_params(const json& config) override;
   json get_params() const override;

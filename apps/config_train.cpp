@@ -127,7 +127,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   // dataset
   std::shared_ptr<DatasetBase> train_dataset;
   if (auto dataset_config = config.at("dataset"); dataset_config.is_object()) {
-    train_dataset = create_dataset(dataset_config.at("type").get<std::string>());
+    train_dataset = create_dataset(dataset_config.at("type").get<std::string>(), backend_runtime);
     train_dataset->set_params(dataset_config);
     train_dataset->load();
   } else {
@@ -145,7 +145,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   // dataloader
   std::shared_ptr<DataLoaderBase> dataloader;
   if (auto dataloader_config = config.at("dataloader"); dataloader_config.is_object()) {
-    dataloader = create_dataloader(dataloader_config.at("type").get<std::string>(), train_dataset);
+    dataloader = create_dataloader(dataloader_config.at("type").get<std::string>(), backend_runtime, train_dataset);
     dataloader->set_params(dataloader_config);
   } else {
     throw std::runtime_error("Dataloader config is required.");
@@ -155,18 +155,18 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
 
   if (config.contains("test_dataset") && config.at("test_dataset").is_object()) {
     const auto &test_dataset_cfg = config.at("test_dataset");
-    std::shared_ptr<DatasetBase> test_dataset = create_dataset(test_dataset_cfg.at("type").get<std::string>());
+    std::shared_ptr<DatasetBase> test_dataset = create_dataset(test_dataset_cfg.at("type").get<std::string>(), backend_runtime);
     test_dataset->set_params(test_dataset_cfg);
     test_dataset->load();
 
     std::shared_ptr<DataLoaderBase> test_loader;
     if (config.contains("test_dataloader") && config.at("test_dataloader").is_object()) {
       const auto &test_dataloader_cfg = config.at("test_dataloader");
-      test_loader = create_dataloader(test_dataloader_cfg.at("type").get<std::string>(), test_dataset);
+      test_loader = create_dataloader(test_dataloader_cfg.at("type").get<std::string>(), backend_runtime, test_dataset);
       test_loader->set_params(test_dataloader_cfg);
     } else {
       const auto &train_dataloader_cfg = config.at("dataloader");
-      test_loader = create_dataloader(train_dataloader_cfg.at("type").get<std::string>(), test_dataset);
+      test_loader = create_dataloader(train_dataloader_cfg.at("type").get<std::string>(), backend_runtime, test_dataset);
       test_loader->set_params(train_dataloader_cfg);
     }
     orchestrator->set_test_dataloader(test_loader);
@@ -187,8 +187,15 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   // Init the point clouds.
   initializer->initialize(pointcloud);
   const auto& init_result = initializer->gaussians();
-  auto gs3d = std::make_shared<GPUGaussian3d>();
-  gs3d->copy_from_host(init_result);
+  
+  auto major_queue_result = backend_runtime->create_queue({.non_blocking = true, .debug_name = "major"});
+  if (!major_queue_result.ok()) {
+    throw std::runtime_error("Failed to create major queue: " + to_string(major_queue_result.error()));
+  }
+  auto major_queue = major_queue_result.value();
+  
+  auto gs3d = std::make_shared<GPUGaussian3d>(backend_runtime);
+  gs3d->copy_from_host(init_result, major_queue);
   std::shared_ptr<GPUGaussian3d> grads = gs3d->clone();
   grads->memset(0);
   gs3d->set_sh_degree(0);
@@ -197,7 +204,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   // rasterizer
   std::shared_ptr<RasterizerBase> rasterizer;
   if (auto rasterizer_config = config.at("rasterizer"); rasterizer_config.is_object()) {
-    rasterizer = create_rasterizer(rasterizer_config.at("type").get<std::string>());
+    rasterizer = create_rasterizer(rasterizer_config.at("type").get<std::string>(), backend_runtime);
     rasterizer->set_params(rasterizer_config);
     orchestrator->set_rasterizer(rasterizer);
   } else {
@@ -207,7 +214,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   // optimizer
   std::shared_ptr<OptimizerBase> optimizer;
   if (auto optimizer_config = config.at("optimizer"); optimizer_config.is_object()) {
-    optimizer = create_optimizer(optimizer_config.at("type").get<std::string>(), gs3d, grads);
+    optimizer = create_optimizer(optimizer_config.at("type").get<std::string>(), backend_runtime, gs3d, grads);
     optimizer->set_params(optimizer_config);
     orchestrator->set_optimizer(optimizer);
   } else {
@@ -249,7 +256,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   if (auto losses_config = config.at("losses"); losses_config.is_array()) {
     for (const auto& loss_config : losses_config) {
       if (loss_config.is_object()) {
-        orchestrator->add_loss(create_loss(loss_config.at("type").get<std::string>()),
+        orchestrator->add_loss(create_loss(backend_runtime, loss_config.at("type").get<std::string>()),
                                loss_config.at("weight").get<float>());
       } else {
         throw std::runtime_error("Loss item must be an object.");
@@ -264,7 +271,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
     for (const auto& metric_config : metrics_config) {
       if (metric_config.is_string()) {
         auto name = metric_config.get<std::string>();
-        orchestrator->add_metric(create_metric(name), name);
+        orchestrator->add_metric(create_metric(backend_runtime, name), name);
       } else {
         throw std::runtime_error("Metric item must be an string.");
       }
@@ -276,7 +283,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   // strategy
   std::shared_ptr<StrategyBase> strategy;
   if (auto strategy_config = config.at("strategy"); strategy_config.is_object()) {
-    strategy = create_strategy(strategy_config.at("type").get<std::string>(), gs3d, grads, optimizer);
+    strategy = create_strategy(strategy_config.at("type").get<std::string>(), backend_runtime, gs3d, grads, optimizer);
     strategy->set_params(strategy_config);
     orchestrator->set_strategy(strategy);
   } else {

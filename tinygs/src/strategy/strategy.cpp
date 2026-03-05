@@ -8,10 +8,11 @@
 
 namespace tinygs {
 
-StrategyBase::StrategyBase(std::shared_ptr<GPUGaussian3d> gaussians,
-                           std::shared_ptr<GPUGaussian3d> gaussians_grad,
-                           std::shared_ptr<OptimizerBase> optimizer)
-  : m_gaussians(gaussians), m_gaussians_grad(gaussians_grad), m_optimizer(optimizer) {
+StrategyBase::StrategyBase(std::shared_ptr<BackendRuntime> runtime,
+                            std::shared_ptr<GPUGaussian3d> gaussians,
+                            std::shared_ptr<GPUGaussian3d> gaussians_grad,
+                            std::shared_ptr<OptimizerBase> optimizer)
+  : m_runtime(runtime), m_gaussians(gaussians), m_gaussians_grad(gaussians_grad), m_optimizer(optimizer) {
 }
 
 void StrategyBase::step(const RasterizeContext& ctx) {
@@ -19,31 +20,32 @@ void StrategyBase::step(const RasterizeContext& ctx) {
   ++m_step_count;
 }
 
-void StrategyBase::on_remove(char* kept_flag, int num_kept) {
+void StrategyBase::on_remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) {
   if (num_kept <= 0) return;
 
+  BackendStream stream = queue ? BackendStream(queue->native_handle()) : nullptr;
   if (m_gaussians) {
-    m_gaussians->remove(kept_flag, num_kept);
+    m_gaussians->remove(kept_flag, num_kept, stream);
   }
   if (m_gaussians_grad) {
-    m_gaussians_grad->remove(kept_flag, num_kept);
+    m_gaussians_grad->remove(kept_flag, num_kept, stream);
   }
   if (m_optimizer) {
-    m_optimizer->remove(kept_flag, num_kept);
+    m_optimizer->remove(kept_flag, num_kept, queue);
   }
 }
 
-void StrategyBase::on_duplicate(int* indices, int* new_indices, int num_duplications) {
+void StrategyBase::on_duplicate(int* indices, int* new_indices, int num_duplications, const std::shared_ptr<BackendQueue>& queue) {
   if (num_duplications <= 0) return;
-  
+
   if (m_gaussians) {
-    m_gaussians->append(num_duplications);
+    m_gaussians->append(num_duplications, queue);
   }
   if (m_gaussians_grad) {
-    m_gaussians_grad->append(num_duplications);
+    m_gaussians_grad->append(num_duplications, queue);
   }
   if (m_optimizer) {
-    m_optimizer->duplicate(indices, new_indices, num_duplications);
+    m_optimizer->duplicate(indices, new_indices, num_duplications, queue);
   }
 }
 
@@ -55,12 +57,12 @@ void StrategyBase::on_reset(int* indices, int num_reset) {
   }
 }
 
-void StrategyBase::on_reset_opacity() {
+void StrategyBase::on_reset_opacity(const std::shared_ptr<BackendQueue>& queue) {
   if (m_optimizer) {
-    m_optimizer->reset_opacity();
+    m_optimizer->reset_opacity(queue);
     if (m_params.reset_reset_optimizer) {
       log_info("Reset optimizer after reset opacity!");
-      m_optimizer->reset();
+      m_optimizer->reset(queue);
     }
   }
 }
@@ -138,6 +140,7 @@ StrategyParams::StrategyParams(const json& config) {
 }
 
 std::unique_ptr<StrategyBase> create_strategy(const std::string& strategy_type,
+                                             std::shared_ptr<BackendRuntime> runtime,
                                              std::shared_ptr<GPUGaussian3d> gaussians,
                                              std::shared_ptr<GPUGaussian3d> gaussians_grad,
                                              std::shared_ptr<OptimizerBase> optimizer) {
@@ -145,15 +148,15 @@ std::unique_ptr<StrategyBase> create_strategy(const std::string& strategy_type,
   std::transform(lower_strategy_type.begin(), lower_strategy_type.end(), lower_strategy_type.begin(), ::tolower);
   
   if (lower_strategy_type == "default") {
-    return std::make_unique<DefaultStrategy>(gaussians, gaussians_grad, optimizer);
+    return std::make_unique<DefaultStrategy>(runtime, gaussians, gaussians_grad, optimizer);
   } else if (lower_strategy_type == "mcmc") {
-    return std::make_unique<MCMCStrategy>(gaussians, gaussians_grad, optimizer);
+    return std::make_unique<MCMCStrategy>(runtime, gaussians, gaussians_grad, optimizer);
   } else if (lower_strategy_type == "improved") {
-    return std::make_unique<ImprovedStrategy>(gaussians, gaussians_grad, optimizer);
+    return std::make_unique<ImprovedStrategy>(runtime, gaussians, gaussians_grad, optimizer);
   } else if (lower_strategy_type == "absgs") {
-    return std::make_unique<AbsGSStrategy>(gaussians, gaussians_grad, optimizer);
+    return std::make_unique<AbsGSStrategy>(runtime, gaussians, gaussians_grad, optimizer);
   } else if (lower_strategy_type == "fastgs") {
-    return std::make_unique<FastGSStrategy>(gaussians, gaussians_grad, optimizer);
+    return std::make_unique<FastGSStrategy>(runtime, gaussians, gaussians_grad, optimizer);
   } else {
     throw std::runtime_error("Unknown strategy type: " + strategy_type);
   }

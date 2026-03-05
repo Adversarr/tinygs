@@ -13,7 +13,7 @@ struct FastGSRasterizerParams {
 
 class FastGSRasterizer final : public RasterizerBase {
 public:
-  FastGSRasterizer();
+  explicit FastGSRasterizer(std::shared_ptr<BackendRuntime> runtime);
 
   ~FastGSRasterizer() override;
 

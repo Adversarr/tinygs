@@ -9,7 +9,7 @@ using namespace tinygs;
 
 class MockOptimizer : public OptimizerBase {
 public:
-    MockOptimizer() : OptimizerBase(nullptr, nullptr) {}
+    MockOptimizer() : OptimizerBase(nullptr, nullptr, nullptr) {}
     
     void step(float scale, BackendStream stream) override { 
         (void)scale; 
@@ -23,8 +23,13 @@ public:
         (void)indices;
         (void)num_reset;
     }
-    void reorder(uint* indices) override { (void)indices; }
-    void reset_opacity() override {}
+    void reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) override { 
+        (void)indices; 
+        (void)queue;
+    }
+    void reset_opacity(const std::shared_ptr<BackendQueue>& queue) override { 
+        (void)queue; 
+    }
 };
 
 TEST(ConstantLRTest, ReturnsConstantValue) {
