@@ -268,11 +268,11 @@ private:
 };
 
 inline cudaStream_t to_cuda_stream(BackendStream stream) {
-  return reinterpret_cast<cudaStream_t>(stream);
+  return reinterpret_cast<cudaStream_t>(stream.handle);
 }
 
 inline BackendStream to_backend_stream(cudaStream_t stream) {
-  return reinterpret_cast<BackendStream>(stream);
+  return BackendStream{reinterpret_cast<void*>(stream)};
 }
 
 #if defined(__CUDACC__) || (defined(__clang__) && defined(__CUDA__))

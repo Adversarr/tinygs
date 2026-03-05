@@ -703,6 +703,9 @@ public:
     m_data = reinterpret_cast<T*>(m_arena_alloc->data());
   }
 
+  GPUBuffer(BackendStream stream, size_t n_elems)
+      : GPUBuffer(to_cuda_stream(stream), n_elems) {}
+
 	/**
 	 * @brief Create a GPUBuffer object on custom arena.
 	 * 

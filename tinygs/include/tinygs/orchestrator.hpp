@@ -18,6 +18,7 @@
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/strategy/strategy.hpp"
 #include "tinygs/platform/backend_types.hpp"
+#include "tinygs/platform/runtime_contract.hpp"
 
 namespace tinygs {
 
@@ -128,6 +129,9 @@ public:
 
   /// @brief Set the densification strategy
   void set_strategy(std::shared_ptr<StrategyBase> strategy);
+
+  /// @brief Set backend runtime used for queue/event/buffer operations.
+  void set_backend_runtime(std::shared_ptr<BackendRuntime> backend_runtime);
 
   /// @brief Set the learning rate scheduler
   void set_lr_scheduler(OptimParamGroup group, std::shared_ptr<LrSchedulerBase> scheduler);
@@ -249,6 +253,10 @@ private:
   // Training state and configuration
   OrchestratorConfig m_config;
   TrainingState m_state;
+
+  // Backend runtime and major queue for orchestration-stage synchronization.
+  std::shared_ptr<BackendRuntime> m_backend_runtime;
+  std::shared_ptr<BackendQueue> m_major_queue;
 
   // Callbacks
   PreStepCallback m_pre_step_callback;

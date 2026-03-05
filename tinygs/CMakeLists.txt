@@ -10,6 +10,7 @@ set(TINYGS_SOURCES
     # CUDA utilities
     "src/cuda/common_host.cu"
     "src/cuda/reduce.cu"
+    "src/cuda/runtime_cuda.cpp"
     
     # Dataloader
     "src/dataloader/dataloader.cu"
@@ -46,6 +47,7 @@ set(TINYGS_SOURCES
 
     # Platform
     "src/platform/backend_factory.cpp"
+    "src/platform/runtime_factory.cpp"
 
     # Random utilities
     "src/random/multinomial.cu"

@@ -10,7 +10,7 @@
 #include "tinygs/optim/lr_scheduler.hpp"
 #include "tinygs/optim/optim.hpp"
 #include "tinygs/platform/backend_build.hpp"
-#include "tinygs/platform/backend_factory.hpp"
+#include "tinygs/platform/runtime_factory.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/orchestrator.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
@@ -88,16 +88,32 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
         "'. Reconfigure with -DTINYGS_BACKEND or update config backend.type.");
   }
 
-  auto backend_ctx = create_backend_context(backend_config);
-  if (backend_ctx->type() != compiled_backend_type()) {
+  const auto backend_runtime_result = create_backend_runtime(backend_config);
+  if (!backend_runtime_result.ok()) {
     throw std::runtime_error(
-        "Backend context type mismatch with compiled backend.");
+        "Failed to create backend runtime: " + to_string(backend_runtime_result.error()));
   }
-  set_cuda_device(backend_ctx->device());
-  log_info("Using backend={} device={}", to_string(backend_ctx->type()), backend_ctx->device());
+  auto backend_runtime = backend_runtime_result.value();
+  if (!backend_runtime) {
+    throw std::runtime_error("Backend runtime creation returned null.");
+  }
+  if (backend_runtime->backend_type() != compiled_backend_type()) {
+    throw std::runtime_error("Backend runtime type mismatch with compiled backend.");
+  }
+  const CapabilityProfile caps = backend_runtime->capability_profile();
+  if (!caps.supports_queues || !caps.supports_events || !caps.supports_device_buffers) {
+    throw std::runtime_error(
+        "Backend runtime is missing required capabilities (queues/events/device_buffers).");
+  }
+  log_info("Using backend={} device={} compute_capability={} total_mem={}",
+           to_string(backend_runtime->backend_type()),
+           backend_runtime->device(),
+           caps.compute_capability,
+           bytes_to_string(caps.total_global_memory_bytes));
 
   // orchestrator
   auto orchestrator = std::make_shared<Orchestrator>();
+  orchestrator->set_backend_runtime(backend_runtime);
   if (config.contains("trainer") && config.at("trainer").is_object()) {
     const auto& trainer_cfg = config.at("trainer");
     if (trainer_cfg.contains("resolution") || trainer_cfg.contains("resolution_scale")) {

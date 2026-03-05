@@ -96,6 +96,17 @@ def is_platform_file(path: Path) -> bool:
     return False
 
 
+def is_runtime_contract_header(path: Path) -> bool:
+    rp = relpath(path)
+    if not rp.startswith("tinygs/include/tinygs/platform/"):
+        return False
+    return path.name in {
+        "backend_error.hpp",
+        "runtime_contract.hpp",
+        "runtime_factory.hpp",
+    }
+
+
 def add_count(
     findings: dict[FindingKey, int],
     rule_id: str,
@@ -150,6 +161,27 @@ def scan_findings() -> dict[FindingKey, int]:
                     add_count(
                         findings,
                         "platform_layer_forbidden_vendor_dep",
+                        path,
+                        f"token:{token_name}",
+                        token_count,
+                    )
+
+        if is_runtime_contract_header(path):
+            for include_target in INCLUDE_RE.findall(text):
+                if is_vendor_include(include_target):
+                    add_count(
+                        findings,
+                        "runtime_contract_forbidden_vendor_dep",
+                        path,
+                        f"include:{include_target}",
+                    )
+
+            for token_name, token_re in TOKEN_PATTERNS:
+                token_count = len(token_re.findall(text))
+                if token_count > 0:
+                    add_count(
+                        findings,
+                        "runtime_contract_forbidden_vendor_dep",
                         path,
                         f"token:{token_name}",
                         token_count,

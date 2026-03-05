@@ -5,6 +5,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
 #include <thrust/transform_reduce.h>
+#include <cub/device/device_radix_sort.cuh>
 
 #include <algorithm>
 #include <iomanip>
@@ -12,6 +13,8 @@
 #include <vector>
 
 #include "tinygs/core/pointcloud.hpp"
+#include "tinygs/platform/backend_build.hpp"
+#include "tinygs/platform/runtime_factory.hpp"
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/cuda/reduce.hpp"
@@ -21,14 +24,22 @@
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/utils/image_format.hpp"
 #include "tinygs/common.hpp"
-#include <cub/device/device_radix_sort.cuh>
+
 namespace tinygs {
+
+static inline void backend_check_throw(const BackendError& status, const char* operation) {
+  if (status.ok()) {
+    return;
+  }
+  throw std::runtime_error(
+      "Runtime operation failed (" + std::string(operation) + "): " + to_string(status));
+}
 
 static inline void debug_cuda_stage_check(const OrchestratorConfig& cfg,
                                           size_t step,
-                                          BackendStream stream,
+                                          const std::shared_ptr<BackendRuntime>& runtime,
+                                          const std::shared_ptr<BackendQueue>& queue,
                                           const char* stage_name) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
   if (!cfg.debug_cuda_check_each_stage && !cfg.debug_cuda_sync_each_stage) {
     return;
   }
@@ -43,9 +54,12 @@ static inline void debug_cuda_stage_check(const OrchestratorConfig& cfg,
   if (cfg.debug_cuda_sync_each_stage) {
     // Device-wide sync intentionally used for debug mode so failures on auxiliary
     // streams (e.g., async dataloader stream) are surfaced at the nearest stage.
-    CUDA_CHECK_THROW(cudaDeviceSynchronize());
+    CHECK_THROW(runtime != nullptr);
+    backend_check_throw(runtime->synchronize_device(), "debug synchronize device");
   } else {
-    CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
+    CHECK_THROW(runtime != nullptr);
+    CHECK_THROW(queue != nullptr);
+    backend_check_throw(runtime->synchronize_queue(queue), "debug synchronize queue");
   }
   if (cfg.debug_cuda_check_each_stage) {
     CUDA_CHECK_THROW(cudaPeekAtLastError());
@@ -293,6 +307,10 @@ void Orchestrator::set_strategy(std::shared_ptr<StrategyBase> strategy) {
   }
 }
 
+void Orchestrator::set_backend_runtime(std::shared_ptr<BackendRuntime> backend_runtime) {
+  m_backend_runtime = std::move(backend_runtime);
+}
+
 void Orchestrator::add_loss(std::shared_ptr<LossBase> loss, float weight) {
   m_losses.push_back({loss, weight});
 }
@@ -400,11 +418,13 @@ void Orchestrator::train_step() {
   if (rotations_cycle_start) clear_group_gradients(OptimParamGroup::Rotations);
   m_loss_buffer->memset(0);
   m_image_grad_buffer->memset(0);
-  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "clear-buffers");
+  debug_cuda_stage_check(
+      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "clear-buffers");
 
   // Get next batch of data
   auto data = m_dataloader->next();
-  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "dataloader-next");
+  debug_cuda_stage_check(
+      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "dataloader-next");
 
   // Update rasterization context with current data
   m_rasterize_ctx.fwd_input = data.input;
@@ -415,27 +435,32 @@ void Orchestrator::train_step() {
     w2c = m_pose_opt->query(timestamp, w2c);
     m_rasterize_ctx.fwd_input.w2c = w2c;
   }
-  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "prepare-input");
+  debug_cuda_stage_check(
+      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "prepare-input");
 
   // Forward pass
   m_rasterizer->forward(m_rasterize_ctx);
-  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "rasterizer-forward");
+  debug_cuda_stage_check(
+      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "rasterizer-forward");
 
   // Evaluate losses and accumulate gradients
   evaluate_losses(data);
-  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "evaluate-losses");
+  debug_cuda_stage_check(
+      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "evaluate-losses");
 
   // Setup gradient output for backward pass
   m_rasterize_ctx.grad_output.image = m_loss_ctx.grad;
 
   // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
-  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "rasterizer-backward");
+  debug_cuda_stage_check(
+      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "rasterizer-backward");
   auto grad_w2c = m_rasterize_ctx.grad_input.w2c;
   if (m_pose_opt && m_state.current_step >= m_config.start_pose_opt) {
     float lr = m_optimizer ? m_optimizer->get_lr(OptimParamGroup::Means) : 1.0f;
     m_pose_opt->update(m_rasterize_ctx.fwd_input.timestamp, grad_w2c, lr);
-    debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "pose-update");
+    debug_cuda_stage_check(
+        m_config, m_state.current_step, m_backend_runtime, m_major_queue, "pose-update");
   }
 
   const bool step_means = should_step_group(OptimParamGroup::Means, m_state.current_step);
@@ -464,31 +489,37 @@ void Orchestrator::train_step() {
     step_cfg.scales_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Scales));
     step_cfg.rotations_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Rotations));
     m_optimizer->step(step_cfg, m_major_stream);
-    debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "optimizer-step");
+    debug_cuda_stage_check(
+        m_config, m_state.current_step, m_backend_runtime, m_major_queue, "optimizer-step");
   }
 
   // Strategy step (densification) — only after a full accumulation cycle completes
   if ((step_means || step_shs || step_opacities || step_scales || step_rotations) && m_strategy) {
     m_strategy->step(m_rasterize_ctx);
-    debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "strategy-step");
+    debug_cuda_stage_check(
+        m_config, m_state.current_step, m_backend_runtime, m_major_queue, "strategy-step");
   }
 
   if (m_state.current_step > 0) {
     if (m_config.scene_scale_recompute_interval > 0 &&
         m_state.current_step % m_config.scene_scale_recompute_interval == 0) {
       recompute_scene_scale();
-      debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "recompute-scene-scale");
+      debug_cuda_stage_check(
+          m_config, m_state.current_step, m_backend_runtime, m_major_queue,
+          "recompute-scene-scale");
     }
     if (m_config.reorder_gaussians_interval > 0 &&
         m_state.current_step % m_config.reorder_gaussians_interval == 0) {
       reorder_gaussians();
-      debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "reorder-gaussians");
+      debug_cuda_stage_check(
+          m_config, m_state.current_step, m_backend_runtime, m_major_queue, "reorder-gaussians");
     }
   }
 
   // Update spherical harmonics degree
   update_sh_degree();
-  debug_cuda_stage_check(m_config, m_state.current_step, m_major_stream, "update-sh-degree");
+  debug_cuda_stage_check(
+      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "update-sh-degree");
 
   // Post-step callback (for logging, visualization, etc.)
   if (m_post_step_callback) {
@@ -554,7 +585,7 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
     m_rasterizer->forward(m_rasterize_ctx);
 
     // Wait for the rasterization to finish
-    cudaStreamSynchronize(to_cuda_stream(m_major_stream));
+    backend_check_throw(m_backend_runtime->synchronize_queue(m_major_queue), "eval synchronize");
 
     // Export the rasterized image if enabled
     if (m_config.export_rasterized) {
@@ -660,7 +691,8 @@ float Orchestrator::accumulate_loss() {
   if (!m_loss_buffer) {
     return 0.0f;
   }
-  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(m_loss_ctx.stream)));
+  backend_check_throw(
+      m_backend_runtime->synchronize_queue(m_major_queue), "accumulate_loss synchronize");
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
   //? the unused pixels in the padded area are set to zero during loss computation
   //! fix the shape is not compatible with the tile-based design.
@@ -709,12 +741,26 @@ void Orchestrator::update_config(const OrchestratorConfig& config) {
 }
 
 void Orchestrator::initialize() {
-  if (m_major_stream) {
-    CUDA_CHECK_THROW(cudaStreamDestroy(to_cuda_stream(m_major_stream)));
+  if (!m_backend_runtime) {
+    BackendConfig backend_config;
+    backend_config.type = compiled_backend_type();
+    backend_config.device = cuda_device();
+    const auto runtime_result = create_backend_runtime(backend_config);
+    backend_check_throw(runtime_result.error(), "initialize create backend runtime");
+    m_backend_runtime = runtime_result.value();
   }
-  cudaStream_t major_stream = nullptr;
-  CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&major_stream, cudaStreamNonBlocking));
-  m_major_stream = to_backend_stream(major_stream);
+  CHECK_THROW(m_backend_runtime != nullptr);
+
+  m_major_queue.reset();
+  m_major_stream = nullptr;
+  QueueDesc queue_desc;
+  queue_desc.non_blocking = true;
+  queue_desc.debug_name = "orchestrator_major";
+  const auto queue_result = m_backend_runtime->create_queue(queue_desc);
+  backend_check_throw(queue_result.error(), "initialize create major queue");
+  m_major_queue = queue_result.value();
+  CHECK_THROW(m_major_queue != nullptr);
+  m_major_stream = m_major_queue->native_handle();
 
   m_loss_ctx.stream = m_rasterize_ctx.stream = m_major_stream;
 
@@ -989,19 +1035,34 @@ cv::Mat Orchestrator::to_opencv() const {
   auto channel_stride = shape.padded_height() * pad_width;
 
   // Copy GPU rendered image to CPU for visualization
+  CHECK_THROW(m_backend_runtime != nullptr);
+  CHECK_THROW(m_major_queue != nullptr);
   std::vector<float> cpu_image(shape.padded_size());
+  const void* src_ptr = nullptr;
+  std::unique_ptr<GPUMemory<float>> fp32_tmp;
   if (m_rasterize_ctx.fwd_output.image.data_type == DataType::Float16) {
     // Convert FP16 buffer to FP32 on GPU before host copy
-    GPUMemory<float> fp32_tmp(shape.padded_size());
-    half_to_float_gpu(fp32_tmp.data(), reinterpret_cast<const float16_t*>(m_rasterize_ctx.fwd_output.image.data), shape.padded_size());
-    CUDA_CHECK_THROW(cudaMemcpy(cpu_image.data(), fp32_tmp.data(), shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
+    fp32_tmp = std::make_unique<GPUMemory<float>>(shape.padded_size());
+    half_to_float_gpu(fp32_tmp->data(),
+                      reinterpret_cast<const float16_t*>(m_rasterize_ctx.fwd_output.image.data),
+                      shape.padded_size(),
+                      m_major_stream);
+    src_ptr = fp32_tmp->data();
   } else if (m_rasterize_ctx.fwd_output.image.data_type == DataType::Float32) {
-    CUDA_CHECK_THROW(cudaMemcpy(cpu_image.data(), 
-      m_rasterize_ctx.fwd_output.image.data,
-      shape.padded_size() * sizeof(float), cudaMemcpyDeviceToHost));
+    src_ptr = m_rasterize_ctx.fwd_output.image.data;
   } else {
     throw std::runtime_error("to_opencv expects float32 or float16 image data");
   }
+  backend_check_throw(
+      m_backend_runtime->copy_device_to_host_async(
+          m_major_queue,
+          cpu_image.data(),
+          src_ptr,
+          shape.padded_size() * sizeof(float)),
+      "to_opencv copy_device_to_host_async");
+  backend_check_throw(
+      m_backend_runtime->synchronize_queue(m_major_queue),
+      "to_opencv synchronize_queue");
 
   // Convert float RGB to 8-bit BGR for OpenCV
   cv::Mat img(height, width, CV_8UC3);
