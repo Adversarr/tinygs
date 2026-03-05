@@ -1,7 +1,5 @@
 #include "tinygs/dataset/image.hpp"
 
-#include <cuda_runtime.h>
-
 #include <algorithm>
 #include <chrono>
 #include <filesystem>
@@ -16,6 +14,7 @@
 #include "tinygs/core/camera_loader.hpp"
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "tinygs/utils/file.hpp"
 #include "tinygs/utils/stbi/stbi_wrapper.h"
 
@@ -152,10 +151,7 @@ ImageDataset::ImageDataset(std::shared_ptr<BackendRuntime> runtime, const std::s
 }
 
 ImageDataset::~ImageDataset() {
-  if (m_data) {
-    CUDA_CHECK_PRINT(cudaFreeHost(m_data));
-    m_data = nullptr;
-  }
+  m_data_buffer.reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -168,11 +164,8 @@ void ImageDataset::load() {
   auto start = std::chrono::steady_clock::now();
 
   const fs::path root{m_root_path};
-  if (m_data) {
-    CUDA_CHECK_THROW(cudaFreeHost(m_data));
-    m_data = nullptr;
-  }
-  m_timestamp_data.clear();
+  m_data_buffer.reset();
+  m_timestamp_offset.clear();
 
   const fs::path cameras_json_path = root / "cameras.json";
   const fs::path poses_json_path = root / "poses.json";
@@ -228,7 +221,18 @@ void ImageDataset::load() {
   // --- Allocate pinned memory for all images ---------------------------------
   const size_t per_image = m_image_shape.padded_size();
   const size_t total_size = m_size * per_image * sizeof(uint8_t);
-  CUDA_CHECK_THROW(cudaMallocHost(&m_data, total_size));
+  
+  BufferDesc desc;
+  desc.size_bytes = total_size;
+  desc.memory_class = BufferMemoryClass::HostPinned;
+  desc.host_access = BufferHostAccess::ReadWrite;
+  desc.debug_name = "ImageDataset::m_data_buffer";
+  auto result = m_runtime->create_buffer(desc);
+  if (!result.ok()) {
+    throw std::runtime_error("ImageDataset: failed to allocate host-pinned buffer: " + to_string(result.error()));
+  }
+  m_data_buffer = result.value();
+  uint8_t* data_ptr = static_cast<uint8_t*>(m_data_buffer->data());
 
   // Build ordered list of image paths matching extrinsics order
   std::vector<std::string> image_paths(m_size);
@@ -241,15 +245,15 @@ void ImageDataset::load() {
   // --- Load all images in parallel -------------------------------------------
 #pragma omp parallel for
   for (size_t i = 0; i < m_size; ++i) {
-    load_single_image(i, image_paths[i], m_data, src_width, src_height,
+    load_single_image(i, image_paths[i], data_ptr, src_width, src_height,
                       m_image_shape.width, m_image_shape.height,
                       m_image_shape.channel);
   }
 
-  // Build timestamp → data pointer map
+  // Build timestamp → offset map
   for (size_t i = 0; i < m_size; ++i) {
     uuid_t timestamp = m_camera_loader.get_camera_extrinsics()[i].timestamp;
-    m_timestamp_data[timestamp] = m_data + i * per_image;
+    m_timestamp_offset[timestamp] = i * per_image;
   }
 
   auto end = std::chrono::steady_clock::now();
@@ -267,7 +271,7 @@ void ImageDataset::load() {
 // ---------------------------------------------------------------------------
 
 ImageShape ImageDataset::image_shape() const {
-  if (!m_data) {
+  if (!m_data_buffer) {
     throw std::runtime_error("ImageDataset: not loaded. Call load() first.");
   }
   return m_image_shape;
@@ -276,7 +280,7 @@ ImageShape ImageDataset::image_shape() const {
 size_t ImageDataset::size() const noexcept { return m_size; }
 
 Data ImageDataset::operator[](size_t index) const {
-  if (!m_data) {
+  if (!m_data_buffer) {
     throw std::runtime_error("ImageDataset: not loaded. Call load() first.");
   }
   if (index >= m_size) {
@@ -292,7 +296,7 @@ Data ImageDataset::operator[](size_t index) const {
   data.cam_uid = cam_uid;
   data.timestamp = extrin.timestamp;
 
-  uint8_t* image_ptr = m_timestamp_data.at(extrin.timestamp);
+  uint8_t* image_ptr = static_cast<uint8_t*>(m_data_buffer->data()) + m_timestamp_offset.at(extrin.timestamp);
   data.image.shape = m_image_shape;
   data.image.data_type = DataType::UInt8;
   data.image.data = image_ptr;

@@ -4,6 +4,7 @@
 #include "tinygs/core/camera_loader.hpp"
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/dataset/dataset.hpp"
+#include "tinygs/platform/runtime_contract.hpp"
 
 namespace tinygs {
 
@@ -59,8 +60,8 @@ private:
 
   // -- Loaded state -----------------------------------------------------------
   ImageShape m_image_shape{};
-  uint8_t* m_data{nullptr};
-  std::unordered_map<uuid_t, uint8_t*> m_timestamp_data;
+  std::shared_ptr<BackendBuffer> m_data_buffer;
+  std::unordered_map<uuid_t, size_t> m_timestamp_offset;
   size_t m_size{0};
 };
 

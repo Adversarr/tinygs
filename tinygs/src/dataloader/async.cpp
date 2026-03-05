@@ -77,21 +77,7 @@ private:
 
 /// @brief Implementation struct for AsyncDataLoader (PIMPL idiom)
 struct AsyncDataLoader::Impl {
-  // Simple CUDA buffer for internal use
-  struct CudaDeviceBuffer {
-    void* ptr = nullptr;
-    size_t size = 0;
-    void resize(size_t new_size) {
-      if (new_size > size) {
-        if (ptr) { cudaFree(ptr); ptr = nullptr; }
-        CUDA_CHECK_THROW(cudaMalloc(&ptr, new_size * sizeof(float)));
-        size = new_size;
-      }
-    }
-    float* data() { return static_cast<float*>(ptr); }
-    ~CudaDeviceBuffer() { if (ptr) cudaFree(ptr); }
-  };
-  CudaDeviceBuffer gpu_memory;              ///< GPU buffer for data storage
+  std::shared_ptr<BackendBuffer> gpu_memory; ///< GPU buffer for data storage
   pcg32 rng;                                ///< Random number generator
   uint32_t rngseed = 0;                     ///< Seed for random number generator
   std::vector<size_t> permutation;          ///< Current permutation of dataset indices
@@ -102,7 +88,7 @@ struct AsyncDataLoader::Impl {
   std::jthread prefetch_thread;             ///< Thread for prefetching data
   std::unique_ptr<BoundedBlockingQueue<std::pair<GPUBatchInputOutput, uint32_t>>> data_queue;
   std::unique_ptr<BoundedBlockingQueue<uint32_t>> index_queue;
-  cudaStream_t prefetch_stream;             ///< CUDA stream for prefetching
+  std::shared_ptr<BackendQueue> prefetch_queue; ///< Backend queue for prefetching
 
   int last_using_buffer_idx = -1;  ///< Last used buffer index to return to index queue
 
@@ -112,7 +98,7 @@ struct AsyncDataLoader::Impl {
   std::string error_message_;               ///< Error message from background thread
 
   /// @brief Constructor
-  Impl() : current_index(0), prefetch_stream(nullptr) { rng.seed(rngseed); }
+  Impl() : current_index(0) { rng.seed(rngseed); }
 
   /// @brief Destructor - ensures clean shutdown
   ~Impl() {
@@ -125,19 +111,28 @@ struct AsyncDataLoader::Impl {
   }
 
   /// @brief Start the prefetch thread
-  void start(DataLoaderBase& loader, DatasetBase& dataset, DataType data_type) {
+  void start(std::shared_ptr<BackendRuntime> runtime, DataLoaderBase& loader, DatasetBase& dataset, DataType data_type) {
     this->data_type = data_type;
     data_queue = std::make_unique<BoundedBlockingQueue<std::pair<GPUBatchInputOutput, uint32_t>>>(prefetch_factor);
     index_queue = std::make_unique<BoundedBlockingQueue<uint32_t>>(prefetch_factor);
     // Preallocate ring buffer to maximum dataset image stride to avoid future reallocations
     auto max_stride = dataset.image_shape().padded_size();
-    gpu_memory.resize(max_stride * prefetch_factor);
+    gpu_memory = create_device_buffer(runtime, max_stride * prefetch_factor * sizeof(float), "AsyncDataLoader::gpu_memory");
     index_queue->clear();
     data_queue->clear();
     
-    prefetch_thread = std::jthread([&loader, &dataset, this](std::stop_token st) {
+    // Create the prefetch queue
+    QueueDesc queue_desc;
+    queue_desc.non_blocking = true;
+    queue_desc.debug_name = "AsyncDataLoader::prefetch_queue";
+    auto queue_result = runtime->create_queue(queue_desc);
+    if (!queue_result.ok()) {
+      throw std::runtime_error("Failed to create prefetch queue: " + to_string(queue_result.error()));
+    }
+    prefetch_queue = queue_result.value();
+    
+    prefetch_thread = std::jthread([&loader, &dataset, this, runtime](std::stop_token st) {
       try {
-        CUDA_CHECK_THROW(cudaStreamCreateWithFlags(&prefetch_stream, cudaStreamNonBlocking));
         size_t total_fetched = 0;
         while (!st.stop_requested()) {
           if (!this->prefetch_work(loader, dataset, total_fetched, st)) {
@@ -155,11 +150,6 @@ struct AsyncDataLoader::Impl {
         if (index_queue) index_queue->close();
       }
 
-      // Cleanup CUDA stream
-      if (prefetch_stream) {
-        CUDA_CHECK_PRINT(cudaStreamDestroy(prefetch_stream));
-        prefetch_stream = nullptr;
-      }
       log_info("Prefetch thread exited.");
     });
 
@@ -186,6 +176,10 @@ struct AsyncDataLoader::Impl {
 
       data_queue->clear();
       index_queue->clear();
+      
+      // Clear the prefetch queue (RAII will destroy the CUDA stream)
+      prefetch_queue.reset();
+      gpu_memory.reset();
     }
   }
 
@@ -241,10 +235,14 @@ struct AsyncDataLoader::Impl {
     gpu_image.data_type = data_type;
     // Use maximum stride for per-buffer segment to avoid overlap after resolution increases
     const size_t stride = dataset.image_shape().padded_size();
-    gpu_image.data = this->gpu_memory.data() + stride * buffer_idx;
+    gpu_image.data = static_cast<float*>(gpu_memory->data()) + stride * buffer_idx;
 
-    // Transfer data from host to GPU using the provided CUDA stream
-    base.transfer_gpu(prefetch_stream, gpu_image, host_data.image);
+    // Transfer data from host to GPU using the backend stream
+    if (!prefetch_queue) {
+      throw std::runtime_error("AsyncDataLoader: prefetch_queue is null, was start() called?");
+    }
+    BackendStream stream = BackendStream(prefetch_queue->native_handle());
+    base.transfer_gpu(stream, gpu_image, host_data.image);
 
     // Prepare GPU batch output
     GPUBatchOutput gpu_output;
@@ -366,7 +364,7 @@ void AsyncDataLoader::reset() {
   m_impl->generate_permutation(m_dataset->size());
 
   // Relaunch prefetch thread and prime index queue
-  m_impl->start(*this, *m_dataset, m_params.data_type);
+  m_impl->start(m_runtime, *this, *m_dataset, m_params.data_type);
 }
 
 } // namespace tinygs

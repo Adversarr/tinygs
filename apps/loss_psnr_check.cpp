@@ -576,7 +576,7 @@ LossGradResult run_cuda_loss_fp32(
   ctx.grad = Image(shape, DataType::Float32, tinygs::buffer_data<float>(grad_d));
   ctx.stream = nullptr;
 
-  LossOp op;
+  LossOp op(runtime);
   op.evaluate(ctx, scale);
 
   LossGradResult out;
@@ -621,7 +621,7 @@ LossGradResult run_cuda_loss_fp16(
   ctx.grad = Image(shape, DataType::Float16, tinygs::buffer_data<tinygs::float16_t>(grad_h));
   ctx.stream = nullptr;
 
-  LossOp op;
+  LossOp op(runtime);
   op.evaluate(ctx, scale);
 
   auto loss_f = tinygs::create_device_buffer_for<float>(runtime, static_cast<size_t>(n), "loss_f");
@@ -651,7 +651,7 @@ double run_cuda_psnr_fp32(
   tinygs::copy_from_host(runtime, queue, pred_d, pred);
   tinygs::copy_from_host(runtime, queue, target_d, target);
 
-  tinygs::PsnrMetric metric;
+  tinygs::PsnrMetric metric(runtime);
   return static_cast<double>(metric.evaluate(
     Image(shape, DataType::Float32, tinygs::buffer_data<float>(pred_d)),
     Image(shape, DataType::Float32, tinygs::buffer_data<float>(target_d))
@@ -678,7 +678,7 @@ double run_cuda_psnr_fp16(
   tinygs::float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(target_h),
                             tinygs::buffer_data<float>(target_f), n);
 
-  tinygs::PsnrMetric metric;
+  tinygs::PsnrMetric metric(runtime);
   return static_cast<double>(metric.evaluate(
     Image(shape, DataType::Float16, tinygs::buffer_data<tinygs::float16_t>(pred_h)),
     Image(shape, DataType::Float16, tinygs::buffer_data<tinygs::float16_t>(target_h))

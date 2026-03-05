@@ -75,9 +75,26 @@ int main(int argc, char** argv) {
   for (int i = 0; i < kSHDegreeNumCoeffs[1]; ++i) gaussian.sh1.push_back({0.0f, 0.0f, 0.0f});
   for (int i = 0; i < kSHDegreeNumCoeffs[2]; ++i) gaussian.sh2.push_back({0.0f, 0.0f, 0.0f});
   for (int i = 0; i < kSHDegreeNumCoeffs[3]; ++i) gaussian.sh3.push_back({0.0f, 0.0f, 0.0f});
-  auto gpu_gaussian = std::make_shared<GPUGaussian3d>();
+
+  tinygs::BackendConfig backend_cfg;
+  backend_cfg.type = tinygs::BackendType::Cuda;
+  backend_cfg.device = 0;
+  auto rt_result = tinygs::create_backend_runtime(backend_cfg);
+  if (!rt_result.ok()) {
+    std::cerr << "Failed to create runtime: " << tinygs::to_string(rt_result.error()) << std::endl;
+    return 1;
+  }
+  auto runtime = rt_result.value();
+  auto q_result = runtime->create_queue({});
+  if (!q_result.ok()) {
+    std::cerr << "Failed to create queue: " << tinygs::to_string(q_result.error()) << std::endl;
+    return 1;
+  }
+  auto queue = q_result.value();
+
+  auto gpu_gaussian = std::make_shared<GPUGaussian3d>(runtime);
   gpu_gaussian->set_sh_degree(3);
-  gpu_gaussian->copy_from_host(gaussian);
+  gpu_gaussian->copy_from_host(gaussian, queue);
 
   int width = 480;
   int height = 360;
@@ -118,22 +135,6 @@ int main(int argc, char** argv) {
   std::shared_ptr<tinygs::BackendBuffer> out_image_fp32;
   std::shared_ptr<tinygs::BackendBuffer> out_image_fp16;
   std::shared_ptr<tinygs::BackendBuffer> out_image_convert;
-
-  tinygs::BackendConfig backend_cfg;
-  backend_cfg.type = tinygs::BackendType::Cuda;
-  backend_cfg.device = 0;
-  auto rt_result = tinygs::create_backend_runtime(backend_cfg);
-  if (!rt_result.ok()) {
-    std::cerr << "Failed to create runtime: " << tinygs::to_string(rt_result.error()) << std::endl;
-    return 1;
-  }
-  auto runtime = rt_result.value();
-  auto q_result = runtime->create_queue({});
-  if (!q_result.ok()) {
-    std::cerr << "Failed to create queue: " << tinygs::to_string(q_result.error()) << std::endl;
-    return 1;
-  }
-  auto queue = q_result.value();
 
   if (use_fp16) {
     out_image_fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, padded_size, "out_image_fp16");
@@ -245,7 +246,7 @@ int main(int argc, char** argv) {
   }
 
   auto eval_scalar_loss = [&](const Gaussian3d& g) -> double {
-    gpu_gaussian->copy_from_host(g);
+    gpu_gaussian->copy_from_host(g, queue);
     rast->forward(params);
 
     std::vector<float> pred = get_image_as_linear_hwc();
@@ -310,15 +311,15 @@ int main(int argc, char** argv) {
 
   // backward pass
   std::shared_ptr<GPUGaussian3d> grad = gpu_gaussian->clone();
-  void* grad_image_data = use_fp16 ? static_cast<void*>(out_image_grad_fp16.data())
-                                   : static_cast<void*>(out_image_grad_fp32.data());
+  void* grad_image_data = use_fp16 ? static_cast<void*>(tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16))
+                                   : static_cast<void*>(tinygs::buffer_data<float>(out_image_grad_fp32));
   params.grad_output.image = Image(shape, out_data_type, grad_image_data);
   params.gaussians_grad = grad;
   grad->memset(0);
   rast->backward(params);
 
   Gaussian3d gaussian_grad;
-  grad->copy_to_host(gaussian_grad);
+  grad->copy_to_host(gaussian_grad, queue);
   const std::vector<vec3>& means_grad = gaussian_grad.means;
   const std::vector<vec3>& scales_grad = gaussian_grad.scales;
   const std::vector<vec4>& rotations_grad = gaussian_grad.rotations;
@@ -345,8 +346,7 @@ int main(int argc, char** argv) {
   // Copy densification info from GPU to host
   size_t dinfo_count = params.densification_info->size_bytes() / sizeof(DensificationInfo);
   std::vector<DensificationInfo> dinfo(dinfo_count);
-  cudaMemcpy(dinfo.data(), params.densification_info->data(),
-             dinfo_count * sizeof(DensificationInfo), cudaMemcpyDeviceToHost);
+  tinygs::copy_to_host(runtime, queue, params.densification_info, dinfo);
 
   std::cout << "=== Densification Info ===" << std::endl;
   for (int i = 0; i < dinfo.size(); ++i) {
@@ -424,7 +424,7 @@ int main(int argc, char** argv) {
     }
 
     // Restore original parameters on GPU for consistency after checking.
-    gpu_gaussian->copy_from_host(gauss_base);
+    gpu_gaussian->copy_from_host(gauss_base, queue);
 
     size_t count = 0;
     double sum_abs = 0.0;

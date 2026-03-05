@@ -5,7 +5,7 @@
 
 TEST(OptimizerFactoryTest, UnknownTypeThrows) {
     EXPECT_THROW(
-        tinygs::create_optimizer("unknown_optimizer", nullptr, nullptr),
+        tinygs::create_optimizer("unknown_optimizer", nullptr, nullptr, nullptr),
         std::runtime_error
     );
 }
@@ -27,7 +27,7 @@ TEST(OptimizerFactoryTest, InvalidTypeVariantsThrow) {
 
     for (const char* type : invalid_types) {
         EXPECT_THROW(
-            tinygs::create_optimizer(type, nullptr, nullptr),
+            tinygs::create_optimizer(type, nullptr, nullptr, nullptr),
             std::runtime_error
         ) << "Expected throw for type: " << type;
     }
@@ -35,7 +35,7 @@ TEST(OptimizerFactoryTest, InvalidTypeVariantsThrow) {
 
 TEST(OptimizerFactoryTest, ErrorMessageContainsType) {
     try {
-        tinygs::create_optimizer("test_optimizer", nullptr, nullptr);
+        tinygs::create_optimizer("test_optimizer", nullptr, nullptr, nullptr);
         FAIL() << "Expected std::runtime_error";
     } catch (const std::runtime_error& e) {
         std::string msg = e.what();
@@ -45,7 +45,7 @@ TEST(OptimizerFactoryTest, ErrorMessageContainsType) {
 
 TEST(OptimizerFactoryTest, ErrorMessageContainsSupportedTypes) {
     try {
-        tinygs::create_optimizer("invalid", nullptr, nullptr);
+        tinygs::create_optimizer("invalid", nullptr, nullptr, nullptr);
         FAIL() << "Expected std::runtime_error";
     } catch (const std::runtime_error& e) {
         std::string msg = e.what();

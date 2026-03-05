@@ -1,5 +1,5 @@
 #include "tinygs/utils/file.hpp"
-#include "tinygs/cuda/common_host.hpp"
+#include "tinygs/common.hpp"
 
 #include <stdexcept>
 #include <filesystem>

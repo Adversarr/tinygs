@@ -420,6 +420,39 @@ inline void copy_device_to_host(
   }
 }
 
+/// @brief Copy data from host memory to a raw device pointer asynchronously. Throws on failure.
+inline void copy_host_to_device_async(
+    const std::shared_ptr<BackendRuntime>& runtime,
+    const std::shared_ptr<BackendQueue>& queue,
+    void* dst,
+    const void* src,
+    size_t size_bytes) {
+  if (size_bytes > 0 && dst == nullptr) {
+    throw std::runtime_error("copy_host_to_device_async failed: dst must not be null");
+  }
+  if (size_bytes > 0 && src == nullptr) {
+    throw std::runtime_error("copy_host_to_device_async failed: src must not be null");
+  }
+  auto status = runtime->copy_host_to_device_async(queue, dst, src, size_bytes);
+  if (!status.ok()) {
+    throw std::runtime_error("copy_host_to_device_async failed: " + to_string(status));
+  }
+}
+
+/// @brief Copy data from host memory to a raw device pointer synchronously. Throws on failure.
+inline void copy_host_to_device(
+    const std::shared_ptr<BackendRuntime>& runtime,
+    const std::shared_ptr<BackendQueue>& queue,
+    void* dst,
+    const void* src,
+    size_t size_bytes) {
+  copy_host_to_device_async(runtime, queue, dst, src, size_bytes);
+  auto status = runtime->synchronize_queue(queue);
+  if (!status.ok()) {
+    throw std::runtime_error("copy_host_to_device sync failed: " + to_string(status));
+  }
+}
+
 /// @brief Copy data between device buffer views asynchronously. Throws on failure.
 inline void copy_buffer_async(
     const std::shared_ptr<BackendRuntime>& runtime,

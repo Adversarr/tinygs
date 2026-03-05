@@ -3,7 +3,7 @@
 #include <cmath>
 #include <stdexcept>
 
-#include "tinygs/cuda/common_host.hpp"
+#include "tinygs/common.hpp"
 
 namespace tinygs {
 

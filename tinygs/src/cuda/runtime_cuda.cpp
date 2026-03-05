@@ -252,13 +252,6 @@ public:
                         operation,
                         "interop buffers are not implemented for CUDA runtime yet"));
     }
-    if (desc.memory_class == BufferMemoryClass::HostPinned) {
-      return Result<BackendBuffer>::failure(
-          backend_error(BackendType::Cuda,
-                        BackendErrorCode::Unsupported,
-                        operation,
-                        "host-pinned buffers are not implemented for CUDA runtime yet"));
-    }
     if (desc.memory_class == BufferMemoryClass::Device &&
         desc.host_access != BufferHostAccess::None) {
       return Result<BackendBuffer>::failure(
@@ -283,6 +276,8 @@ public:
         error = cudaMallocManaged(&data, desc.size_bytes);
         break;
       case BufferMemoryClass::HostPinned:
+        error = cudaMallocHost(&data, desc.size_bytes);
+        break;
       default:
         error = cudaErrorNotSupported;
         break;
@@ -522,6 +517,37 @@ public:
 
     const cudaError_t error =
         cudaMemcpyAsync(dst, src, size_bytes, cudaMemcpyDeviceToHost, cuda_queue->stream());
+    return cuda_status(error, operation);
+  }
+
+  BackendError copy_host_to_device_async(const std::shared_ptr<BackendQueue>& queue,
+                                          void* dst,
+                                          const void* src,
+                                          size_t size_bytes) override {
+    constexpr const char* operation = "copy_host_to_device_async";
+    std::shared_ptr<CudaQueue> cuda_queue;
+    BackendError status = require_queue(queue, &cuda_queue, operation);
+    if (!status.ok()) {
+      return status;
+    }
+    if (size_bytes == 0) {
+      return backend_success(BackendType::Cuda, operation);
+    }
+    if (dst == nullptr) {
+      return backend_error(BackendType::Cuda,
+                           BackendErrorCode::InvalidArgument,
+                           operation,
+                           "dst must not be null when size_bytes > 0");
+    }
+    if (src == nullptr) {
+      return backend_error(BackendType::Cuda,
+                           BackendErrorCode::InvalidArgument,
+                           operation,
+                           "src must not be null when size_bytes > 0");
+    }
+
+    const cudaError_t error =
+        cudaMemcpyAsync(dst, src, size_bytes, cudaMemcpyHostToDevice, cuda_queue->stream());
     return cuda_status(error, operation);
   }
 

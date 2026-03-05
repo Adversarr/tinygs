@@ -167,6 +167,16 @@ public:
                                                  const void* src,
                                                  size_t size_bytes) = 0;
 
+  /// @brief Copy data from host memory to a raw device pointer asynchronously.
+  /// @param queue Queue on which the copy is enqueued.
+  /// @param dst Destination device pointer.
+  /// @param src Source host pointer.
+  /// @param size_bytes Number of bytes to copy.
+  virtual BackendError copy_host_to_device_async(const std::shared_ptr<BackendQueue>& queue,
+                                                  void* dst,
+                                                  const void* src,
+                                                  size_t size_bytes) = 0;
+
   /// @brief Asynchronously fill a buffer region with a byte value.
   /// @param queue Queue on which the fill is enqueued.
   /// @param buffer Destination buffer.
