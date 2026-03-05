@@ -13,6 +13,9 @@
 - Factory seams: `create_dataset`, `create_dataloader`, `create_rasterizer`, `create_optimizer`, `create_strategy`, `create_loss`.
 - Current rasterizer types: `default`, `fastgs` (`tinygs/src/rasterizer/rasterizer.cpp`).
 - Current optimizer types: `adam`, `adam_per_gaussian` / `adam_pg` (`tinygs/src/optim/optim.cu`).
+- Multiplatform direction: move toward a backend-neutral runtime contract (CUDA -> HIP -> Metal) per `docs/MULTIPLATFORM_ROADMAP.md`.
+- Current phase (Phase 0): enforce no-regression boundary guardrails (`scripts/check_backend_boundaries.py`, `scripts/policy/backend_boundary_allowlist.txt`) while preserving CUDA behavior.
+- Backend selection is compile-time (`-DTINYGS_BACKEND=CUDA|HIP|METAL`); only CUDA is implemented today.
 
 ## Repo Map
 - `apps/`: CLI entrypoints (`config_train`, `export_default`, `single_gs`) and JSON wiring in `apps/config_train.cpp`.
@@ -57,5 +60,5 @@ ctest --test-dir build/Release --output-on-failure
 
 ## Boundaries
 - **Always:** minimal focused changes; preserve kernel safety checks; use project logging/error macros.
-- **Ask first:** adding dependencies, changing CMake defaults/CUDA arch defaults, adding rasterizer implementations, changing default training configs/behavior, modifying `.clang-*`.
+- **Ask first:** adding dependencies, changing CMake defaults/CUDA arch defaults, adding rasterizer implementations, changing default training configs/behavior, modifying `.clang-*`, updating boundary allowlist.
 - **Never:** modify `cmake/CPM.cmake` or fetched deps, commit generated artifacts (`build/`, binaries, `*.ply`, `*.pt`), remove kernel bounds checks.

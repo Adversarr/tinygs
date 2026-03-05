@@ -7,7 +7,8 @@ tinygs is a lightweight C++/CUDA library for 3D Gaussian Splatting scene reconst
 1. [Architecture Overview](./ARCHITECTURE.md) - Overall system design and component relationships
 2. [CLI Tools](./CLI.md) - Command-line executables and their usage
 3. [Configuration](./CONFIGURATION.md) - JSON configuration format and parameters
-4. [Modules](./modules/)
+4. [Multiplatform Roadmap](./MULTIPLATFORM_ROADMAP.md) - Phase-based backend architecture plan
+5. [Modules](./modules/)
    - [Core](./modules/core.md) - Data structures for Gaussians, cameras, and images
    - [CUDA](./modules/cuda.md) - CUDA utilities, memory management, and kernels
    - [Orchestrator](./modules/orchestrator.md) - Main training coordinator and pipeline

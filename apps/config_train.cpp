@@ -9,6 +9,7 @@
 #include "tinygs/initialization/initialization.hpp"
 #include "tinygs/optim/lr_scheduler.hpp"
 #include "tinygs/optim/optim.hpp"
+#include "tinygs/platform/backend_build.hpp"
 #include "tinygs/platform/backend_factory.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/orchestrator.hpp"
@@ -79,10 +80,18 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   } else {
     log_warning("No backend section in config, defaulting to CUDA device 0.");
   }
-  auto backend_ctx = create_backend_context(backend_config);
-  if (backend_ctx->type() != BackendType::Cuda) {
+
+  if (backend_config.type != compiled_backend_type()) {
     throw std::runtime_error(
-        "Only CUDA backend is available in this build; HIP/Metal are planned.");
+        "Requested backend '" + to_string(backend_config.type) +
+        "' does not match compiled backend '" + std::string(compiled_backend_name()) +
+        "'. Reconfigure with -DTINYGS_BACKEND or update config backend.type.");
+  }
+
+  auto backend_ctx = create_backend_context(backend_config);
+  if (backend_ctx->type() != compiled_backend_type()) {
+    throw std::runtime_error(
+        "Backend context type mismatch with compiled backend.");
   }
   set_cuda_device(backend_ctx->device());
   log_info("Using backend={} device={}", to_string(backend_ctx->type()), backend_ctx->device());

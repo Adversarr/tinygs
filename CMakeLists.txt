@@ -23,6 +23,24 @@ if(NOT UNIX)
     message(FATAL_ERROR "tinygs is currently only supported on Linux platforms")
 endif()
 
+set(TINYGS_SUPPORTED_BACKENDS CUDA HIP METAL)
+set(TINYGS_BACKEND "CUDA" CACHE STRING "Backend to build (CUDA|HIP|METAL)")
+set_property(CACHE TINYGS_BACKEND PROPERTY STRINGS ${TINYGS_SUPPORTED_BACKENDS})
+string(TOUPPER "${TINYGS_BACKEND}" TINYGS_BACKEND)
+if(NOT TINYGS_BACKEND IN_LIST TINYGS_SUPPORTED_BACKENDS)
+    message(FATAL_ERROR
+        "Invalid TINYGS_BACKEND='${TINYGS_BACKEND}'. "
+        "Allowed values: CUDA, HIP, METAL."
+    )
+endif()
+
+if(NOT TINYGS_BACKEND STREQUAL "CUDA")
+    message(FATAL_ERROR
+        "TINYGS_BACKEND=${TINYGS_BACKEND} is planned but not implemented yet. "
+        "Only CUDA backend is currently available."
+    )
+endif()
+
 if(NOT DEFINED TINYGS_CUDA_ARCHITECTURES)
     set(CMAKE_CUDA_ARCHITECTURES "86")
     message(STATUS "Using default CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
@@ -48,6 +66,7 @@ option(TINYGS_ENABLE_PROFILE "Enable profiling with lineinfo" OFF)
 option(TINYGS_ENABLE_NVTX_SYNC "Enable operation sync to get accurate nvtx range" OFF)
 option(TINYGS_ENABLE_NATIVE "Enable native optimizations" ON)
 option(TINYGS_ENABLE_FAST_MATH "Enable fast math optimizations" ON)
+add_compile_definitions(TINYGS_BACKEND_${TINYGS_BACKEND}=1)
 
 ### Dependencies
 include(${PROJECT_SOURCE_DIR}/cmake/dependencies.cmake)
@@ -88,6 +107,7 @@ message(STATUS "")
 message(STATUS "tinygs Configuration Summary:")
 message(STATUS "  Version: ${PROJECT_VERSION}")
 message(STATUS "  Build type: ${CMAKE_BUILD_TYPE}")
+message(STATUS "  Backend: ${TINYGS_BACKEND}")
 message(STATUS "  C++ standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  CUDA standard: ${CMAKE_CUDA_STANDARD}")
 message(STATUS "  CUDA version: ${CUDA_VERSION}")

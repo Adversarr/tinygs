@@ -1,0 +1,31 @@
+# tinygs backend boundary no-regression baseline
+# Format: rule_id|path|signature|count
+
+platform_layer_forbidden_vendor_dep|tinygs/include/tinygs/platform/backend_types.hpp|token:CUstream_st|2
+public_header_forbidden_include|tinygs/include/tinygs/common.hpp|include:cuda_bf16.h|1
+public_header_forbidden_include|tinygs/include/tinygs/common.hpp|include:cuda_fp16.h|1
+public_header_forbidden_include|tinygs/include/tinygs/common.hpp|include:tinygs/cuda/vec.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/core/camera.hpp|include:tinygs/cuda/common_host.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/core/camera.hpp|include:tinygs/cuda/vec.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/core/gaussian.hpp|include:tinygs/cuda/vec.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/core/gpu_gaussian.hpp|include:thrust/device_vector.h|1
+public_header_forbidden_include|tinygs/include/tinygs/core/image.hpp|include:tinygs/cuda/common_host.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/core/pointcloud.hpp|include:tinygs/cuda/common_host.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/dataloader/dataloader.hpp|include:tinygs/cuda/gpu_memory.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/dataloader/simple.hpp|include:tinygs/cuda/gpu_memory.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/loss/psnr.hpp|include:tinygs/cuda/gpu_memory.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/optim/adam.hpp|include:tinygs/cuda/gpu_memory.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/optim/adam_per_gaussian.hpp|include:tinygs/cuda/gpu_memory.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/orchestrator.hpp|include:tinygs/cuda/gpu_memory.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/pose_opt/adamw.hpp|include:tinygs/cuda/vec.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/pose_opt/pose_opt.hpp|include:tinygs/cuda/vec.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/pose_opt/sgdm.hpp|include:tinygs/cuda/vec.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/random/device.cuh|include:tinygs/cuda/common_device.cuh|1
+public_header_forbidden_include|tinygs/include/tinygs/random/multinomial.hpp|include:tinygs/cuda/gpu_memory.hpp|1
+public_header_forbidden_include|tinygs/include/tinygs/rasterizer/rasterizer.hpp|include:tinygs/cuda/gpu_memory.hpp|1
+public_header_forbidden_vendor_type|tinygs/include/tinygs/core/gpu_gaussian.hpp|token:thrust::|24
+public_header_forbidden_vendor_type|tinygs/include/tinygs/optim/adam.hpp|token:thrust::|16
+public_header_forbidden_vendor_type|tinygs/include/tinygs/optim/adam_per_gaussian.hpp|token:thrust::|17
+public_header_forbidden_vendor_type|tinygs/include/tinygs/platform/backend_types.hpp|token:CUstream_st|2
+public_header_forbidden_vendor_type|tinygs/include/tinygs/random/device.cuh|token:cudaStream_t|5
+public_header_forbidden_vendor_type|tinygs/include/tinygs/strategy/fastgs.hpp|token:thrust::|2

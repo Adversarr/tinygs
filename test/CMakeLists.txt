@@ -321,3 +321,10 @@ set_target_properties(tinygs_tile_utils_test PROPERTIES
 )
 
 gtest_discover_tests(tinygs_tile_utils_test)
+
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+add_test(
+    NAME tinygs_phase0_backend_boundaries
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/check_backend_boundaries.py check
+)
