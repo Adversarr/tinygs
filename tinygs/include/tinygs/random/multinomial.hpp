@@ -1,20 +1,18 @@
 #pragma once
 
-#include <tinygs/platform/backend_types.hpp>
+#include <tinygs/platform/runtime_contract.hpp>
 #include <vector>
 #include <memory>
 
 namespace tinygs {
-
-template <typename T>
-class GPUBuffer;
 
 /// @brief CUDA implementation of multinomial sampling (with replacement)
 /// @param d_weights Array of non-negative weights on GPU
 /// @param K Number of categories
 /// @param num_samples Number of samples to draw
 /// @param seed Random seed
-GPUBuffer<int> multinomial_cuda_with_replacement(
+/// @return BackendBuffer containing int[num_samples] on device
+std::shared_ptr<BackendBuffer> multinomial_cuda_with_replacement(
     const float* d_weights,
     int K,
     int num_samples,
@@ -35,7 +33,8 @@ std::vector<int> multinomial_cpu_with_replacement(
 );
 
 /// @brief CPU implementation of multinomial sampling (with replacement) on GPU
-GPUBuffer<int> multinomial_cuda_cpu(
+/// @return BackendBuffer containing int[num_samples] on device
+std::shared_ptr<BackendBuffer> multinomial_cuda_cpu(
     const float* d_weights,
     int K,
     int num_samples,
@@ -46,7 +45,8 @@ GPUBuffer<int> multinomial_cuda_cpu(
 /// @brief CPU implementation of multinomial sampling (without replacement) on GPU
 /// Selects indices proportionally to weights, without replacement, using
 /// Efraimidis–Spirakis PPS sampling via keys u^{1/w} and taking top-M.
-GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
+/// @return BackendBuffer containing int[num_samples] on device
+std::shared_ptr<BackendBuffer> multinomial_cuda_cpu_without_replacement(
     const float* d_weights,
     int K,
     int num_samples,

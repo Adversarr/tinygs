@@ -1,5 +1,5 @@
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include <thrust/device_vector.h>
 #include <cooperative_groups.h>
 #include <tinygs/loss/fused_ssim.hpp>
 #include <memory>
@@ -758,19 +758,19 @@ __global__ void fused_ssim_fp16_backward(
 namespace tinygs {
 
 struct FusedSSIMLoss::Impl {
-  GPUBuffer<float> dm_dmu1;
-  GPUBuffer<float> dm_dsigma1_sq;
-  GPUBuffer<float> dm_dsigma12;
+  thrust::device_vector<float> dm_dmu1;
+  thrust::device_vector<float> dm_dsigma1_sq;
+  thrust::device_vector<float> dm_dsigma12;
 
   void ensure(size_t total, cudaStream_t stream) {
-    if (!dm_dmu1 || dm_dmu1.size() < total) {
-      dm_dmu1 = GPUBuffer<float>(stream, total);
+    if (dm_dmu1.size() < total) {
+      dm_dmu1.resize(total);
     }
-    if (!dm_dsigma1_sq || dm_dsigma1_sq.size() < total) {
-      dm_dsigma1_sq = GPUBuffer<float>(stream, total);
+    if (dm_dsigma1_sq.size() < total) {
+      dm_dsigma1_sq.resize(total);
     }
-    if (!dm_dsigma12 || dm_dsigma12.size() < total) {
-      dm_dsigma12 = GPUBuffer<float>(stream, total);
+    if (dm_dsigma12.size() < total) {
+      dm_dsigma12.resize(total);
     }
   }
 };
@@ -820,9 +820,9 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               pred,
               targ,
               loss,
-              m_impl->dm_dmu1.data(),
-              m_impl->dm_dsigma1_sq.data(),
-              m_impl->dm_dsigma12.data());
+              m_impl->dm_dmu1.data().get(),
+              m_impl->dm_dsigma1_sq.data().get(),
+              m_impl->dm_dsigma12.data().get());
           tinygs::maybe_sync(ctx.stream);
         }
         {
@@ -836,9 +836,9 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               pred,
               targ,
               grad,
-              m_impl->dm_dmu1.data(),
-              m_impl->dm_dsigma1_sq.data(),
-              m_impl->dm_dsigma12.data());
+              m_impl->dm_dmu1.data().get(),
+              m_impl->dm_dsigma1_sq.data().get(),
+              m_impl->dm_dsigma12.data().get());
           tinygs::maybe_sync(ctx.stream);
         }
       } else {
@@ -870,9 +870,9 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               pred,
               targ,
               loss,
-              m_impl->dm_dmu1.data(),
-              m_impl->dm_dsigma1_sq.data(),
-              m_impl->dm_dsigma12.data());
+              m_impl->dm_dmu1.data().get(),
+              m_impl->dm_dsigma1_sq.data().get(),
+              m_impl->dm_dsigma12.data().get());
           tinygs::maybe_sync(ctx.stream);
         }
         {
@@ -886,9 +886,9 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               pred,
               targ,
               grad,
-              m_impl->dm_dmu1.data(),
-              m_impl->dm_dsigma1_sq.data(),
-              m_impl->dm_dsigma12.data());
+              m_impl->dm_dmu1.data().get(),
+              m_impl->dm_dsigma1_sq.data().get(),
+              m_impl->dm_dsigma12.data().get());
           tinygs::maybe_sync(ctx.stream);
         }
       } else {

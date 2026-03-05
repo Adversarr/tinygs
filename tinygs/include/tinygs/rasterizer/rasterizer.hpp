@@ -3,11 +3,9 @@
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/platform/backend_types.hpp"
+#include "tinygs/platform/runtime_contract.hpp"
 
 namespace tinygs {
-
-template <typename T>
-class GPUBuffer;
 
 /// @brief Context object that carries all inputs, outputs, and intermediate state for a
 ///        forward/backward rasterization pass.
@@ -28,6 +26,12 @@ struct RasterizeContext {
   /// @brief Backend stream on which all forward/backward kernels are launched.
   BackendStream stream = nullptr;
 
+  /// @brief Backend runtime for buffer allocation and memory operations.
+  std::shared_ptr<BackendRuntime> runtime;
+
+  /// @brief Backend queue used for buffer operations matching the stream.
+  std::shared_ptr<BackendQueue> queue;
+
   /// @brief Global gradient scaler applied during backward pass to stabilize
   ///        mixed-precision training (typically 128 for FP16, 1 for FP32).
   float grad_scaler = 1.0f;
@@ -40,7 +44,7 @@ struct RasterizeContext {
 
   /// @brief Per-Gaussian densification statistics (view-space radii, accumulated
   ///        gradients, etc.) produced by forward() and consumed by Strategy.
-  mutable std::shared_ptr<GPUBuffer<DensificationInfo>> densification_info;
+  mutable std::shared_ptr<BackendBuffer> densification_info;
 
   // -- FastGS metric accumulation fields --
 
@@ -56,11 +60,11 @@ struct RasterizeContext {
   ///        tiled storage, metric_map uses FLAT row-major indexing:
   ///          pixel_idx = y * width + x
   ///        This is intentional since metric_map is a flag array, not an image.
-  mutable std::shared_ptr<GPUBuffer<int>> metric_map;
+  mutable std::shared_ptr<BackendBuffer> metric_map;
 
   /// @brief Per-Gaussian metric counts (N ints). Incremented atomically during
   ///        metric_mode forward for each flagged pixel a Gaussian covers.
-  mutable std::shared_ptr<GPUBuffer<int>> metric_counts;
+  mutable std::shared_ptr<BackendBuffer> metric_counts;
 };
 
 /// @brief Serializable parameters common to all rasterizer implementations.

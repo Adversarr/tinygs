@@ -9,7 +9,6 @@
 
 #include "cuda/common_host.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
 #include "utils/scope_timer.hpp"
 #include <nvtx3/nvtx3.hpp>
 

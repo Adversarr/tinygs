@@ -6,7 +6,7 @@
 #include <thrust/reduce.h>
 
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "random/device.cuh"
 #include "tinygs/strategy/default.hpp"
 #include "tinygs/utils/scope_timer.hpp"
@@ -42,8 +42,8 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream)); // make sure the operations on training stream are done.
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset_async(ctx.stream, 0);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
+    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   auto step = this_step();
@@ -57,8 +57,8 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
     prune(ctx);
     // after pruning, we need to reset the densification info since the indices have changed.
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset_async(ctx.stream, 0);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
+    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
@@ -76,15 +76,14 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
   auto exec = thrust::cuda::par.on(ctx.stream);
   auto num_gaussians = m_gaussians->size();
-  GPUBuffer<char> duplication_flags(ctx.stream, num_gaussians);
-  duplication_flags.memset_async(ctx.stream, 0);
+  thrust::device_vector<char> duplication_flags(num_gaussians, 0);
   auto *d_grow_flags = thrust::raw_pointer_cast(duplication_flags.data());
-  if (! ctx.densification_info || ctx.densification_info->size() != num_gaussians) {
+  if (! ctx.densification_info || buffer_count<DensificationInfo>(ctx.densification_info) != num_gaussians) {
     log_warning("Densification info is not provided or has wrong size, skip duplication.");
     return; // no duplication happened
   }
 
-  auto *d_densification_info = ctx.densification_info->data();
+  auto *d_densification_info = buffer_data<DensificationInfo>(ctx.densification_info);
   auto *d_scale = thrust::raw_pointer_cast(m_gaussians->scales().data());
 
   constexpr int kDuplicate = 1;
@@ -92,7 +91,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
 
 #ifndef NDEBUG
   // Compute gradient statistics
-  GPUBuffer<float> gradient_values(ctx.stream, num_gaussians);
+  thrust::device_vector<float> gradient_values(num_gaussians);
   auto *d_gradient_values = thrust::raw_pointer_cast(gradient_values.data());
   
   // First pass: compute and store all gradient values
@@ -212,8 +211,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
     }
   }
 
-  GPUBuffer<int> grow_indices_target(ctx.stream, num_grows);
-  grow_indices_target.memset_async(ctx.stream, 0);
+  thrust::device_vector<int> grow_indices_target(num_grows, 0);
   auto *d_grow_indices_target = thrust::raw_pointer_cast(grow_indices_target.data());
   auto* out = thrust::copy(
       exec,
@@ -229,7 +227,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   }
 
 
-  GPUBuffer<float> device_scales(ctx.stream, num_grows * 6);
+  thrust::device_vector<float> device_scales(num_grows * 6);
   generate_random_logistic(m_rng, num_grows * 6,
                            thrust::raw_pointer_cast(device_scales.data()),
                            (float)0.0, (float)1.0);
@@ -325,7 +323,7 @@ void DefaultStrategy::prune(const RasterizeContext& ctx) {
 
   // Remove dead gaussians
   const auto num_gaussians = m_gaussians->size();
-  const int original_num_gasussians = ctx.densification_info->size();
+  const int original_num_gasussians = buffer_count<DensificationInfo>(ctx.densification_info);
   thrust::device_vector<char> is_alive(num_gaussians);
   const auto* d_opacity = thrust::raw_pointer_cast(m_gaussians->opacities().data());
   thrust::for_each(exec,                                                     //
@@ -339,7 +337,7 @@ void DefaultStrategy::prune(const RasterizeContext& ctx) {
        prune_large = this_step() > m_params.reset_every,                     //
        max_radii_screen_threshold = abs_ss_threshold,                        //
        original_num_gasussians,
-       deninfo = ctx.densification_info->data(),                 //
+       deninfo = buffer_data<DensificationInfo>(ctx.densification_info),                 //
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) { //
         bool not_large_ws = max(activate_scale(scale[i])) < pruning_scale_threshold * scene_scale;
         bool not_large_ss = i >= original_num_gasussians || deninfo[i].max_radii_screen < max_radii_screen_threshold;

@@ -1,5 +1,5 @@
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "tinygs/loss/psnr.hpp"
 #include "tinygs/cuda/reduce.hpp"
 #include <cuda_fp16.h>
@@ -78,6 +78,26 @@ __global__ void psnr_squared_diff_kernel_f16_h2(int N_pairs, const __half2 *__re
 
 namespace tinygs {
 
+namespace {
+/// Minimal BackendBuffer using raw cudaMalloc (no runtime needed)
+class InternalCudaBuffer final : public BackendBuffer {
+public:
+  explicit InternalCudaBuffer(size_t bytes) : m_size(bytes) {
+    CUDA_CHECK_THROW(cudaMalloc(&m_data, bytes));
+  }
+  ~InternalCudaBuffer() override { if (m_data) cudaFree(m_data); }
+  BackendType backend_type() const noexcept override { return BackendType::Cuda; }
+  int device() const noexcept override { return 0; }
+  size_t size_bytes() const noexcept override { return m_size; }
+  const BufferDesc& desc() const noexcept override { static BufferDesc d; return d; }
+  void* data() const noexcept override { return m_data; }
+  void* native_handle() const noexcept override { return m_data; }
+private:
+  void* m_data = nullptr;
+  size_t m_size = 0;
+};
+} // namespace
+
 PsnrMetric::PsnrMetric() = default;
 PsnrMetric::~PsnrMetric() = default;
 
@@ -102,12 +122,12 @@ float PsnrMetric::evaluate(Image pred, Image target) {
   }
 
   // Allocate temporary memory for squared differences
-  if (!m_sqr_diff || m_sqr_diff->size() < static_cast<size_t>(n)) {
-    m_sqr_diff = std::make_unique<GPUBuffer<float>>(n);
+  if (!m_sqr_diff || buffer_count<float>(m_sqr_diff) < static_cast<size_t>(n)) {
+    m_sqr_diff = std::make_shared<InternalCudaBuffer>(n * sizeof(float));
   }
-  m_sqr_diff->memset(0);
+  CUDA_CHECK_THROW(cudaMemset(m_sqr_diff->data(), 0, m_sqr_diff->size_bytes()));
 
-  float* squared_diff = m_sqr_diff->data();
+  float* squared_diff = buffer_data<float>(m_sqr_diff);
   // Compute squared differences
   if (pred.data_type == DataType::Float32) {
     linear_kernel(psnr_squared_diff_kernel, 0, nullptr, n,

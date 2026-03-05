@@ -17,7 +17,7 @@
 
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/cuda/common_host.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 
 namespace tinygs {
 
@@ -440,7 +440,7 @@ void CPUReferenceRasterizer::forward(const RasterizeContext& ctx) {
   // Copy densification info to GPU if present
   if (ctx.densification_info) {
     CUDA_CHECK_THROW(cudaMemcpy(
-        ctx.densification_info->data(), dinfo.data(),
+        buffer_data<DensificationInfo>(ctx.densification_info), dinfo.data(),
         N * sizeof(DensificationInfo),
         cudaMemcpyHostToDevice));
   }
@@ -625,7 +625,7 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
   std::vector<DensificationInfo> dinfo(N);
   if (ctx.densification_info) {
     CUDA_CHECK_THROW(cudaMemcpy(
-        dinfo.data(), ctx.densification_info->data(),
+        dinfo.data(), buffer_data<DensificationInfo>(ctx.densification_info),
         N * sizeof(DensificationInfo),
         cudaMemcpyDeviceToHost));
   }

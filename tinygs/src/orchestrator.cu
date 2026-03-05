@@ -21,7 +21,7 @@
 #include "tinygs/platform/backend_build.hpp"
 #include "tinygs/platform/runtime_factory.hpp"
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "tinygs/cuda/reduce.hpp"
 #include "tinygs/orchestrator.hpp"
 #include "tinygs/utils/file.hpp"
@@ -421,8 +421,8 @@ void Orchestrator::train_step() {
   if (opacities_cycle_start) clear_group_gradients(OptimParamGroup::Opacities);
   if (scales_cycle_start) clear_group_gradients(OptimParamGroup::Scales);
   if (rotations_cycle_start) clear_group_gradients(OptimParamGroup::Rotations);
-  m_loss_buffer->memset(0);
-  m_image_grad_buffer->memset(0);
+  fill_buffer_zero(m_backend_runtime, m_major_queue, m_loss_buffer);
+  fill_buffer_zero(m_backend_runtime, m_major_queue, m_image_grad_buffer);
   debug_cuda_stage_check(
       m_config, m_state.current_step, m_backend_runtime, m_major_queue, "clear-buffers");
 
@@ -701,7 +701,7 @@ float Orchestrator::accumulate_loss() {
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
   //? the unused pixels in the padded area are set to zero during loss computation
   //! fix the shape is not compatible with the tile-based design.
-  return gpu_sum(m_loss_buffer->data(), shape.padded_size());
+  return gpu_sum(buffer_data<float>(m_loss_buffer), shape.padded_size());
 }
 
 void Orchestrator::stop_training() {
@@ -785,9 +785,10 @@ void Orchestrator::initialize() {
   size_t full_buffer_size = full_pad_width * full_pad_height * 3;  // RGB elements count
   
   // Initialize GPU memory buffers with full resolution size
-  m_loss_buffer = std::make_shared<GPUMemory<float>>(full_buffer_size);
-  m_render_buffer = std::make_shared<GPUMemory<float>>(full_buffer_size);
-  m_image_grad_buffer = std::make_shared<GPUMemory<float>>(full_buffer_size);
+  const size_t full_buffer_bytes = full_buffer_size * sizeof(float);
+  m_loss_buffer = create_device_buffer(m_backend_runtime, full_buffer_bytes, "loss_buffer");
+  m_render_buffer = create_device_buffer(m_backend_runtime, full_buffer_bytes, "render_buffer");
+  m_image_grad_buffer = create_device_buffer(m_backend_runtime, full_buffer_bytes, "image_grad_buffer");
 
   const double mb = static_cast<double>(full_buffer_size) * sizeof(float) / (1024.0 * 1024.0);
   log_info("Allocated GPU buffers for full resolution {}x{} (size: {:.2f} MB)", 
@@ -809,11 +810,13 @@ void Orchestrator::initialize() {
   uint32_t height = training_shape.height;
 
   ImageShape rgb_shape{width, height, 3};
-  Image render_rgb = Image(rgb_shape, m_active_data_type, m_render_buffer->data());
-  Image grad_rgb = Image(rgb_shape, m_active_data_type, m_image_grad_buffer->data());
+  Image render_rgb = Image(rgb_shape, m_active_data_type, buffer_data<float>(m_render_buffer));
+  Image grad_rgb = Image(rgb_shape, m_active_data_type, buffer_data<float>(m_image_grad_buffer));
 
   // Setup rasterization context
   m_rasterize_ctx.inference = false; // Training mode
+  m_rasterize_ctx.runtime = m_backend_runtime;
+  m_rasterize_ctx.queue = m_major_queue;
   m_rasterize_ctx.fwd_input.width = width;
   m_rasterize_ctx.fwd_input.height = height;
   m_rasterize_ctx.fwd_input.near = m_config.near_plane;
@@ -828,7 +831,7 @@ void Orchestrator::initialize() {
   m_rasterize_ctx.gaussians_grad = m_gradients;
 
   // Setup loss context
-  m_loss_ctx.loss = Image(rgb_shape, m_active_data_type, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, m_active_data_type, buffer_data<float>(m_loss_buffer));
   // TODO: alpha is ignored for now
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
@@ -1044,15 +1047,15 @@ cv::Mat Orchestrator::to_opencv() const {
   CHECK_THROW(m_major_queue != nullptr);
   std::vector<float> cpu_image(shape.padded_size());
   const void* src_ptr = nullptr;
-  std::unique_ptr<GPUMemory<float>> fp32_tmp;
+  std::shared_ptr<BackendBuffer> fp32_tmp;
   if (m_rasterize_ctx.fwd_output.image.data_type == DataType::Float16) {
     // Convert FP16 buffer to FP32 on GPU before host copy
-    fp32_tmp = std::make_unique<GPUMemory<float>>(shape.padded_size());
-    half_to_float_gpu(fp32_tmp->data(),
+    fp32_tmp = create_device_buffer_for<float>(m_backend_runtime, shape.padded_size(), "fp32_tmp");
+    half_to_float_gpu(buffer_data<float>(fp32_tmp),
                       reinterpret_cast<const float16_t*>(m_rasterize_ctx.fwd_output.image.data),
                       shape.padded_size(),
                       m_major_stream);
-    src_ptr = fp32_tmp->data();
+    src_ptr = buffer_data<float>(fp32_tmp);
   } else if (m_rasterize_ctx.fwd_output.image.data_type == DataType::Float32) {
     src_ptr = m_rasterize_ctx.fwd_output.image.data;
   } else {
@@ -1096,8 +1099,8 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
 
   // Create new image objects with the reallocated buffers
   ImageShape rgb_shape{new_shape.width, new_shape.height, 3};
-  Image render_rgb = Image(rgb_shape, m_active_data_type, m_render_buffer->data());
-  Image grad_rgb = Image(rgb_shape, m_active_data_type, m_image_grad_buffer->data());
+  Image render_rgb = Image(rgb_shape, m_active_data_type, buffer_data<float>(m_render_buffer));
+  Image grad_rgb = Image(rgb_shape, m_active_data_type, buffer_data<float>(m_image_grad_buffer));
 
   // Update rasterization context with new dimensions and images
   m_rasterize_ctx.fwd_input.width = new_shape.width;
@@ -1108,7 +1111,7 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
   m_rasterize_ctx.grad_output.image = grad_rgb;
 
   // Update loss context
-  m_loss_ctx.loss = Image(rgb_shape, m_active_data_type, m_loss_buffer->data());
+  m_loss_ctx.loss = Image(rgb_shape, m_active_data_type, buffer_data<float>(m_loss_buffer));
   m_loss_ctx.pred = render_rgb;
   m_loss_ctx.grad = grad_rgb;
 }
@@ -1138,10 +1141,10 @@ void Orchestrator::reorder_gaussians() {
   m_optimizer->reorder(thrust::raw_pointer_cast(idx.data()));
 
   if (m_rasterize_ctx.densification_info) {
-    auto new_info = std::make_shared<GPUBuffer<tinygs::DensificationInfo>>(n);
+    auto new_info = create_device_buffer_for<tinygs::DensificationInfo>(m_backend_runtime, n, "densification_reorder");
     linear_kernel(densification_update, 0, m_major_stream, n,
-                  (const tinygs::DensificationInfo*) m_rasterize_ctx.densification_info->data(),
-                  new_info->data(),
+                  buffer_data_const<tinygs::DensificationInfo>(m_rasterize_ctx.densification_info),
+                  buffer_data<tinygs::DensificationInfo>(new_info),
                   thrust::raw_pointer_cast(idx.data()));
     m_rasterize_ctx.densification_info = new_info;
   }

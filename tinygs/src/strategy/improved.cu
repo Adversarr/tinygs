@@ -9,7 +9,7 @@
 #include <thrust/extrema.h>
 
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "random/device.cuh"
 #include "tinygs/strategy/improved.hpp"
 #include "tinygs/core/gaussian.hpp"
@@ -57,8 +57,8 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
 
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset_async(ctx.stream, 0);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
+    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   const int step = this_step();
@@ -73,8 +73,8 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
 
     // Reset densification info since indices may have changed.
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset_async(ctx.stream, 0);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
+    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
@@ -88,11 +88,11 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
     auto N = m_gaussians->size();
     float noise_scale = m_noise_lr_init * m_optimizer->get_lr() *
                         m_optimizer->get_optimization_params().opacities_lr;
-    GPUBuffer<float> noise(ctx.stream, N);
-    generate_random_logistic(m_rng, N, noise.data());
+    thrust::device_vector<float> noise(N);
+    generate_random_logistic(m_rng, N, thrust::raw_pointer_cast(noise.data()));
     linear_kernel(add_noise_opacity, 0, ctx.stream, N, noise_scale,
                   thrust::raw_pointer_cast(m_gaussians->opacities().data()),
-                  noise.data());
+                  thrust::raw_pointer_cast(noise.data()));
   }
 }
 
@@ -105,12 +105,12 @@ void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
   auto exec = thrust::cuda::par.on(ctx.stream);
   const int num_gaussians = static_cast<int>(m_gaussians->size());
 
-  if (!ctx.densification_info || static_cast<int>(ctx.densification_info->size()) != num_gaussians) {
+  if (!ctx.densification_info || static_cast<int>(buffer_count<DensificationInfo>(ctx.densification_info)) != num_gaussians) {
     log_warning("Densification info is not provided or has wrong size, skip duplication.");
     return;
   }
 
-  auto* d_densification_info = ctx.densification_info->data();
+  auto* d_densification_info = buffer_data<DensificationInfo>(ctx.densification_info);
 
   // Compute gradient value per gaussian
   thrust::device_vector<float> grad_values(num_gaussians, 0.f);
@@ -171,7 +171,7 @@ void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
 
   // Collect candidate indices (we take the first num_grows to avoid heavy sorts)
   thrust::device_vector<int> grow_indices_src(num_grows);
-  GPUBuffer<int> grow_indices_src_sampled;
+  std::shared_ptr<BackendBuffer> grow_indices_src_sampled_buf;
   int *d_grow_indices_src = thrust::raw_pointer_cast(grow_indices_src.data());
 
   if (num_grows == num_candidates) {
@@ -183,17 +183,17 @@ void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
       log_warning("Grow source indices fewer than expected: {} < {}", copied, num_grows);
     }
   } else {
-    grow_indices_src_sampled = multinomial_cuda_with_replacement(
+    grow_indices_src_sampled_buf = multinomial_cuda_with_replacement(
         d_grow_weights,                                // weights on device
         num_gaussians,                                 // categories
         num_grows,                                     // samples to draw
         static_cast<int>(m_params.seed + this_step()), // seed varies with step
         ctx.stream);
-    d_grow_indices_src = grow_indices_src_sampled.data();
+    d_grow_indices_src = buffer_data<int>(grow_indices_src_sampled_buf);
   }
 
   // Allocate target indices (appended range)
-  GPUBuffer<int> grow_indices_target(ctx.stream, num_grows);
+  thrust::device_vector<int> grow_indices_target(num_grows);
   auto* d_grow_indices_target = thrust::raw_pointer_cast(grow_indices_target.data());
   thrust::copy(exec, thrust::make_counting_iterator<int>(num_gaussians),
                thrust::make_counting_iterator<int>(num_gaussians + num_grows), d_grow_indices_target);

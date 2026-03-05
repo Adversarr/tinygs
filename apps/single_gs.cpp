@@ -4,12 +4,14 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <opencv2/opencv.hpp>
 #include <tinygs/core/camera.hpp>
 
 #include "tinygs/common.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
+#include "tinygs/platform/runtime_factory.hpp"
 #include "tinygs/random/pcg32.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/utils/image_format.hpp"
@@ -113,17 +115,33 @@ int main(int argc, char** argv) {
   int pad_width = shape.padded_width();
   int channel_stride = shape.padded_height() * pad_width;
 
-  tinygs::GPUMemory<float> out_image_fp32;
-  tinygs::GPUMemory<float16_t> out_image_fp16;
-  tinygs::GPUMemory<float> out_image_convert;
+  std::shared_ptr<tinygs::BackendBuffer> out_image_fp32;
+  std::shared_ptr<tinygs::BackendBuffer> out_image_fp16;
+  std::shared_ptr<tinygs::BackendBuffer> out_image_convert;
+
+  tinygs::BackendConfig backend_cfg;
+  backend_cfg.type = tinygs::BackendType::Cuda;
+  backend_cfg.device = 0;
+  auto rt_result = tinygs::create_backend_runtime(backend_cfg);
+  if (!rt_result.ok()) {
+    std::cerr << "Failed to create runtime: " << tinygs::to_string(rt_result.error()) << std::endl;
+    return 1;
+  }
+  auto runtime = rt_result.value();
+  auto q_result = runtime->create_queue({});
+  if (!q_result.ok()) {
+    std::cerr << "Failed to create queue: " << tinygs::to_string(q_result.error()) << std::endl;
+    return 1;
+  }
+  auto queue = q_result.value();
 
   if (use_fp16) {
-    out_image_fp16.resize(padded_size);
-    io.output.image.data = out_image_fp16.data();
-    out_image_convert.resize(padded_size);
+    out_image_fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, padded_size, "out_image_fp16");
+    io.output.image.data = tinygs::buffer_data<tinygs::float16_t>(out_image_fp16);
+    out_image_convert = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_convert");
   } else {
-    out_image_fp32.resize(padded_size);
-    io.output.image.data = out_image_fp32.data();
+    out_image_fp32 = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_fp32");
+    io.output.image.data = tinygs::buffer_data<float>(out_image_fp32);
   }
   io.output.image.shape = shape;
   io.output.image.data_type = out_data_type;
@@ -148,10 +166,11 @@ int main(int argc, char** argv) {
   auto get_image_as_linear_hwc = [&]() -> std::vector<float> {
     std::vector<float> tiled_data(padded_size);
     if (use_fp16) {
-      half_to_float_gpu(out_image_convert.data(), out_image_fp16.data(), padded_size);
-      out_image_convert.copy_to_host(tiled_data);
+      half_to_float_gpu(tinygs::buffer_data<float>(out_image_convert),
+                        tinygs::buffer_data<tinygs::float16_t>(out_image_fp16), padded_size);
+      tinygs::copy_to_host(runtime, queue, out_image_convert, tiled_data);
     } else {
-      out_image_fp32.copy_to_host(tiled_data);
+      tinygs::copy_to_host(runtime, queue, out_image_fp32, tiled_data);
     }
     std::vector<float> linear_hwc(total_pixels * 3);
     for (int y = 0; y < height; ++y) {
@@ -173,16 +192,20 @@ int main(int argc, char** argv) {
   params.inference = true;
   params.fwd_input = io.input;
   params.fwd_output = io.output;
-  params.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(gpu_gaussian->size());
+
+  params.runtime = runtime;
+  params.queue = queue;
+  params.densification_info = tinygs::create_device_buffer_for<DensificationInfo>(
+      params.runtime, gpu_gaussian->size(), "densification_info");
 
   auto rast = create_rasterizer(rasterizer);
   rast->set_gaussians(gpu_gaussian);
   params.fwd_input = io.input;
   params.fwd_output = io.output;
 
-  GPUMemory<float> out_image_grad_fp32;
-  GPUMemory<float16_t> out_image_grad_fp16;
-  GPUMemory<float> out_image_grad_convert;
+  std::shared_ptr<tinygs::BackendBuffer> out_image_grad_fp32;
+  std::shared_ptr<tinygs::BackendBuffer> out_image_grad_fp16;
+  std::shared_ptr<tinygs::BackendBuffer> out_image_grad_convert;
   std::vector<float> out_image_grad_host(total_pixels * 3);
   pcg32 rng(0, 1u);
   for (int i = 0; i < total_pixels * 3; ++i) {
@@ -201,19 +224,21 @@ int main(int argc, char** argv) {
   }
 
   if (use_fp16) {
-    out_image_grad_fp16.resize(padded_size);
-    float_to_half_gpu(out_image_grad_fp16.data(), out_image_grad_tiled.data(), padded_size);
-    out_image_grad_convert.resize(padded_size);
+    out_image_grad_fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, padded_size, "out_image_grad_fp16");
+    float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16),
+                      out_image_grad_tiled.data(), padded_size);
+    out_image_grad_convert = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_grad_convert");
   } else {
-    out_image_grad_fp32.resize(padded_size);
-    out_image_grad_fp32.copy_from_host(out_image_grad_tiled);
+    out_image_grad_fp32 = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_grad_fp32");
+    tinygs::copy_from_host(runtime, queue, out_image_grad_fp32, out_image_grad_tiled);
   }
 
   std::vector<float> fd_loss_weights;
   if (use_fp16) {
-    half_to_float_gpu(out_image_grad_convert.data(), out_image_grad_fp16.data(), padded_size);
+    half_to_float_gpu(tinygs::buffer_data<float>(out_image_grad_convert),
+                      tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16), padded_size);
     std::vector<float> out_image_grad_tiled_effective(padded_size);
-    out_image_grad_convert.copy_to_host(out_image_grad_tiled_effective);
+    tinygs::copy_to_host(runtime, queue, out_image_grad_convert, out_image_grad_tiled_effective);
     fd_loss_weights = tiled_to_linear_hwc(out_image_grad_tiled_effective);
   } else {
     fd_loss_weights = tiled_to_linear_hwc(out_image_grad_tiled);
@@ -317,7 +342,11 @@ int main(int argc, char** argv) {
     std::cout << "  dOpacities: " << o << std::endl;
     std::cout << "  dSH0: [" << c0.x << ", " << c0.y << ", " << c0.z << "]" << std::endl;
   }
-  auto dinfo = params.densification_info->to_cpu();
+  // Copy densification info from GPU to host
+  size_t dinfo_count = params.densification_info->size_bytes() / sizeof(DensificationInfo);
+  std::vector<DensificationInfo> dinfo(dinfo_count);
+  cudaMemcpy(dinfo.data(), params.densification_info->data(),
+             dinfo_count * sizeof(DensificationInfo), cudaMemcpyDeviceToHost);
 
   std::cout << "=== Densification Info ===" << std::endl;
   for (int i = 0; i < dinfo.size(); ++i) {

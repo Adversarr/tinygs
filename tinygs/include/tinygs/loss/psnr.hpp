@@ -3,11 +3,9 @@
 #include <memory>
 
 #include "tinygs/loss/loss.hpp"
+#include "tinygs/platform/runtime_contract.hpp"
 
 namespace tinygs {
-
-template <typename T>
-class GPUBuffer;
 
 /// @brief Peak Signal-to-Noise Ratio metric
 class PsnrMetric : public MetricBase {
@@ -26,7 +24,7 @@ public:
   std::string name() const override { return "psnr"; }
 
 private:
-  std::unique_ptr<GPUBuffer<float>> m_sqr_diff;
+  std::shared_ptr<BackendBuffer> m_sqr_diff;
 };
 
 } 

@@ -11,7 +11,7 @@
 #include <nvtx3/nvtx3.hpp>
 
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "random/device.cuh"
 #include "tinygs/strategy/absgs.hpp"
 
@@ -42,8 +42,8 @@ void AbsGSStrategy::step_impl(const RasterizeContext& ctx) {
 
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset_async(ctx.stream, 0);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
+    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   const int step = this_step();
@@ -56,8 +56,8 @@ void AbsGSStrategy::step_impl(const RasterizeContext& ctx) {
     prune(ctx);
     // Reset densification info since indices have changed
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset_async(ctx.stream, 0);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
+    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
@@ -76,7 +76,7 @@ void AbsGSStrategy::duplicate(const RasterizeContext& ctx) {
   auto exec = thrust::cuda::par.on(ctx.stream);
   auto num_gaussians = m_gaussians->size();
 
-  if (!ctx.densification_info || ctx.densification_info->size() != num_gaussians) {
+  if (!ctx.densification_info || buffer_count<DensificationInfo>(ctx.densification_info) != num_gaussians) {
     log_warning("Densification info is not provided or has wrong size, skip duplication.");
     return;
   }
@@ -84,10 +84,9 @@ void AbsGSStrategy::duplicate(const RasterizeContext& ctx) {
   // AbsGS key difference: separate flags for clone and split
   // Clone: grad_mean2d / counter >= clone_thresh  AND  max_scale <= percent_dense * scene_scale
   // Split: absgrad_mean2d / counter >= absgrad_thresh  AND  max_scale > percent_dense * scene_scale
-  GPUBuffer<char> grow_flags(ctx.stream, num_gaussians);
-  grow_flags.memset_async(ctx.stream, 0);
+  thrust::device_vector<char> grow_flags(num_gaussians, 0);
   auto* d_grow_flags = thrust::raw_pointer_cast(grow_flags.data());
-  auto* d_densification_info = ctx.densification_info->data();
+  auto* d_densification_info = buffer_data<DensificationInfo>(ctx.densification_info);
   auto* d_scale = thrust::raw_pointer_cast(m_gaussians->scales().data());
 
   constexpr int kClone = 1;
@@ -147,7 +146,7 @@ void AbsGSStrategy::duplicate(const RasterizeContext& ctx) {
       [] __device__(char f) { return f != 0; });
 
   // Allocate target indices
-  GPUBuffer<int> grow_indices_target(ctx.stream, num_grows);
+  thrust::device_vector<int> grow_indices_target(num_grows);
   auto* d_grow_indices_target = thrust::raw_pointer_cast(grow_indices_target.data());
   thrust::copy(exec,
       thrust::make_counting_iterator<int>(num_gaussians),
@@ -158,7 +157,7 @@ void AbsGSStrategy::duplicate(const RasterizeContext& ctx) {
   StrategyBase::on_duplicate(d_grow_indices_src, d_grow_indices_target, num_grows);
 
   // Generate random samples for split offsets
-  GPUBuffer<float> device_rng(ctx.stream, num_grows * 6);
+  thrust::device_vector<float> device_rng(num_grows * 6);
   generate_random_logistic(m_rng, num_grows * 6,
       thrust::raw_pointer_cast(device_rng.data()), 0.0f, 1.0f);
 
@@ -239,7 +238,7 @@ void AbsGSStrategy::prune(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
   auto exec = thrust::cuda::par.on(ctx.stream);
   const auto num_gaussians = m_gaussians->size();
-  const int original_num_gaussians = ctx.densification_info->size();
+  const int original_num_gaussians = buffer_count<DensificationInfo>(ctx.densification_info);
   const auto abs_ss_threshold = max(ctx.fwd_input.width, ctx.fwd_input.height) * m_params.max_screen_size;
 
   thrust::device_vector<char> is_alive(num_gaussians);
@@ -256,7 +255,7 @@ void AbsGSStrategy::prune(const RasterizeContext& ctx) {
        prune_large = this_step() > m_params.reset_every,
        max_radii_threshold = abs_ss_threshold,
        original_num_gaussians,
-       deninfo = ctx.densification_info->data(),
+       deninfo = buffer_data<DensificationInfo>(ctx.densification_info),
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) {
         bool not_large_ws = max(activate_scale(scale[i])) < pruning_scale_threshold * scene_scale;
         bool not_large_ss = i >= original_num_gaussians ||

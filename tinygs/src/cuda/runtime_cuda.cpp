@@ -525,6 +525,38 @@ public:
     return cuda_status(error, operation);
   }
 
+  BackendError fill_buffer_async(const std::shared_ptr<BackendQueue>& queue,
+                                 const std::shared_ptr<BackendBuffer>& buffer,
+                                 uint8_t value,
+                                 size_t offset,
+                                 size_t size_bytes) override {
+    constexpr const char* operation = "fill_buffer_async";
+    std::shared_ptr<CudaQueue> cuda_queue;
+    std::shared_ptr<CudaBuffer> cuda_buffer;
+    BackendError status = require_queue(queue, &cuda_queue, operation);
+    if (!status.ok()) {
+      return status;
+    }
+    status = require_buffer(buffer, &cuda_buffer, operation);
+    if (!status.ok()) {
+      return status;
+    }
+    if (size_bytes == 0) {
+      return backend_success(BackendType::Cuda, operation);
+    }
+    if (add_overflows(offset, size_bytes) ||
+        offset + size_bytes > cuda_buffer->size_bytes()) {
+      return backend_error(BackendType::Cuda,
+                           BackendErrorCode::InvalidArgument,
+                           operation,
+                           "fill range exceeds buffer size");
+    }
+    auto* dst = static_cast<char*>(cuda_buffer->data()) + offset;
+    const cudaError_t error =
+        cudaMemsetAsync(dst, static_cast<int>(value), size_bytes, cuda_queue->stream());
+    return cuda_status(error, operation);
+  }
+
 private:
   BackendError ensure_device(const std::string& operation) const {
     const cudaError_t error = cudaSetDevice(m_device);

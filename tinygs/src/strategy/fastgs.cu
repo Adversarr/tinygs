@@ -33,7 +33,7 @@
 
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/cuda/common_host.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "tinygs/loss/fused_ssim.hpp"
 #include "tinygs/loss/l1.hpp"
 #include "random/device.cuh"
@@ -452,10 +452,10 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   const size_t rgb_padded_size = static_cast<size_t>(rgb_shape.padded_size());
 
   // Reuse scratch buffers across all sampled cameras.
-  GPUMemory<float> render_buf_f32;
-  GPUMemory<float16_t> render_buf_f16;
-  GPUMemory<float> metric_render_buf_f32;
-  GPUMemory<float16_t> metric_render_buf_f16;
+  thrust::device_vector<float> render_buf_f32;
+  thrust::device_vector<float16_t> render_buf_f16;
+  thrust::device_vector<float> metric_render_buf_f32;
+  thrust::device_vector<float16_t> metric_render_buf_f16;
   if (render_dtype == DataType::Float16) {
     render_buf_f16.resize(rgb_padded_size);
     metric_render_buf_f16.resize(rgb_padded_size);
@@ -464,29 +464,29 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     metric_render_buf_f32.resize(rgb_padded_size);
   }
 
-  GPUMemory<float> gt_gpu(rgb_padded_size);
-  GPUMemory<float> rendered_f32(rgb_padded_size);
-  GPUMemory<float> l1_loss_buf(rgb_padded_size);
-  GPUMemory<float> ssim_loss_buf(rgb_padded_size);
-  GPUBuffer<float> l1_map(ctx.stream, n_pixels);
-  auto metric_map = std::make_shared<GPUBuffer<int>>(ctx.stream, n_pixels);
-  auto metric_counts = std::make_shared<GPUBuffer<int>>(ctx.stream, num_gaussians);
-  Image gt_image(rgb_shape, DataType::Float32, gt_gpu.data());
+  thrust::device_vector<float> gt_gpu(rgb_padded_size);
+  thrust::device_vector<float> rendered_f32(rgb_padded_size);
+  thrust::device_vector<float> l1_loss_buf(rgb_padded_size);
+  thrust::device_vector<float> ssim_loss_buf(rgb_padded_size);
+  thrust::device_vector<float> l1_map(n_pixels);
+  auto metric_map = create_device_buffer_for<int>(ctx.runtime, n_pixels);
+  auto metric_counts = create_device_buffer_for<int>(ctx.runtime, num_gaussians);
+  Image gt_image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(gt_gpu.data()));
 
   // Shared loss contexts reused for every camera.
   L1Loss l1_loss;
   FusedSSIMLoss ssim_loss;
   LossContext l1_ctx;
-  l1_ctx.pred = Image(rgb_shape, DataType::Float32, rendered_f32.data());
+  l1_ctx.pred = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(rendered_f32.data()));
   l1_ctx.target = gt_image;
-  l1_ctx.loss = Image(rgb_shape, DataType::Float32, l1_loss_buf.data());
+  l1_ctx.loss = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(l1_loss_buf.data()));
   l1_ctx.grad = Image();
   l1_ctx.stream = ctx.stream;
 
   LossContext ssim_ctx;
-  ssim_ctx.pred = Image(rgb_shape, DataType::Float32, rendered_f32.data());
+  ssim_ctx.pred = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(rendered_f32.data()));
   ssim_ctx.target = gt_image;
-  ssim_ctx.loss = Image(rgb_shape, DataType::Float32, ssim_loss_buf.data());
+  ssim_ctx.loss = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(ssim_loss_buf.data()));
   ssim_ctx.grad = Image();
   ssim_ctx.stream = ctx.stream;
 
@@ -546,11 +546,11 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     render_ctx.fwd_input.timestamp = data.timestamp;
 
     if (render_dtype == DataType::Float16) {
-      render_buf_f16.memset(0);
-      render_ctx.fwd_output.image = Image(rgb_shape, DataType::Float16, render_buf_f16.data());
+      thrust::fill(render_buf_f16.begin(), render_buf_f16.end(), float16_t(0));
+      render_ctx.fwd_output.image = Image(rgb_shape, DataType::Float16, thrust::raw_pointer_cast(render_buf_f16.data()));
     } else {
-      render_buf_f32.memset(0);
-      render_ctx.fwd_output.image = Image(rgb_shape, DataType::Float32, render_buf_f32.data());
+      thrust::fill(render_buf_f32.begin(), render_buf_f32.end(), 0.0f);
+      render_ctx.fwd_output.image = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(render_buf_f32.data()));
     }
 
     m_rasterizer->forward(render_ctx);
@@ -562,20 +562,20 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
     // Convert rendered image to Float32 if needed, then compute metrics in Float32.
     if (render_dtype == DataType::Float16) {
-      half_to_float_gpu(rendered_f32.data(),
+      half_to_float_gpu(thrust::raw_pointer_cast(rendered_f32.data()),
         reinterpret_cast<const float16_t*>(render_ctx.fwd_output.image.data),
         rgb_padded_size,
         ctx.stream);
     } else {
-      CUDA_CHECK_THROW(cudaMemcpyAsync(rendered_f32.data(), render_ctx.fwd_output.image.data,
+      CUDA_CHECK_THROW(cudaMemcpyAsync(thrust::raw_pointer_cast(rendered_f32.data()), render_ctx.fwd_output.image.data,
         rgb_padded_size * sizeof(float), cudaMemcpyDeviceToDevice, ctx.stream));
     }
 
     // Compute per-pixel L1 map and threshold into binary metric map.
     linear_kernel(compute_l1_map_kernel, 0, ctx.stream, n_pixels,
-        rendered_f32.data(),
+        thrust::raw_pointer_cast(rendered_f32.data()),
         static_cast<const float*>(gt_image.data),
-        l1_map.data(),
+        thrust::raw_pointer_cast(l1_map.data()),
         tiled_w,
         static_cast<uint32_t>(padded_w),
         static_cast<uint32_t>(padded_h),
@@ -583,7 +583,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
         static_cast<uint32_t>(height));
 
     auto exec = thrust::cuda::par.on(ctx.stream);
-    auto l1_begin = thrust::device_pointer_cast(l1_map.data());
+    auto l1_begin = thrust::device_pointer_cast(thrust::raw_pointer_cast(l1_map.data()));
     auto l1_end = l1_begin + n_pixels;
     float min_l1 = thrust::reduce(exec, l1_begin, l1_end,
         std::numeric_limits<float>::max(), thrust::minimum<float>());
@@ -597,8 +597,8 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     const float inv_range = 1.0f / range;
 
     linear_kernel(threshold_metric_map_kernel, 0, ctx.stream, n_pixels,
-        l1_map.data(),
-        metric_map->data(),
+        thrust::raw_pointer_cast(l1_map.data()),
+        buffer_data<int>(metric_map),
         m_loss_thresh,
         min_l1,
         inv_range,
@@ -608,16 +608,16 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     //   l1_weight * mean(L1) + ssim_weight * mean(1 - SSIM)
     float photometric_loss_h = 0.0f;
     {
-      l1_loss_buf.memset(0);
-      ssim_loss_buf.memset(0);
+      thrust::fill(l1_loss_buf.begin(), l1_loss_buf.end(), 0.0f);
+      thrust::fill(ssim_loss_buf.begin(), ssim_loss_buf.end(), 0.0f);
 
       l1_loss.evaluate(l1_ctx, 1.0f);
 
       ssim_loss.evaluate(ssim_ctx, 1.0f);
 
-      auto l1_loss_begin = thrust::device_pointer_cast(l1_loss_buf.data());
+      auto l1_loss_begin = thrust::device_pointer_cast(thrust::raw_pointer_cast(l1_loss_buf.data()));
       auto l1_loss_end = l1_loss_begin + static_cast<int>(rgb_padded_size);
-      auto ssim_loss_begin = thrust::device_pointer_cast(ssim_loss_buf.data());
+      auto ssim_loss_begin = thrust::device_pointer_cast(thrust::raw_pointer_cast(ssim_loss_buf.data()));
       auto ssim_loss_end = ssim_loss_begin + static_cast<int>(rgb_padded_size);
       const float l1_term = thrust::reduce(exec, l1_loss_begin, l1_loss_end, 0.0f, thrust::plus<float>());
       const float ssim_term = thrust::reduce(exec, ssim_loss_begin, ssim_loss_end, 0.0f, thrust::plus<float>());
@@ -635,24 +635,24 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     metric_ctx.fwd_input = render_ctx.fwd_input;  // same camera
 
     if (render_dtype == DataType::Float16) {
-      metric_render_buf_f16.memset(0);
-      metric_ctx.fwd_output.image = Image(rgb_shape, DataType::Float16, metric_render_buf_f16.data());
+      thrust::fill(metric_render_buf_f16.begin(), metric_render_buf_f16.end(), float16_t(0));
+      metric_ctx.fwd_output.image = Image(rgb_shape, DataType::Float16, thrust::raw_pointer_cast(metric_render_buf_f16.data()));
     } else {
-      metric_render_buf_f32.memset(0);
-      metric_ctx.fwd_output.image = Image(rgb_shape, DataType::Float32, metric_render_buf_f32.data());
+      thrust::fill(metric_render_buf_f32.begin(), metric_render_buf_f32.end(), 0.0f);
+      metric_ctx.fwd_output.image = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(metric_render_buf_f32.data()));
     }
 
     // Set metric_map and metric_counts
     metric_ctx.metric_map = metric_map;
     metric_ctx.metric_counts = metric_counts;
-    metric_ctx.metric_counts->memset_async(ctx.stream, 0);
+    fill_buffer_zero(ctx.runtime, ctx.queue, metric_ctx.metric_counts);
 
     m_rasterizer->forward_metric(metric_ctx);
     CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
 
     // Accumulate results
     exec = thrust::cuda::par.on(ctx.stream);
-    const int* d_accum_counts = metric_counts->data();
+    const int* d_accum_counts = buffer_data<int>(metric_counts);
     float* d_full_score = thrust::raw_pointer_cast(full_metric_score.data());
     int* d_full_counts = thrust::raw_pointer_cast(full_metric_counts.data());
     const float ploss = photometric_loss_h;
@@ -671,7 +671,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
           exec,
           thrust::make_counting_iterator<int>(0),
           thrust::make_counting_iterator<int>(n_pixels),
-          [d_metric_map = metric_map->data()] __device__(int i) -> long long {
+          [d_metric_map = buffer_data<int>(metric_map)] __device__(int i) -> long long {
             return d_metric_map[i] > 0 ? 1 : 0;
           },
           0ll,
@@ -866,8 +866,8 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
 
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset_async(ctx.stream, 0);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
+    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   const int step = this_step();
@@ -907,8 +907,8 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
 
     // Reset densification info since indices have changed
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(num_gaussians);
-    ctx.densification_info->memset_async(ctx.stream, 0);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
+    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
     m_importance_score.clear();
     m_pruning_score.clear();
   }
@@ -947,7 +947,7 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
   auto exec = thrust::cuda::par.on(ctx.stream);
   const auto num_gaussians = m_gaussians->size();
 
-  if (!ctx.densification_info || ctx.densification_info->size() != num_gaussians) {
+  if (!ctx.densification_info || buffer_count<DensificationInfo>(ctx.densification_info) != num_gaussians) {
     log_warning("[FastGS] Densification info is not provided or has wrong size, skip duplication.");
     return;
   }
@@ -955,10 +955,9 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
   const bool has_importance = (m_importance_score.size() == num_gaussians);
 
   // Per-Gaussian flag: 0 = nothing, 1 = clone, 2 = split
-  GPUBuffer<char> grow_flags(ctx.stream, num_gaussians);
-  grow_flags.memset_async(ctx.stream, 0);
+  thrust::device_vector<char> grow_flags(num_gaussians, 0);
   auto* d_grow_flags = thrust::raw_pointer_cast(grow_flags.data());
-  auto* d_densification_info = ctx.densification_info->data();
+  auto* d_densification_info = buffer_data<DensificationInfo>(ctx.densification_info);
   auto* d_scale = thrust::raw_pointer_cast(m_gaussians->scales().data());
 
   constexpr int kClone = 1;
@@ -1161,11 +1160,11 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
         d_grow_flags, clone_src.data(),
         [] __device__(char f) { return f == 1; });
 
-    GPUBuffer<int> clone_target(ctx.stream, num_clones);
+    thrust::device_vector<int> clone_target(num_clones);
     thrust::copy(exec,
         thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians)),
         thrust::make_counting_iterator<int>(static_cast<int>(num_gaussians) + num_clones),
-        thrust::raw_pointer_cast(clone_target.data()));
+        clone_target.data());
 
     // on_duplicate appends buffer space and copies optimizer state
     StrategyBase::on_duplicate(
@@ -1237,11 +1236,11 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
         });
 
     // Target indices: contiguous from size_before_split
-    GPUBuffer<int> split_target(ctx.stream, num_new_splits);
+    thrust::device_vector<int> split_target(num_new_splits);
     thrust::copy(exec,
         thrust::make_counting_iterator<int>(size_before_split),
         thrust::make_counting_iterator<int>(size_before_split + num_new_splits),
-        thrust::raw_pointer_cast(split_target.data()));
+        split_target.data());
 
     // on_duplicate appends buffer space and copies optimizer state
     StrategyBase::on_duplicate(
@@ -1251,7 +1250,7 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
 
     // Generate N(0,1) random samples for position offsets: 3 floats per new Gaussian
     // Reference: samples = torch.normal(mean=0, std=activated_scale) = N(0,1) * activated_scale
-    GPUBuffer<float> rng_buf(ctx.stream, num_new_splits * 3);
+    thrust::device_vector<float> rng_buf(num_new_splits * 3);
     generate_random_normal(m_rng, num_new_splits * 3,
         thrust::raw_pointer_cast(rng_buf.data()), 0.0f, 1.0f);
 
@@ -1339,7 +1338,7 @@ void FastGSStrategy::prune(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
   auto exec = thrust::cuda::par.on(ctx.stream);
   const auto num_gaussians = m_gaussians->size();
-  const int original_num_gaussians = ctx.densification_info->size();
+  const int original_num_gaussians = buffer_count<DensificationInfo>(ctx.densification_info);
   const auto abs_ss_threshold = max(ctx.fwd_input.width, ctx.fwd_input.height) * m_params.max_screen_size;
   const bool prune_large = this_step() > m_params.reset_every;
 
@@ -1360,7 +1359,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
         prune_large_ss = m_prune_large_ss,
         max_radii_threshold = abs_ss_threshold,
        original_num_gaussians,
-       deninfo = ctx.densification_info->data(),
+       deninfo = buffer_data<DensificationInfo>(ctx.densification_info),
        min_opacity = m_params.pruning_opacity_threshold] __device__(int i) {
         bool not_large_ws = max(activate_scale(scale[i])) < pruning_scale_threshold * scene_scale;
         bool not_large_ss = !prune_large_ss || i >= original_num_gaussians ||
@@ -1407,7 +1406,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
          prune_large_ss = m_prune_large_ss,
          max_radii_threshold = abs_ss_threshold,
          original_num_gaussians,
-         deninfo = ctx.densification_info->data(),
+         deninfo = buffer_data<DensificationInfo>(ctx.densification_info),
          min_opacity = m_params.pruning_opacity_threshold] __device__(int i) -> PruneReasonStats {
           PruneReasonStats out{};
           if (d_standard_prune[i] == 0) return out;
@@ -1507,7 +1506,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
 
     // Sample candidate positions by weight, without replacement.
     const int seed = static_cast<int>(m_rng.next_uint());
-    GPUBuffer<int> sampled_positions = multinomial_cuda_cpu_without_replacement(
+    auto sampled_positions_buf = multinomial_cuda_cpu_without_replacement(
       thrust::raw_pointer_cast(prune_weights.data()),
       num_standard_candidates,
       budget,
@@ -1515,14 +1514,15 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
       ctx.stream);
 
     // Mark sampled candidates as dead.
-    const int actual_prune = sampled_positions.size();
+    const int actual_prune = static_cast<int>(buffer_count<int>(sampled_positions_buf));
     target_pruned = actual_prune;
+    const int* d_sampled = buffer_data<int>(sampled_positions_buf);
     thrust::for_each(exec,
         thrust::make_counting_iterator<int>(0),
         thrust::make_counting_iterator<int>(actual_prune),
         [d_is_alive = is_alive.data(),
          d_candidate = thrust::raw_pointer_cast(candidate_indices.data()),
-       d_sampled = sampled_positions.data()] __device__(int i) {
+         d_sampled] __device__(int i) {
         const int candidate_idx = d_sampled[i];  // index into candidate_indices
           const int gaussian_idx = d_candidate[candidate_idx];
           d_is_alive[gaussian_idx] = 0;
@@ -1600,7 +1600,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
          prune_large_ss = m_prune_large_ss,
          max_radii_threshold = abs_ss_threshold,
          original_num_gaussians,
-         deninfo = ctx.densification_info->data(),
+         deninfo = buffer_data<DensificationInfo>(ctx.densification_info),
          min_opacity = m_params.pruning_opacity_threshold] __device__(int i) -> PruneReasonStats {
           PruneReasonStats out{};
           if (d_is_alive[i] != 0) return out;
@@ -1763,8 +1763,8 @@ void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
   this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept);
 
   // Reset densification info
-  ctx.densification_info = std::make_shared<GPUBuffer<DensificationInfo>>(nums_kept);
-  ctx.densification_info->memset_async(ctx.stream, 0);
+  ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, nums_kept);
+  fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
   m_importance_score.clear();
   m_pruning_score.clear();
 }

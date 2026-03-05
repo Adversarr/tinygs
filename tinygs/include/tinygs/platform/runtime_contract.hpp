@@ -166,6 +166,29 @@ public:
                                                  void* dst,
                                                  const void* src,
                                                  size_t size_bytes) = 0;
+
+  /// @brief Asynchronously fill a buffer region with a byte value.
+  /// @param queue Queue on which the fill is enqueued.
+  /// @param buffer Destination buffer.
+  /// @param value  Byte value to fill with.
+  /// @param offset Byte offset into the buffer.
+  /// @param size_bytes Number of bytes to fill.
+  virtual BackendError fill_buffer_async(const std::shared_ptr<BackendQueue>& queue,
+                                         const std::shared_ptr<BackendBuffer>& buffer,
+                                         uint8_t value,
+                                         size_t offset,
+                                         size_t size_bytes) = 0;
+
+  /// Convenience overload: fill the entire buffer with the given byte value.
+  BackendError fill_buffer_async(const std::shared_ptr<BackendQueue>& queue,
+                                 const std::shared_ptr<BackendBuffer>& buffer,
+                                 uint8_t value) {
+    if (!buffer) {
+      return backend_error(backend_type(), BackendErrorCode::InvalidArgument,
+                           "fill_buffer_async", "buffer must not be null");
+    }
+    return fill_buffer_async(queue, buffer, value, 0, buffer->size_bytes());
+  }
 };
 
 }  // namespace tinygs

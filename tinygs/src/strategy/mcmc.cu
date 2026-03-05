@@ -3,7 +3,7 @@
 #include <thrust/transform_reduce.h>
 #include <nvtx3/nvtx3.hpp>
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "tinygs/random/multinomial.hpp"
 #include "tinygs/strategy/mcmc.hpp"
 #include "tinygs/utils/scope_timer.hpp"
@@ -183,11 +183,11 @@ void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
   size_t num_gaussians = m_gaussians->size();
   if (num_gaussians == 0) return;
 
-  GPUBuffer<float> noise(ctx.stream, num_gaussians * 3);
+  thrust::device_vector<float> noise(num_gaussians * 3);
   generate_random_logistic<float>(
     m_rng,
     noise.size(),
-    noise.data(),
+    thrust::raw_pointer_cast(noise.data()),
     0.0f, 1.0f
   ); // TODO: fuse the two kernels.
 
@@ -229,17 +229,18 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   const auto& probs = opacities;
   thrust::device_vector<int> sampled_idxs(num_to_add);
   {
-    auto sampled_idxs_local = multinomial_cuda_with_replacement(
+    auto sampled_idxs_buf = multinomial_cuda_with_replacement(
     thrust::raw_pointer_cast(probs.data()),
       num_gaussians,
       num_to_add,
       m_rng.next_uint()
     );
+    const int* sampled_ptr = buffer_data<int>(sampled_idxs_buf);
 
     thrust::copy(
       exec,
-      sampled_idxs_local.data(),
-      sampled_idxs_local.data() + num_to_add,
+      sampled_ptr,
+      sampled_ptr + num_to_add,
       sampled_idxs.begin()
     );
   }
@@ -432,17 +433,18 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
       alive_indices = thrust::raw_pointer_cast(alive_indices.data())
     ] __device__ (int idx) { return opacities[alive_indices[idx]]; }
   );
-  auto sampled_idxs_local = multinomial_cuda_with_replacement(
+  auto sampled_idxs_buf = multinomial_cuda_with_replacement(
     thrust::raw_pointer_cast(probs.data()),
     num_kept,
     num_dead,
     m_rng.next_uint() // TODO: replace with real seed.
   );
+  const int* sampled_local_ptr = buffer_data<int>(sampled_idxs_buf);
   thrust::device_vector<int> sampled_idxs(num_dead);
   thrust::transform(  // sampled_idxs = alive_indices.index_select(0, sampled_idxs_local);
     exec,
-    sampled_idxs_local.data(),
-    sampled_idxs_local.data() + num_dead,
+    sampled_local_ptr,
+    sampled_local_ptr + num_dead,
     sampled_idxs.begin(),
     [
       alive_indices = thrust::raw_pointer_cast(alive_indices.data())

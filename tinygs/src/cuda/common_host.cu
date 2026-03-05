@@ -29,7 +29,6 @@
 
 #include <tinygs/cuda/common_device.cuh>
 #include <tinygs/cuda/common_host.hpp>
-#include <tinygs/cuda/gpu_memory.hpp>
 // #include <tinygs/cuda/multi_stream.h>
 
 #include <cuda.h>

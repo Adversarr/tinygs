@@ -21,9 +21,6 @@
 
 namespace tinygs {
 
-template <typename T>
-class GPUMemory;
-
 /// @brief Configuration parameters for training
 struct OrchestratorConfig {
   // Training parameters
@@ -265,10 +262,10 @@ private:
   PostStepCallback m_post_step_callback;
   CheckpointCallback m_checkpoint_callback;
 
-  // Internal GPU memory management
-  std::shared_ptr<GPUMemory<float>> m_loss_buffer;
-  std::shared_ptr<GPUMemory<float>> m_render_buffer;
-  std::shared_ptr<GPUMemory<float>> m_image_grad_buffer;
+  // Internal GPU memory management (backend-agnostic)
+  std::shared_ptr<BackendBuffer> m_loss_buffer;
+  std::shared_ptr<BackendBuffer> m_render_buffer;
+  std::shared_ptr<BackendBuffer> m_image_grad_buffer;
   RasterizeContext m_rasterize_ctx;
   LossContext m_loss_ctx;
 

@@ -1,18 +1,43 @@
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/cuda/common_host.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include <nvtx3/nvtx3.hpp>
 #include "tinygs/dataloader/nvtx_dl.h"
 
 namespace tinygs {
 
+namespace {
+
+/// @brief Minimal CUDA device buffer implementing BackendBuffer for internal use.
+class InternalCudaBuffer final : public BackendBuffer {
+public:
+  explicit InternalCudaBuffer(size_t size_bytes) : m_size(size_bytes) {
+    if (size_bytes > 0) {
+      CUDA_CHECK_THROW(cudaMalloc(&m_data, size_bytes));
+    }
+  }
+  ~InternalCudaBuffer() override {
+    if (m_data) cudaFree(m_data);
+  }
+  BackendType backend_type() const noexcept override { return BackendType::Cuda; }
+  int device() const noexcept override { return 0; }
+  size_t size_bytes() const noexcept override { return m_size; }
+  const BufferDesc& desc() const noexcept override { static BufferDesc d; return d; }
+  void* data() const noexcept override { return m_data; }
+  void* native_handle() const noexcept override { return m_data; }
+private:
+  void* m_data = nullptr;
+  size_t m_size = 0;
+};
+
+}  // namespace
+
 SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataLoaderBase(dataset), m_current_index(0) {
   m_rng.seed(0);
   generate_permutation();
-  m_gpu_memory = std::make_shared<GPUMemory<float>>();
   // Preallocate maximum GPU buffer once to avoid future reallocations
   size_t max_stride = m_dataset->image_shape().padded_size();
-  m_gpu_memory->resize(max_stride);
+  m_gpu_memory = std::make_shared<InternalCudaBuffer>(max_stride * sizeof(float));
 }
 
 void SimpleDataLoader::generate_permutation() {

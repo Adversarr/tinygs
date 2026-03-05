@@ -1,6 +1,6 @@
 #include "tinygs/dataloader/async.hpp"
 #include "tinygs/cuda/common_host.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
+#include "tinygs/platform/buffer_utils.hpp"
 #include "tinygs/random/pcg32.hpp"
 #include <queue>
 #include <nvtx3/nvtx3.hpp>
@@ -77,7 +77,21 @@ private:
 
 /// @brief Implementation struct for AsyncDataLoader (PIMPL idiom)
 struct AsyncDataLoader::Impl {
-  GPUMemory<float> gpu_memory;              ///< GPU buffer for data storage
+  // Simple CUDA buffer for internal use
+  struct CudaDeviceBuffer {
+    void* ptr = nullptr;
+    size_t size = 0;
+    void resize(size_t new_size) {
+      if (new_size > size) {
+        if (ptr) { cudaFree(ptr); ptr = nullptr; }
+        CUDA_CHECK_THROW(cudaMalloc(&ptr, new_size * sizeof(float)));
+        size = new_size;
+      }
+    }
+    float* data() { return static_cast<float*>(ptr); }
+    ~CudaDeviceBuffer() { if (ptr) cudaFree(ptr); }
+  };
+  CudaDeviceBuffer gpu_memory;              ///< GPU buffer for data storage
   pcg32 rng;                                ///< Random number generator
   uint32_t rngseed = 0;                     ///< Seed for random number generator
   std::vector<size_t> permutation;          ///< Current permutation of dataset indices

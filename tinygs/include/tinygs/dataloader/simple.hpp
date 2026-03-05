@@ -4,9 +4,6 @@
 
 namespace tinygs {
 
-template <typename T>
-class GPUMemory;
-
 /// @brief Basic dataloader without acceleration
 class SimpleDataLoader : public DataLoaderBase {
 public:
@@ -32,7 +29,7 @@ private:
   /// @brief Generate a new random permutation of dataset indices
   void generate_permutation();
 
-  std::shared_ptr<GPUMemory<float>> m_gpu_memory;  ///< GPU buffer for data storage
+  std::shared_ptr<BackendBuffer> m_gpu_memory;  ///< GPU buffer for data storage
   pcg32 m_rng;                    ///< Random number generator
   std::vector<size_t> m_permutation;  ///< Current permutation of dataset indices
   size_t m_current_index;         ///< Current position in the permutation

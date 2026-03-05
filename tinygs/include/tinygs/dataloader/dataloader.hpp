@@ -2,11 +2,9 @@
 #include "tinygs/core/image.hpp"
 #include "tinygs/dataset/dataset.hpp"
 #include "tinygs/platform/backend_types.hpp"
+#include "tinygs/platform/runtime_contract.hpp"
 
 namespace tinygs {
-
-template <typename T>
-class GPUMemory;
 
 /// @brief Camera parameters and metadata for a single training sample, residing on host.
 ///        Copied into RasterizeContext::fwd_input before each forward pass.
@@ -103,7 +101,7 @@ protected:
   DataLoaderParams m_params;
 
 private:
-  std::shared_ptr<GPUMemory<char>> m_raw_data;
+  std::shared_ptr<BackendBuffer> m_raw_data;
   std::mutex m_mutex;
 };
 

@@ -2,13 +2,36 @@
 
 #include <curand_kernel.h>
 #include <cub/cub.cuh>
+#include <thrust/device_vector.h>
 #include <numeric>
 #include <algorithm>
 #include "tinygs/cuda/common_host.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/random/pcg32.hpp"
 
 namespace tinygs{
+
+namespace {
+/// Wraps a thrust::device_vector<int> as a BackendBuffer so the public API stays
+/// backend-agnostic while keeping the underlying memory managed by thrust.
+class ThrustIntBuffer final : public BackendBuffer {
+public:
+  explicit ThrustIntBuffer(thrust::device_vector<int>&& vec) : m_vec(std::move(vec)) {}
+  BackendType backend_type() const noexcept override { return BackendType::Cuda; }
+  int device() const noexcept override { return 0; }
+  size_t size_bytes() const noexcept override { return m_vec.size() * sizeof(int); }
+  const BufferDesc& desc() const noexcept override { static BufferDesc d; return d; }
+  void* data() const noexcept override {
+    return const_cast<int*>(thrust::raw_pointer_cast(m_vec.data()));
+  }
+  void* native_handle() const noexcept override { return data(); }
+private:
+  thrust::device_vector<int> m_vec;
+};
+
+inline std::shared_ptr<BackendBuffer> wrap_thrust_int(thrust::device_vector<int>&& v) {
+  return std::make_shared<ThrustIntBuffer>(std::move(v));
+}
+} // anonymous namespace
 
 __device__ __forceinline__ int lower_bound_cdf(const float* cdf, int K, float u) {
     int lo = 0, hi = K - 1;
@@ -47,7 +70,7 @@ __global__ void multinomial_sample_kernel(
     out_indices[i] = idx;
 }
 
-GPUBuffer<int> multinomial_cuda_with_replacement(
+std::shared_ptr<BackendBuffer> multinomial_cuda_with_replacement(
   const float* d_weights, 
   int K, 
   int num_samples, 
@@ -59,15 +82,15 @@ GPUBuffer<int> multinomial_cuda_with_replacement(
       throw std::runtime_error(fmt::format("Invalid K={} or num_samples={}", K, num_samples));
   }
 
-  auto b_cdf = GPUBuffer<float>(cuda_stream, K);
-  float* d_cdf = b_cdf.data();
+  thrust::device_vector<float> b_cdf(K);
+  float* d_cdf = thrust::raw_pointer_cast(b_cdf.data());
   CUDA_CHECK_THROW(cudaMemcpyAsync(d_cdf, d_weights, sizeof(float) * K, cudaMemcpyDeviceToDevice, cuda_stream));
 
   void* d_temp = nullptr;
   size_t temp_bytes = 0;
   CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K, cuda_stream));
-  auto b_temp = GPUBuffer<uint8_t>(cuda_stream, temp_bytes);
-  d_temp = b_temp.data();
+  thrust::device_vector<uint8_t> b_temp(temp_bytes);
+  d_temp = thrust::raw_pointer_cast(b_temp.data());
   CUDA_CHECK_THROW(cub::DeviceScan::InclusiveSum(d_temp, temp_bytes, d_cdf, d_cdf, K, cuda_stream));
 
   float h_total = 0.0f;
@@ -78,14 +101,14 @@ GPUBuffer<int> multinomial_cuda_with_replacement(
       throw std::runtime_error(fmt::format("Invalid weights: h_total={:.4e}", h_total));
   }
 
-  auto b_out = GPUBuffer<int>(cuda_stream, num_samples);
-  int* d_out = b_out.data();
+  thrust::device_vector<int> b_out(num_samples);
+  int* d_out = thrust::raw_pointer_cast(b_out.data());
 
   int threads = 256;
   int blocks = (num_samples + threads - 1) / threads;
   multinomial_sample_kernel<<<blocks, threads, 0, cuda_stream>>>(d_cdf, K, h_total, num_samples, seed, d_out);
   CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
-  return b_out;
+  return wrap_thrust_int(std::move(b_out));
 }
 
 // CPU implementation of lower_bound_cdf
@@ -143,7 +166,7 @@ std::vector<int> multinomial_cpu_with_replacement(
   return out_indices;
 }
 
-GPUBuffer<int> multinomial_cuda_cpu(
+std::shared_ptr<BackendBuffer> multinomial_cuda_cpu(
   const float* d_weights,
   int K,
   int num_samples,
@@ -156,10 +179,10 @@ GPUBuffer<int> multinomial_cuda_cpu(
   CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
 
   auto h_out = multinomial_cpu_with_replacement(h_weights.data(), K, num_samples, seed);
-  auto b_out = GPUBuffer<int>(cuda_stream, num_samples);
-  CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, cuda_stream));
+  thrust::device_vector<int> b_out(num_samples);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(thrust::raw_pointer_cast(b_out.data()), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, cuda_stream));
   CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
-  return b_out;
+  return wrap_thrust_int(std::move(b_out));
 }
 
 // CPU sampling without replacement using Efraimidis–Spirakis PPS scheme
@@ -212,7 +235,7 @@ std::vector<int> multinomial_cpu_without_replacement(
   return out;
 }
 
-GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
+std::shared_ptr<BackendBuffer> multinomial_cuda_cpu_without_replacement(
   const float* d_weights,
   int K,
   int num_samples,
@@ -230,15 +253,15 @@ GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
 
   auto h_out = multinomial_cpu_without_replacement(h_weights.data(), K, num_samples, seed);
   const int actual_num_samples = static_cast<int>(h_out.size());
-  auto b_out = GPUBuffer<int>(cuda_stream, actual_num_samples);
+  thrust::device_vector<int> b_out(actual_num_samples);
   CUDA_CHECK_THROW(cudaMemcpyAsync(
-      b_out.data(),
+      thrust::raw_pointer_cast(b_out.data()),
       h_out.data(),
       sizeof(int) * actual_num_samples,
       cudaMemcpyHostToDevice,
       cuda_stream));
   CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
-  return b_out;
+  return wrap_thrust_int(std::move(b_out));
 }
 
 }
