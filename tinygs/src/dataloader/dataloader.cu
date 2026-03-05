@@ -1,5 +1,6 @@
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/dataloader/async.hpp"
@@ -154,10 +155,10 @@ void DataLoaderBase::transfer_gpu(BackendStream stream, const Image &gpu_data,
     // Copy source bytes to device scratch
     const size_t src_total_bytes =
         static_cast<size_t>(host_data.shape.padded_size()) * sizeof(uint8_t);
-    if (m_raw_data.size() < src_total_bytes) {
+    if (m_raw_data->size() < src_total_bytes) {
       throw std::runtime_error("Internal GPU scratch buffer insufficient; preallocate via reset().");
     }
-    char *raw_data = m_raw_data.data();
+    char *raw_data = m_raw_data->data();
     CUDA_CHECK_THROW(cudaMemcpyAsync(raw_data, host_data.data,
                                      src_total_bytes, cudaMemcpyHostToDevice,
                                      cuda_stream));
@@ -240,8 +241,8 @@ void DataLoaderBase::reset() {
   if (m_dataset) {
     const size_t max_elements = static_cast<size_t>(m_dataset->image_shape().padded_size());
     const size_t max_bytes = max_elements * sizeof(float); // reserve enough for float-sized scratch
-    if (m_raw_data.size() < max_bytes) {
-      m_raw_data.resize(max_bytes);
+    if (m_raw_data->size() < max_bytes) {
+      m_raw_data->resize(max_bytes);
     }
   }
 }
@@ -278,6 +279,7 @@ json DataLoaderBase::get_params() const {
 /// @brief Constructor for DataLoaderBase
 DataLoaderBase::DataLoaderBase(std::shared_ptr<DatasetBase> dataset) : m_dataset(dataset) {
   m_output_shape = dataset->image_shape();
+  m_raw_data = std::make_shared<GPUMemory<char>>();
 }
 
 }  // namespace tinygs

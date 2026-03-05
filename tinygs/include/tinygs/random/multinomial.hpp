@@ -1,11 +1,13 @@
 #pragma once
 
-#include <tinygs/cuda/gpu_memory.hpp>
 #include <tinygs/platform/backend_types.hpp>
 #include <vector>
 #include <memory>
 
 namespace tinygs {
+
+template <typename T>
+class GPUBuffer;
 
 /// @brief CUDA implementation of multinomial sampling (with replacement)
 /// @param d_weights Array of non-negative weights on GPU

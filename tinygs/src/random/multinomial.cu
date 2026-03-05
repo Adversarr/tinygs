@@ -4,6 +4,8 @@
 #include <cub/cub.cuh>
 #include <numeric>
 #include <algorithm>
+#include "tinygs/cuda/common_host.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/random/pcg32.hpp"
 
 namespace tinygs{
@@ -218,13 +220,23 @@ GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
   BackendStream stream)
 {
   const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  if (K <= 0 || num_samples <= 0) {
+    throw std::runtime_error(fmt::format("Invalid K={} or num_samples={}", K, num_samples));
+  }
+
   std::vector<float> h_weights(K);
   CUDA_CHECK_THROW(cudaMemcpyAsync(h_weights.data(), d_weights, sizeof(float) * K, cudaMemcpyDeviceToHost, cuda_stream));
   CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
 
   auto h_out = multinomial_cpu_without_replacement(h_weights.data(), K, num_samples, seed);
-  auto b_out = GPUBuffer<int>(cuda_stream, num_samples);
-  CUDA_CHECK_THROW(cudaMemcpyAsync(b_out.data(), h_out.data(), sizeof(int) * num_samples, cudaMemcpyHostToDevice, cuda_stream));
+  const int actual_num_samples = static_cast<int>(h_out.size());
+  auto b_out = GPUBuffer<int>(cuda_stream, actual_num_samples);
+  CUDA_CHECK_THROW(cudaMemcpyAsync(
+      b_out.data(),
+      h_out.data(),
+      sizeof(int) * actual_num_samples,
+      cudaMemcpyHostToDevice,
+      cuda_stream));
   CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
   return b_out;
 }

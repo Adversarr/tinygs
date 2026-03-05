@@ -9,8 +9,6 @@ namespace tinygs {
 template <typename T>
 class GPUBuffer;
 
-class GPUMemoryArena;
-
 /// @brief Context object that carries all inputs, outputs, and intermediate state for a
 ///        forward/backward rasterization pass.
 ///
@@ -111,7 +109,6 @@ public:
 
 protected:
   std::shared_ptr<GPUGaussian3d> m_gaussians;
-  std::shared_ptr<GPUMemoryArena> m_memory_arena;
   RasterizerParams m_params;
 };
 

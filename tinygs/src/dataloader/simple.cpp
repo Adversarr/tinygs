@@ -1,5 +1,6 @@
 #include "tinygs/dataloader/simple.hpp"
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include <nvtx3/nvtx3.hpp>
 #include "tinygs/dataloader/nvtx_dl.h"
 
@@ -8,9 +9,10 @@ namespace tinygs {
 SimpleDataLoader::SimpleDataLoader(std::shared_ptr<DatasetBase> dataset) : DataLoaderBase(dataset), m_current_index(0) {
   m_rng.seed(0);
   generate_permutation();
+  m_gpu_memory = std::make_shared<GPUMemory<float>>();
   // Preallocate maximum GPU buffer once to avoid future reallocations
   size_t max_stride = m_dataset->image_shape().padded_size();
-  m_gpu_memory.resize(max_stride);
+  m_gpu_memory->resize(max_stride);
 }
 
 void SimpleDataLoader::generate_permutation() {
@@ -62,7 +64,7 @@ GPUBatchInputOutput SimpleDataLoader::next(BackendStream stream) {
   Image gpu_image;
   gpu_image.shape = m_output_shape;
   gpu_image.data_type = m_params.data_type;
-  gpu_image.data = m_gpu_memory.data();
+  gpu_image.data = m_gpu_memory->data();
 
   // Transfer data from host to GPU using the provided CUDA stream
   transfer_gpu(stream, gpu_image, host_data.image);

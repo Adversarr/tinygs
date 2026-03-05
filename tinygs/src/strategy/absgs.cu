@@ -3,6 +3,7 @@
 // Reference: ref_impl/AbsGS/scene/gaussian_model.py
 
 #include <thrust/execution_policy.h>
+#include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
 #include <thrust/extrema.h>
 #include <thrust/reduce.h>
@@ -10,7 +11,8 @@
 #include <nvtx3/nvtx3.hpp>
 
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/random/device.cuh"
+#include "tinygs/cuda/gpu_memory.hpp"
+#include "random/device.cuh"
 #include "tinygs/strategy/absgs.hpp"
 
 namespace tinygs {

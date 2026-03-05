@@ -1,6 +1,7 @@
 #pragma once
 #include "tinygs/optim/optim.hpp"
 #include "tinygs/common.hpp"
+#include <memory>
 
 namespace tinygs {
 
@@ -32,7 +33,7 @@ public:
   /// @brief Construct Adam optimizer
   Adam(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
-  ~Adam() override = default;
+  ~Adam() override;
 
   /// @brief Reset all optimizer state
   void reset() override;
@@ -63,6 +64,8 @@ public:
   json get_params() const override;
 
 private:
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
 
   void step_adam(float scale, BackendStream stream);
   void step_adamw(float scale, BackendStream stream);
@@ -74,28 +77,6 @@ private:
   uint32_t m_opacities_steps = 0;
   uint32_t m_scales_steps = 0;
   uint32_t m_rotations_steps = 0;
-
-  /// First moment estimates for each parameter type
-  thrust::device_vector<vec3> m_means_first;
-  thrust::device_vector<float> m_opacities_first;
-  thrust::device_vector<vec4> m_rotations_first;
-  thrust::device_vector<vec3> m_scales_first;
-  /// Per-degree SH first moments (flat float SoA, same layout as GPUGaussian3d SH buffers).
-  thrust::device_vector<float> m_sh0_first;   ///< size = 3 * N
-  thrust::device_vector<float> m_sh1_first;   ///< size = 9 * N
-  thrust::device_vector<float> m_sh2_first;   ///< size = 15 * N
-  thrust::device_vector<float> m_sh3_first;   ///< size = 21 * N
-
-  /// Second moment estimates for each parameter type
-  thrust::device_vector<vec3> m_means_second;
-  thrust::device_vector<float> m_opacities_second;
-  thrust::device_vector<vec4> m_rotations_second;
-  thrust::device_vector<vec3> m_scales_second;
-  /// Per-degree SH second moments (flat float SoA, same layout as GPUGaussian3d SH buffers).
-  thrust::device_vector<float> m_sh0_second;  ///< size = 3 * N
-  thrust::device_vector<float> m_sh1_second;  ///< size = 9 * N
-  thrust::device_vector<float> m_sh2_second;  ///< size = 15 * N
-  thrust::device_vector<float> m_sh3_second;  ///< size = 21 * N
 };
 
 }  // namespace tinygs

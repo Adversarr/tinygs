@@ -1,6 +1,6 @@
 #pragma once
-#include <tinygs/cuda/common_host.hpp>
-#include <tinygs/cuda/vec.hpp>
+#include <tinygs/common.hpp>
+#include <tinygs/math/vec.hpp>
 #include <string>
 #include <sstream>
 #include <vector>

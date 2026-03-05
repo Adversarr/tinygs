@@ -1,5 +1,5 @@
 #pragma once
-#include "tinygs/cuda/vec.hpp"
+#include "tinygs/common.hpp"
 
 namespace tinygs {
 

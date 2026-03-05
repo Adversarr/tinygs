@@ -3,11 +3,14 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nvtx3/nvtx3.hpp>
+#include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/for_each.h>
 #include <thrust/iterator/counting_iterator.h>
 
 #include "tinygs/common.hpp"
+#include "tinygs/cuda/common_host.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/cuda/vec.hpp"
 #include "tinygs/rasterizer/fastgs.hpp"
 
@@ -65,8 +68,6 @@ struct FastGSRasterizer::Impl {
   // 3. helper
   int n_visible_primitives, n_instances, n_buckets;
   int primitive_primitive_indices_selector, instance_primitive_indices_selector;
-  // std::shared_ptr<GPUMemoryArena> arena;
-  // std::map<std::string, std::unique_ptr<GPUBuffer<char>>> temp_buffers;
   std::map<std::string, thrust::device_vector<char>> temp_buffers;
 
   Impl() : num_gaussians(0) {
@@ -291,10 +292,10 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
   float cy = ctx.fwd_input.K[2][1];
 
   // zero grad buffer.
-  auto& means_grad = ctx.gaussians_grad->means();
-  auto& scales_grad = ctx.gaussians_grad->scales();
-  auto& rotations_grad = ctx.gaussians_grad->rotations();
-  auto& opacities_grad = ctx.gaussians_grad->opacities();
+  auto means_grad = ctx.gaussians_grad->means();
+  auto scales_grad = ctx.gaussians_grad->scales();
+  auto rotations_grad = ctx.gaussians_grad->rotations();
+  auto opacities_grad = ctx.gaussians_grad->opacities();
 
   DensificationInfo* densification_info = nullptr;
   if (ctx.densification_info) {

@@ -1,9 +1,11 @@
 #include <thrust/copy.h>
+#include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/host_vector.h>
 #include <thrust/sequence.h>
 
 #include <cub/cub.cuh>
+#include <memory>
 
 #include "cuda/common_host.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
@@ -12,6 +14,98 @@
 #include <nvtx3/nvtx3.hpp>
 
 namespace tinygs {
+
+struct GPUGaussian3d::Impl {
+  thrust::device_vector<vec3> m_means;
+  thrust::device_vector<float> m_opacities;
+  thrust::device_vector<vec4> m_rotations;
+  thrust::device_vector<vec3> m_scales;
+  thrust::device_vector<float> m_sh0;
+  thrust::device_vector<float> m_sh1;
+  thrust::device_vector<float> m_sh2;
+  thrust::device_vector<float> m_sh3;
+};
+
+GPUGaussian3d::GPUGaussian3d() : m_impl(std::make_unique<Impl>()) {}
+
+GPUGaussian3d::~GPUGaussian3d() = default;
+
+#define m_means m_impl->m_means
+#define m_opacities m_impl->m_opacities
+#define m_rotations m_impl->m_rotations
+#define m_scales m_impl->m_scales
+#define m_sh0 m_impl->m_sh0
+#define m_sh1 m_impl->m_sh1
+#define m_sh2 m_impl->m_sh2
+#define m_sh3 m_impl->m_sh3
+
+size_t GPUGaussian3d::size() const {
+  return m_means.size();
+}
+
+DeviceSpan<const vec3> GPUGaussian3d::means() const {
+  return DeviceSpan<const vec3>{thrust::raw_pointer_cast(m_means.data()), m_means.size()};
+}
+
+DeviceSpan<const float> GPUGaussian3d::opacities() const {
+  return DeviceSpan<const float>{thrust::raw_pointer_cast(m_opacities.data()), m_opacities.size()};
+}
+
+DeviceSpan<const vec4> GPUGaussian3d::rotations() const {
+  return DeviceSpan<const vec4>{thrust::raw_pointer_cast(m_rotations.data()), m_rotations.size()};
+}
+
+DeviceSpan<const vec3> GPUGaussian3d::scales() const {
+  return DeviceSpan<const vec3>{thrust::raw_pointer_cast(m_scales.data()), m_scales.size()};
+}
+
+DeviceSpan<vec3> GPUGaussian3d::means() {
+  return DeviceSpan<vec3>{thrust::raw_pointer_cast(m_means.data()), m_means.size()};
+}
+
+DeviceSpan<float> GPUGaussian3d::opacities() {
+  return DeviceSpan<float>{thrust::raw_pointer_cast(m_opacities.data()), m_opacities.size()};
+}
+
+DeviceSpan<vec4> GPUGaussian3d::rotations() {
+  return DeviceSpan<vec4>{thrust::raw_pointer_cast(m_rotations.data()), m_rotations.size()};
+}
+
+DeviceSpan<vec3> GPUGaussian3d::scales() {
+  return DeviceSpan<vec3>{thrust::raw_pointer_cast(m_scales.data()), m_scales.size()};
+}
+
+DeviceSpan<const float> GPUGaussian3d::sh0() const {
+  return DeviceSpan<const float>{thrust::raw_pointer_cast(m_sh0.data()), m_sh0.size()};
+}
+
+DeviceSpan<const float> GPUGaussian3d::sh1() const {
+  return DeviceSpan<const float>{thrust::raw_pointer_cast(m_sh1.data()), m_sh1.size()};
+}
+
+DeviceSpan<const float> GPUGaussian3d::sh2() const {
+  return DeviceSpan<const float>{thrust::raw_pointer_cast(m_sh2.data()), m_sh2.size()};
+}
+
+DeviceSpan<const float> GPUGaussian3d::sh3() const {
+  return DeviceSpan<const float>{thrust::raw_pointer_cast(m_sh3.data()), m_sh3.size()};
+}
+
+DeviceSpan<float> GPUGaussian3d::sh0() {
+  return DeviceSpan<float>{thrust::raw_pointer_cast(m_sh0.data()), m_sh0.size()};
+}
+
+DeviceSpan<float> GPUGaussian3d::sh1() {
+  return DeviceSpan<float>{thrust::raw_pointer_cast(m_sh1.data()), m_sh1.size()};
+}
+
+DeviceSpan<float> GPUGaussian3d::sh2() {
+  return DeviceSpan<float>{thrust::raw_pointer_cast(m_sh2.data()), m_sh2.size()};
+}
+
+DeviceSpan<float> GPUGaussian3d::sh3() {
+  return DeviceSpan<float>{thrust::raw_pointer_cast(m_sh3.data()), m_sh3.size()};
+}
 
 // ============================================================================
 // AoS <-> SoA conversion kernels for SH coefficients
@@ -563,5 +657,14 @@ void GPUGaussian3d::reorder(uint* indices, BackendStream stream) {
   m_sh2 = std::move(sh2_new);
   m_sh3 = std::move(sh3_new);
 }
+
+#undef m_means
+#undef m_opacities
+#undef m_rotations
+#undef m_scales
+#undef m_sh0
+#undef m_sh1
+#undef m_sh2
+#undef m_sh3
 
 }  // namespace tinygs

@@ -1,16 +1,55 @@
 #include <thrust/execution_policy.h>
-#include <thrust/sequence.h>
+#include <thrust/device_vector.h>
 #include <nvtx3/nvtx3.hpp>
 #include <cmath>
+#include <memory>
 
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/optim/adam.hpp"
+#include "soa_optim_helpers.cuh"
 
 #include "../helper_math.h"
 
 constexpr int block_size = 512; // make occupancy higher
 
 namespace tinygs {
+
+struct Adam::Impl {
+  thrust::device_vector<vec3> m_means_first;
+  thrust::device_vector<float> m_opacities_first;
+  thrust::device_vector<vec4> m_rotations_first;
+  thrust::device_vector<vec3> m_scales_first;
+  thrust::device_vector<float> m_sh0_first;
+  thrust::device_vector<float> m_sh1_first;
+  thrust::device_vector<float> m_sh2_first;
+  thrust::device_vector<float> m_sh3_first;
+
+  thrust::device_vector<vec3> m_means_second;
+  thrust::device_vector<float> m_opacities_second;
+  thrust::device_vector<vec4> m_rotations_second;
+  thrust::device_vector<vec3> m_scales_second;
+  thrust::device_vector<float> m_sh0_second;
+  thrust::device_vector<float> m_sh1_second;
+  thrust::device_vector<float> m_sh2_second;
+  thrust::device_vector<float> m_sh3_second;
+};
+
+#define m_means_first m_impl->m_means_first
+#define m_opacities_first m_impl->m_opacities_first
+#define m_rotations_first m_impl->m_rotations_first
+#define m_scales_first m_impl->m_scales_first
+#define m_sh0_first m_impl->m_sh0_first
+#define m_sh1_first m_impl->m_sh1_first
+#define m_sh2_first m_impl->m_sh2_first
+#define m_sh3_first m_impl->m_sh3_first
+#define m_means_second m_impl->m_means_second
+#define m_opacities_second m_impl->m_opacities_second
+#define m_rotations_second m_impl->m_rotations_second
+#define m_scales_second m_impl->m_scales_second
+#define m_sh0_second m_impl->m_sh0_second
+#define m_sh1_second m_impl->m_sh1_second
+#define m_sh2_second m_impl->m_sh2_second
+#define m_sh3_second m_impl->m_sh3_second
 
 __device__ static __forceinline__ float lerp(float v0, float v1, float t) {
     return fmaf(t, v1, fmaf(-t, v0, v0));
@@ -500,79 +539,12 @@ void Adam::step_adamw(float scale, BackendStream stream) {
 
 
 Adam::Adam(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad) :
-  OptimizerBase(gaussians, gaussians_grad) {
+  OptimizerBase(gaussians, gaussians_grad), m_impl(std::make_unique<Impl>()) {
   // Resize and reset all internal buffers
   Adam::reset();
 }
 
-// SoA float gather for optimizer momentum buffers.
-// Copies: dst[ch * num_items + item_idx] = src[ch * src_stride + mapping[item_idx]]
-// for all items and channels.
-__global__ static void gather_soa_optim(
-    const float* __restrict__ src,
-    float* __restrict__ dst,
-    const uint* __restrict__ mapping,
-    int num_items,
-    int num_channels,
-    int src_stride
-) {
-  int tid = blockIdx.x * blockDim.x + threadIdx.x;
-  if (tid >= num_items * num_channels) return;
-  int item_idx = tid % num_items;
-  int channel = tid / num_items;
-  dst[channel * num_items + item_idx] = src[channel * src_stride + mapping[item_idx]];
-}
-
-// Host helper: gather SoA optimizer momentum buffers (first and second moments) for one SH degree.
-static void gather_soa_optim_buffers(
-    const thrust::device_vector<float>& src_first,
-    const thrust::device_vector<float>& src_second,
-    thrust::device_vector<float>& dst_first,
-    thrust::device_vector<float>& dst_second,
-    const uint* mapping,
-    int num_items,
-    int num_channels,
-    int src_stride
-) {
-  int total = num_items * num_channels;
-  dst_first.resize(total, 0.f);
-  dst_second.resize(total, 0.f);
-  if (total == 0) return;
-  const int grid = (total + block_size - 1) / block_size;
-  gather_soa_optim<<<grid, block_size>>>(
-      thrust::raw_pointer_cast(src_first.data()),
-      thrust::raw_pointer_cast(dst_first.data()),
-      mapping, num_items, num_channels, src_stride);
-  gather_soa_optim<<<grid, block_size>>>(
-      thrust::raw_pointer_cast(src_second.data()),
-      thrust::raw_pointer_cast(dst_second.data()),
-      mapping, num_items, num_channels, src_stride);
-}
-
-// Host helper: re-layout a SoA optimizer momentum buffer when the Gaussian count changes.
-// Preserves the first old_n items per channel, zero-fills the rest.
-static void relayout_soa_optim(
-    thrust::device_vector<float>& buf,
-    int old_n,
-    int new_n,
-    int num_channels
-) {
-  if (old_n == 0 || new_n == 0) {
-    buf.assign(new_n * num_channels, 0.f);
-    return;
-  }
-  thrust::device_vector<uint> identity(old_n);
-  thrust::sequence(identity.begin(), identity.end());
-  thrust::device_vector<float> new_buf(new_n * num_channels, 0.f);
-  int total = old_n * num_channels;
-  const int grid = (total + block_size - 1) / block_size;
-  gather_soa_optim<<<grid, block_size>>>(
-      thrust::raw_pointer_cast(buf.data()),
-      thrust::raw_pointer_cast(new_buf.data()),
-      thrust::raw_pointer_cast(identity.data()),
-      old_n, num_channels, old_n);
-  buf = std::move(new_buf);
-}
+Adam::~Adam() = default;
 
 // Gather non-SH optimizer state (means, opacities, rotations, scales) using a mapping.
 __global__ void copy_optimizer_base_state(
@@ -672,14 +644,14 @@ void Adam::remove(char* kept_flag, int num_kept) {
   const uint* map_ptr = thrust::raw_pointer_cast(mapping.data());
   const int old_n = static_cast<int>(original_size);
   thrust::device_vector<float> sh0_f, sh0_s, sh1_f, sh1_s, sh2_f, sh2_s, sh3_f, sh3_s;
-  gather_soa_optim_buffers(m_sh0_first, m_sh0_second, sh0_f, sh0_s, map_ptr, num_kept,
-                           GPUGaussian3d::sh_degree_num_coeffs(0) * 3, old_n);
-  gather_soa_optim_buffers(m_sh1_first, m_sh1_second, sh1_f, sh1_s, map_ptr, num_kept,
-                           GPUGaussian3d::sh_degree_num_coeffs(1) * 3, old_n);
-  gather_soa_optim_buffers(m_sh2_first, m_sh2_second, sh2_f, sh2_s, map_ptr, num_kept,
-                           GPUGaussian3d::sh_degree_num_coeffs(2) * 3, old_n);
-  gather_soa_optim_buffers(m_sh3_first, m_sh3_second, sh3_f, sh3_s, map_ptr, num_kept,
-                           GPUGaussian3d::sh_degree_num_coeffs(3) * 3, old_n);
+  optim_detail::gather_soa_optim_buffers(m_sh0_first, m_sh0_second, sh0_f, sh0_s, map_ptr, num_kept,
+                                         GPUGaussian3d::sh_degree_num_coeffs(0) * 3, old_n, block_size);
+  optim_detail::gather_soa_optim_buffers(m_sh1_first, m_sh1_second, sh1_f, sh1_s, map_ptr, num_kept,
+                                         GPUGaussian3d::sh_degree_num_coeffs(1) * 3, old_n, block_size);
+  optim_detail::gather_soa_optim_buffers(m_sh2_first, m_sh2_second, sh2_f, sh2_s, map_ptr, num_kept,
+                                         GPUGaussian3d::sh_degree_num_coeffs(2) * 3, old_n, block_size);
+  optim_detail::gather_soa_optim_buffers(m_sh3_first, m_sh3_second, sh3_f, sh3_s, map_ptr, num_kept,
+                                         GPUGaussian3d::sh_degree_num_coeffs(3) * 3, old_n, block_size);
   m_sh0_first = std::move(sh0_f); m_sh0_second = std::move(sh0_s);
   m_sh1_first = std::move(sh1_f); m_sh1_second = std::move(sh1_s);
   m_sh2_first = std::move(sh2_f); m_sh2_second = std::move(sh2_s);
@@ -708,8 +680,8 @@ void Adam::duplicate(int* indices, int* new_indices, int num_duplicate) {
   for (int deg = 0; deg < 4; deg++) {
     int nc = GPUGaussian3d::sh_degree_num_coeffs(deg) * 3; // num SoA channels
     auto relayout_pair = [&](thrust::device_vector<float>& first, thrust::device_vector<float>& second) {
-      relayout_soa_optim(first, old_n, new_n, nc);
-      relayout_soa_optim(second, old_n, new_n, nc);
+      optim_detail::relayout_soa_optim(first, old_n, new_n, nc, block_size);
+      optim_detail::relayout_soa_optim(second, old_n, new_n, nc, block_size);
     };
     switch (deg) {
       case 0: relayout_pair(m_sh0_first, m_sh0_second); break;
@@ -887,18 +859,35 @@ void Adam::reorder(uint* indices) {
 
   // Gather per-degree SoA SH optimizer momentum buffers (stride == num_gaussians for reorder)
   thrust::device_vector<float> sh0_f, sh0_s, sh1_f, sh1_s, sh2_f, sh2_s, sh3_f, sh3_s;
-  gather_soa_optim_buffers(m_sh0_first, m_sh0_second, sh0_f, sh0_s, indices, num_gaussians,
-                           GPUGaussian3d::sh_degree_num_coeffs(0) * 3, num_gaussians);
-  gather_soa_optim_buffers(m_sh1_first, m_sh1_second, sh1_f, sh1_s, indices, num_gaussians,
-                           GPUGaussian3d::sh_degree_num_coeffs(1) * 3, num_gaussians);
-  gather_soa_optim_buffers(m_sh2_first, m_sh2_second, sh2_f, sh2_s, indices, num_gaussians,
-                           GPUGaussian3d::sh_degree_num_coeffs(2) * 3, num_gaussians);
-  gather_soa_optim_buffers(m_sh3_first, m_sh3_second, sh3_f, sh3_s, indices, num_gaussians,
-                           GPUGaussian3d::sh_degree_num_coeffs(3) * 3, num_gaussians);
+  optim_detail::gather_soa_optim_buffers(m_sh0_first, m_sh0_second, sh0_f, sh0_s, indices, num_gaussians,
+                                         GPUGaussian3d::sh_degree_num_coeffs(0) * 3, num_gaussians, block_size);
+  optim_detail::gather_soa_optim_buffers(m_sh1_first, m_sh1_second, sh1_f, sh1_s, indices, num_gaussians,
+                                         GPUGaussian3d::sh_degree_num_coeffs(1) * 3, num_gaussians, block_size);
+  optim_detail::gather_soa_optim_buffers(m_sh2_first, m_sh2_second, sh2_f, sh2_s, indices, num_gaussians,
+                                         GPUGaussian3d::sh_degree_num_coeffs(2) * 3, num_gaussians, block_size);
+  optim_detail::gather_soa_optim_buffers(m_sh3_first, m_sh3_second, sh3_f, sh3_s, indices, num_gaussians,
+                                         GPUGaussian3d::sh_degree_num_coeffs(3) * 3, num_gaussians, block_size);
   m_sh0_first = std::move(sh0_f); m_sh0_second = std::move(sh0_s);
   m_sh1_first = std::move(sh1_f); m_sh1_second = std::move(sh1_s);
   m_sh2_first = std::move(sh2_f); m_sh2_second = std::move(sh2_s);
   m_sh3_first = std::move(sh3_f); m_sh3_second = std::move(sh3_s);
 }
+
+#undef m_means_first
+#undef m_opacities_first
+#undef m_rotations_first
+#undef m_scales_first
+#undef m_sh0_first
+#undef m_sh1_first
+#undef m_sh2_first
+#undef m_sh3_first
+#undef m_means_second
+#undef m_opacities_second
+#undef m_rotations_second
+#undef m_scales_second
+#undef m_sh0_second
+#undef m_sh1_second
+#undef m_sh2_second
+#undef m_sh3_second
 
 } // namespace tinygs

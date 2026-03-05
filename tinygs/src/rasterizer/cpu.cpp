@@ -17,6 +17,7 @@
 
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 
 namespace tinygs {
 

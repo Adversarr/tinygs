@@ -40,12 +40,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <string>
 #include <type_traits>
 #include <nlohmann/json.hpp>
-
-
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
+#include <spdlog/spdlog.h>
 
 ////////////////////////////// CUDA Macros //////////////////////////////
 
@@ -82,7 +80,7 @@
 #define TINYGS_MIN_GPU_ARCH 75
 #endif
 
-#include <tinygs/cuda/vec.hpp>
+#include <tinygs/math/vec.hpp>
 
 // #if defined(__CUDA_ARCH__)
 // static_assert(
@@ -93,6 +91,15 @@
 
 namespace tinygs {
 using json = nlohmann::json;
+
+template <typename T>
+T from_string(const std::string& str);
+
+std::string to_lower(std::string str);
+std::string to_upper(std::string str);
+inline bool equals_case_insensitive(const std::string& str1, const std::string& str2) {
+  return to_lower(str1) == to_lower(str2);
+}
 
 #define TINYGS_HALF_PRECISION                                                  \
   (!(TINYGS_MIN_GPU_ARCH == 61 || TINYGS_MIN_GPU_ARCH <= 52))
@@ -120,11 +127,23 @@ using json = nlohmann::json;
 using uuid_t = uint64_t;
 
 using f32 = float;
-using float16_t = nv_half;
-using bf16 = nv_bfloat16;
+using float16_t = uint16_t;
 
-using f162 = nv_half2;
-using bf162 = nv_bfloat162;
+#ifndef log_info
+#define log_info(...) SPDLOG_INFO(__VA_ARGS__)
+#endif
+#ifndef log_debug
+#define log_debug(...) SPDLOG_DEBUG(__VA_ARGS__)
+#endif
+#ifndef log_warning
+#define log_warning(...) SPDLOG_WARN(__VA_ARGS__)
+#endif
+#ifndef log_error
+#define log_error(...) SPDLOG_ERROR(__VA_ARGS__)
+#endif
+#ifndef log_success
+#define log_success(...) SPDLOG_TRACE(__VA_ARGS__)
+#endif
 
 ////////////////////////////// Utility Functions //////////////////////////////
 

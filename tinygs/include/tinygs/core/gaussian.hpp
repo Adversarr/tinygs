@@ -1,7 +1,7 @@
 #pragma once
 #include "tinygs/common.hpp"
 #include "tinygs/core/camera.hpp"
-#include "tinygs/cuda/vec.hpp"
+#include "tinygs/math/vec.hpp"
 
 namespace tinygs {
 

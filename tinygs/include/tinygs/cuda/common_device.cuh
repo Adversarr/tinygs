@@ -32,7 +32,7 @@
 
 #pragma once
 
-#include <tinygs/common.hpp>
+#include <tinygs/cuda/common_host.hpp>
 
 namespace tinygs {
 

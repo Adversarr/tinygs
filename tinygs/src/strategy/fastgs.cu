@@ -12,6 +12,7 @@
 // Reference: ref_impl/FastGS/scene/gaussian_model.py
 
 #include <thrust/execution_policy.h>
+#include <thrust/device_vector.h>
 #include <thrust/device_ptr.h>
 #include <thrust/extrema.h>
 #include <thrust/reduce.h>
@@ -25,15 +26,17 @@
 #include <cmath>
 #include <cstdio>
 #include <limits>
+#include <memory>
 #include <numeric>
 #include <string>
 #include <vector>
 
 #include "tinygs/cuda/common_device.cuh"
 #include "tinygs/cuda/common_host.hpp"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/loss/fused_ssim.hpp"
 #include "tinygs/loss/l1.hpp"
-#include "tinygs/random/device.cuh"
+#include "random/device.cuh"
 #include "tinygs/random/multinomial.hpp"
 #include "tinygs/strategy/fastgs.hpp"
 #include "tinygs/utils/image_format.hpp"
@@ -285,11 +288,19 @@ void log_final_prune_reason_stats(const FinalPruneReasonStats& stats) {
 
 }  // namespace
 
+struct FastGSStrategy::Impl {
+  thrust::device_vector<float> m_importance_score;
+  thrust::device_vector<float> m_pruning_score;
+};
+
+#define m_importance_score m_impl->m_importance_score
+#define m_pruning_score m_impl->m_pruning_score
+
 FastGSStrategy::FastGSStrategy(
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer)
-    : StrategyBase(gaussians, gaussians_grad, optimizer) {
+    : StrategyBase(gaussians, gaussians_grad, optimizer), m_impl(std::make_unique<Impl>()) {
   // Reference FastGS training defaults (ref_impl/FastGS/train_base.sh)
   // use densification every 500 iterations.
   m_params.refine_every = 500;
@@ -1828,5 +1839,8 @@ json FastGSStrategy::get_params() const {
   params["opacity_reset_value"] = m_opacity_reset_value;
   return params;
 }
+
+#undef m_importance_score
+#undef m_pruning_score
 
 }  // namespace tinygs

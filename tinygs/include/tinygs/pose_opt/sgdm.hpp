@@ -1,6 +1,6 @@
 #pragma once
-#include "tinygs/cuda/vec.hpp"
 #include "tinygs/pose_opt/pose_opt.hpp"
+#include <unordered_map>
 
 namespace tinygs {
 

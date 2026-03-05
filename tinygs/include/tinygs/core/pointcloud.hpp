@@ -2,7 +2,7 @@
 
 #include <vector>
 #include <string>
-#include <tinygs/cuda/common_host.hpp>
+#include <tinygs/common.hpp>
 #include <tinygs/core/gaussian.hpp>
 
 namespace tinygs {

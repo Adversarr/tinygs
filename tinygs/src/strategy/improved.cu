@@ -9,7 +9,8 @@
 #include <thrust/extrema.h>
 
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/random/device.cuh"
+#include "tinygs/cuda/gpu_memory.hpp"
+#include "random/device.cuh"
 #include "tinygs/strategy/improved.hpp"
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/random/multinomial.hpp"

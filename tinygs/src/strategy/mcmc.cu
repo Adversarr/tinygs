@@ -1,12 +1,14 @@
 #include <thrust/execution_policy.h>
+#include <thrust/device_vector.h>
 #include <thrust/transform_reduce.h>
 #include <nvtx3/nvtx3.hpp>
 #include "tinygs/cuda/common_device.cuh"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/random/multinomial.hpp"
 #include "tinygs/strategy/mcmc.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 
-#include "tinygs/random/device.cuh"
+#include "random/device.cuh"
 
 namespace tinygs {
   

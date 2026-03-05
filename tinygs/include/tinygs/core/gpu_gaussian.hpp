@@ -3,9 +3,29 @@
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/platform/backend_types.hpp"
 
-#include <thrust/device_vector.h>
+#include <cstddef>
+#include <memory>
 
 namespace tinygs {
+
+template <typename T>
+class DeviceSpan {
+public:
+  using value_type = T;
+
+  DeviceSpan() = default;
+  DeviceSpan(T* ptr, size_t size) : m_ptr(ptr), m_size(size) {}
+
+  T* data() const { return m_ptr; }
+  T* begin() const { return m_ptr; }
+  T* end() const { return m_ptr + m_size; }
+  size_t size() const { return m_size; }
+  T& operator[](size_t idx) const { return m_ptr[idx]; }
+
+private:
+  T* m_ptr = nullptr;
+  size_t m_size = 0;
+};
 
 /// @brief GPU-side Gaussian data with SoA layout.
 ///
@@ -20,36 +40,36 @@ namespace tinygs {
 /// copy_from_host() / copy_to_host().
 class GPUGaussian3d {
 public:
-  GPUGaussian3d() = default;
+  GPUGaussian3d();
 
-  ~GPUGaussian3d() = default;
+  ~GPUGaussian3d();
 
   void copy_from_host(const Gaussian3d &gaussians);
 
   void copy_to_host(Gaussian3d& gaussians);
 
-  size_t size() const { return m_means.size(); }
+  size_t size() const;
 
-  const thrust::device_vector<vec3>& means() const { return m_means; }
-  const thrust::device_vector<float>& opacities() const { return m_opacities; }
-  const thrust::device_vector<vec4>& rotations() const { return m_rotations; }
-  const thrust::device_vector<vec3>& scales() const { return m_scales; }
+  DeviceSpan<const vec3> means() const;
+  DeviceSpan<const float> opacities() const;
+  DeviceSpan<const vec4> rotations() const;
+  DeviceSpan<const vec3> scales() const;
 
-  thrust::device_vector<vec3>& means() { return m_means; }
-  thrust::device_vector<float>& opacities() { return m_opacities; }
-  thrust::device_vector<vec4>& rotations() { return m_rotations; }
-  thrust::device_vector<vec3>& scales() { return m_scales; }
+  DeviceSpan<vec3> means();
+  DeviceSpan<float> opacities();
+  DeviceSpan<vec4> rotations();
+  DeviceSpan<vec3> scales();
 
   /// @brief Per-degree SH coefficient buffers (SoA float layout on GPU).
   /// @{
-  const thrust::device_vector<float>& sh0() const { return m_sh0; }
-  const thrust::device_vector<float>& sh1() const { return m_sh1; }
-  const thrust::device_vector<float>& sh2() const { return m_sh2; }
-  const thrust::device_vector<float>& sh3() const { return m_sh3; }
-  thrust::device_vector<float>& sh0() { return m_sh0; }
-  thrust::device_vector<float>& sh1() { return m_sh1; }
-  thrust::device_vector<float>& sh2() { return m_sh2; }
-  thrust::device_vector<float>& sh3() { return m_sh3; }
+  DeviceSpan<const float> sh0() const;
+  DeviceSpan<const float> sh1() const;
+  DeviceSpan<const float> sh2() const;
+  DeviceSpan<const float> sh3() const;
+  DeviceSpan<float> sh0();
+  DeviceSpan<float> sh1();
+  DeviceSpan<float> sh2();
+  DeviceSpan<float> sh3();
   /// @}
 
   /// @brief Get raw device pointer to a specific SH degree buffer.
@@ -92,20 +112,11 @@ public:
   int get_sh_degree() const { return m_current_sh_degree; }
 
 private:
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
+
   int m_current_sh_degree = 0;
   float m_scene_scale = 1.0f;
-
-  thrust::device_vector<vec3> m_means;       ///< 3D positions
-  thrust::device_vector<float> m_opacities;  ///< Opacity values (logit space)
-  thrust::device_vector<vec4> m_rotations;   ///< Rotation quaternions, stored as (w, x, y, z)
-  thrust::device_vector<vec3> m_scales;      ///< Scale factors (log space)
-
-  /// SH coefficient buffers: channel-first SoA layout (RR..GG..BB per coefficient).
-  /// Size of each buffer = num_coeffs_for_degree * 3 * N.
-  thrust::device_vector<float> m_sh0;  ///< Degree 0: 1 coeff, size = 3*N
-  thrust::device_vector<float> m_sh1;  ///< Degree 1: 3 coeffs, size = 9*N
-  thrust::device_vector<float> m_sh2;  ///< Degree 2: 5 coeffs, size = 15*N
-  thrust::device_vector<float> m_sh3;  ///< Degree 3: 7 coeffs, size = 21*N
 };
 
 }  // namespace tinygs

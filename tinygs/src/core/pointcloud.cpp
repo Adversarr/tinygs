@@ -155,9 +155,9 @@ void save_ply(const std::string& filename, const Gaussian3d& gs, bool full_featu
     std::vector<unsigned char> f_dc_b(num_points);
     for (size_t i = 0; i < num_points; i++) {
       constexpr float k_inv_sh = 0.28209479177387814f;
-      f_dc_r[i] = (unsigned char)(clamp(f_dc_0[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
-      f_dc_g[i] = (unsigned char)(clamp(f_dc_1[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
-      f_dc_b[i] = (unsigned char)(clamp(f_dc_2[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
+      f_dc_r[i] = (unsigned char)(std::clamp(f_dc_0[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
+      f_dc_g[i] = (unsigned char)(std::clamp(f_dc_1[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
+      f_dc_b[i] = (unsigned char)(std::clamp(f_dc_2[i] * k_inv_sh + 0.5f, 0.0f, 1.0f) * RGB_NORMALIZATION_FACTOR);
     }
     plyData.getElement("vertex").addProperty<unsigned char>("red", f_dc_r);
     plyData.getElement("vertex").addProperty<unsigned char>("green", f_dc_g);

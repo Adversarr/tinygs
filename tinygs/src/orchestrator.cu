@@ -2,8 +2,13 @@
 #include <nvtx3/nvtx3.hpp>
 #include <opencv2/opencv.hpp>
 #include <spdlog/spdlog.h>
+#include <thrust/copy.h>
+#include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
 #include <thrust/fill.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/reduce.h>
+#include <thrust/transform.h>
 #include <thrust/transform_reduce.h>
 #include <cub/device/device_radix_sort.cuh>
 
@@ -780,9 +785,9 @@ void Orchestrator::initialize() {
   size_t full_buffer_size = full_pad_width * full_pad_height * 3;  // RGB elements count
   
   // Initialize GPU memory buffers with full resolution size
-  m_loss_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
-  m_render_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
-  m_image_grad_buffer = std::make_unique<GPUMemory<float>>(full_buffer_size);
+  m_loss_buffer = std::make_shared<GPUMemory<float>>(full_buffer_size);
+  m_render_buffer = std::make_shared<GPUMemory<float>>(full_buffer_size);
+  m_image_grad_buffer = std::make_shared<GPUMemory<float>>(full_buffer_size);
 
   const double mb = static_cast<double>(full_buffer_size) * sizeof(float) / (1024.0 * 1024.0);
   log_info("Allocated GPU buffers for full resolution {}x{} (size: {:.2f} MB)", 
@@ -1121,7 +1126,7 @@ static __global__ void densification_update( //
 void Orchestrator::reorder_gaussians() {
   NVTX3_FUNC_RANGE();
   log_info("Reordering gaussians by Morton code for better spatial locality...");
-  auto& pos = m_gaussians->means();
+  auto pos = m_gaussians->means();
   uint n = m_gaussians->size();
 
   // Reorder gaussians by Morton code

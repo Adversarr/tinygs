@@ -9,7 +9,6 @@
 #include <unordered_map>
 
 #include "tinygs/core/gpu_gaussian.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/loss/loss.hpp"
 #include "tinygs/optim/lr_scheduler.hpp"
@@ -21,6 +20,9 @@
 #include "tinygs/platform/runtime_contract.hpp"
 
 namespace tinygs {
+
+template <typename T>
+class GPUMemory;
 
 /// @brief Configuration parameters for training
 struct OrchestratorConfig {
@@ -264,9 +266,9 @@ private:
   CheckpointCallback m_checkpoint_callback;
 
   // Internal GPU memory management
-  std::unique_ptr<GPUMemory<float>> m_loss_buffer;
-  std::unique_ptr<GPUMemory<float>> m_render_buffer;
-  std::unique_ptr<GPUMemory<float>> m_image_grad_buffer;
+  std::shared_ptr<GPUMemory<float>> m_loss_buffer;
+  std::shared_ptr<GPUMemory<float>> m_render_buffer;
+  std::shared_ptr<GPUMemory<float>> m_image_grad_buffer;
   RasterizeContext m_rasterize_ctx;
   LossContext m_loss_ctx;
 

@@ -1,11 +1,13 @@
 #include <thrust/execution_policy.h>
+#include <thrust/device_vector.h>
 #include <thrust/transform_reduce.h>
 #include <thrust/device_ptr.h>
 #include <thrust/extrema.h>
 #include <thrust/reduce.h>
 
 #include "tinygs/cuda/common_device.cuh"
-#include "tinygs/random/device.cuh"
+#include "tinygs/cuda/gpu_memory.hpp"
+#include "random/device.cuh"
 #include "tinygs/strategy/default.hpp"
 #include "tinygs/utils/scope_timer.hpp"
 #include <nvtx3/nvtx3.hpp>

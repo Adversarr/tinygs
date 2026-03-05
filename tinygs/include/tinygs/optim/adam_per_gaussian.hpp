@@ -3,6 +3,7 @@
 #include "tinygs/common.hpp"
 #include "tinygs/optim/adam.hpp"
 #include "tinygs/optim/optim.hpp"
+#include <memory>
 
 namespace tinygs {
 
@@ -14,7 +15,7 @@ class AdamPerGaussian final : public OptimizerBase {
 public:
   AdamPerGaussian(std::shared_ptr<GPUGaussian3d> gaussians, std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
-  ~AdamPerGaussian() override = default;
+  ~AdamPerGaussian() override;
 
   void reset() override;
 
@@ -31,29 +32,13 @@ public:
   json get_params() const override;
 
 private:
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
+
   void step_adam(float scale, BackendStream stream);
   void step_adamw(float scale, BackendStream stream);
 
   AdamParameters m_adam_params;
-  thrust::device_vector<uint32_t> m_steps;
-
-  thrust::device_vector<vec3> m_means_first;
-  thrust::device_vector<float> m_opacities_first;
-  thrust::device_vector<vec4> m_rotations_first;
-  thrust::device_vector<vec3> m_scales_first;
-  thrust::device_vector<float> m_sh0_first;
-  thrust::device_vector<float> m_sh1_first;
-  thrust::device_vector<float> m_sh2_first;
-  thrust::device_vector<float> m_sh3_first;
-
-  thrust::device_vector<vec3> m_means_second;
-  thrust::device_vector<float> m_opacities_second;
-  thrust::device_vector<vec4> m_rotations_second;
-  thrust::device_vector<vec3> m_scales_second;
-  thrust::device_vector<float> m_sh0_second;
-  thrust::device_vector<float> m_sh1_second;
-  thrust::device_vector<float> m_sh2_second;
-  thrust::device_vector<float> m_sh3_second;
 };
 
 }  // namespace tinygs

@@ -1,6 +1,7 @@
 #pragma once
 #include "tinygs/random/pcg32.hpp"
 #include "tinygs/strategy/strategy.hpp"
+#include <memory>
 
 namespace tinygs {
 
@@ -58,10 +59,6 @@ public:
 
   pcg32 m_rng;
 
-  // -- Per-Gaussian accumulated scores (persistent across refine_every interval) --
-  thrust::device_vector<float> m_importance_score;   ///< Accumulated importance (metric count)
-  thrust::device_vector<float> m_pruning_score;      ///< Accumulated pruning score
-
   // -- Hyper-parameters --
   float m_absgrad_threshold = 0.0012f;     ///< Split abs gradient threshold
   float m_percent_dense = 0.001f;          ///< Clone/split scale boundary
@@ -84,6 +81,10 @@ public:
   int m_final_prune_end = 27000;           ///< Last final-prune step (<30000 and divisible by 3000)
   int m_final_prune_every = 3000;          ///< Interval for final pruning
   float m_opacity_reset_value = 0.01f;     ///< Periodic opacity reset clamp (ref: reset_opacity → min(opacity, 0.01))
+
+private:
+  struct Impl;
+  std::unique_ptr<Impl> m_impl;
 };
 
 }  // namespace tinygs
