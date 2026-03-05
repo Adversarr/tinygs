@@ -1,144 +1,248 @@
-# Multi-Platform Roadmap (CUDA + HIP + Metal)
+# Multiplatform Roadmap
+
+## Purpose
+Define a long-term, phase-based plan to evolve tinygs from CUDA-centric internals to a clean multiplatform runtime architecture while keeping training quality and maintainability stable.
+
+This roadmap is the refactoring guide for future iterations.
 
 ## Scope
 - In scope: CUDA, HIP, Metal.
-- Out of scope for now: Vulkan (explicitly deferred due implementation complexity and maintenance overhead).
-- Objective: keep one trainer architecture and one public API, with backend-specific execution hidden behind platform seams.
+- In scope: backend/device/buffer/event/queue abstraction.
+- In scope: unified error/status model via `BackendError`.
+- In scope: memory model standardization (allocation, free, copy, alignment, accessibility, interop).
+- Out of scope: Vulkan.
+- Out of scope: graph capture/replay as a core requirement.
+
+## Long-Term Outcome
+- One backend-agnostic runtime contract for tensor operations and memory movement.
+- Backend-specific behavior isolated behind explicit backend modules.
+- Library architecture supports both CLI training and future GUI integration without redesign.
+- New backends can be added with bounded effort and clear acceptance gates.
 
 ## Guiding Principles
-- Preserve current CUDA performance and behavior while introducing abstraction incrementally.
-- Isolate backend-specific types from public interfaces first (`BackendType`, `BackendStream`, backend factory/context).
-- Reuse shared algorithmic structure across CUDA/HIP/Metal where practical (loss orchestration, optimizer semantics, strategy flow, scheduling).
-- Keep fail-fast behavior for unsupported backends and unknown config values.
+- Preserve correctness and CUDA behavior while refactoring.
+- Prefer explicit contracts over implicit backend assumptions.
+- Keep data ownership, memory accessibility, and synchronization explicit.
+- Enforce strict layering: backend-agnostic layers must not depend on vendor runtimes.
+- Use fail-fast behavior for unsupported backends, invalid configs, and capability mismatches.
+- Ship in phases with measurable exit criteria.
 
-## Current Codebase Status (Audit)
-Date: 2026-03-04
+## Architectural Constraints
+- Single backend alive per process.
+- Single device per process.
+- No cross-backend memory transfer or interop required.
+- Backend selection at compile time via CMake.
+- Kernels and algorithms implemented per-backend.
+- Global device context; no multi-device orchestration.
 
-### Architecture and coupling
-- Training pipeline is orchestrator-centric and stable (`dataloader -> rasterizer -> loss -> optimizer -> strategy`).
-- CUDA stream usage is pervasive across runtime-critical modules.
-- Factories exist for major components and already provide an extension seam.
-- Rasterizer/optimizer internals are CUDA-first and assume CUDA kernel launch + CUDA memory utilities.
+## Target Platform Model
+### Core Runtime Entities
+- Backend: runtime implementation boundary (CUDA, HIP, Metal).
+- Device: selected compute target within a backend.
+- Queue: execution queue abstraction (stream/command queue semantics).
+- Buffer: memory object with explicit location, accessibility, and alignment contract.
+- Event: synchronization primitive for queue ordering and host wait/query.
+- Capability Profile: backend feature declaration used for validation and fallback.
+- `BackendError`: unified operation status/result domain.
 
-### Abstraction baseline
-- Added platform abstraction layer:
-  - `tinygs/include/tinygs/platform/backend_types.hpp`
-  - `tinygs/include/tinygs/platform/backend_context.hpp`
-  - `tinygs/include/tinygs/platform/backend_factory.hpp`
-  - `tinygs/src/platform/backend_factory.cpp`
-- `BackendType` currently supports: `cuda`, `hip`, `metal`.
-- Runtime behavior today:
-  - CUDA backend context is constructible.
-  - HIP/Metal fail fast with explicit "planned but not implemented yet" errors.
+### BackendError Contract
+`BackendError` is a required status type for all backend runtime operations, analogous in role to vendor error codes.
 
-### API migration status
-- Public interfaces now use `BackendStream` in critical orchestration surfaces:
-  - Gaussian ops (`clone_async`, `memset_async`, `reorder`)
-  - Dataloader transfer/next methods
-  - Loss/Rasterizer context stream fields
-  - Optimizer step interfaces
-  - Random/image utility stream parameters
-  - Orchestrator major stream member
+Requirements:
+- Every runtime operation returns a `BackendError` status.
+- Success and failure states are standardized across backends.
+- Backend-native failures are mapped into stable cross-backend categories.
+- Error reporting retains backend identity and operation context.
+- Unknown/unsupported behavior is represented explicitly, never silently ignored.
 
-### Configuration/runtime status
-- `apps/config_train` now reads backend config, creates backend context, and applies CUDA device selection.
-- Default/sample configs updated with explicit backend section (`cuda`, device `0`).
-- Backend setting is currently validated to CUDA-only runtime execution.
+Minimum error categories:
+- Success
+- Invalid Argument
+- Unsupported
+- Out Of Memory
+- Timeout
+- Device Lost
+- Synchronization Error
+- Runtime Failure
+- Unknown Failure
 
-### Testing status
-- Test coverage has been strengthened this iteration:
-  - Re-enabled LR scheduler unit test target.
-  - Added backend type/factory tests for parsing, roundtrip, and fail-fast behavior.
-- Remaining gap: no HIP/Metal runtime test path yet (blocked by backend implementation).
+## Memory Model Goals
+- All allocations are described by explicit intent: memory class, access scope, and alignment.
+- Copy semantics are explicit by source and destination memory class.
+- Host-visible and device-local usage is explicit, not inferred.
+- Interop-capable buffers are first-class for GUI and external runtime integration.
+- Alignment requirements are defined centrally and enforced consistently.
 
-## Progressive Implementation Plan
+## Queue and Synchronization Model
+- Queue abstraction models execution order and async dispatch semantics.
+- Event abstraction models queue-to-queue and host synchronization semantics.
+- Queue/event APIs are backend-agnostic at the contract level.
+- Command flow is queue-based; this roadmap does not require graph replay.
 
-## Phase 0: Foundation and Safety Rails
-- Deliverables:
-  - Backend enums/types/config parsing and factory/context layer.
-  - CUDA-only execution remains default and fully functional.
-  - Explicit errors for HIP/Metal selection.
-- Exit criteria:
-  - All existing CUDA tests pass.
-  - Configured backend selection works for CUDA and fails clearly for others.
+## Current Status Baseline (2026-03-05)
+- Backend configuration and backend type selection exist.
+- CUDA is the only executable backend path.
+- HIP and Metal are fail-fast placeholders.
+- Public/runtime surfaces still carry substantial CUDA assumptions.
+- Memory and temporary storage systems remain CUDA-specific.
+- Existing tests validate backend type parsing/factory fail-fast behavior, not multiplatform runtime execution.
 
-## Phase 1: Stream and Launch Boundary Cleanup
-- Deliverables:
-  - Backend stream type used at module boundaries.
-  - Central conversion helpers at CUDA boundary (`to_cuda_stream`, `to_backend_stream`).
-  - No behavior change in CUDA code path.
-- Exit criteria:
-  - Build succeeds without regressions.
-  - Smoke training run succeeds with CUDA backend.
+## Roadmap Phases
+### Phase 0: Governance and Guardrails
+Goal:
+- Make refactoring safe and auditable before wide interface migration.
 
-## Phase 2: Backend Runtime Interface
-- Deliverables:
-  - Introduce backend runtime operations interface (stream create/destroy/sync, memcpy, memset, event/scratch ops).
-  - Replace direct orchestrator/runtime CUDA calls with backend runtime wrappers.
-- Exit criteria:
-  - CUDA backend uses runtime interface end-to-end.
-  - No direct CUDA runtime calls remain in backend-agnostic orchestration layer.
+Outputs:
+- Layering rules documented and enforced.
+- Definition of backend-agnostic vs backend-specific boundaries.
+- Refactor acceptance criteria and phase gates formalized.
 
-## Phase 3: HIP Backend Bring-up
-- Deliverables:
-  - HIP backend context + runtime implementation.
-  - HIP build target and compile-time guards.
-  - Shared kernels/utilities ported where practical; HIP-specific implementations where required.
-- Exit criteria:
-  - Functional HIP smoke training on a reference config.
-  - Core tests enabled under HIP build variant.
+Exit Criteria:
+- Team-aligned rules for allowed dependencies and failure handling.
+- CI/policy checks defined for boundary violations.
 
-## Phase 4: Metal Backend Bring-up
-- Deliverables:
-  - Metal backend context + runtime operations.
-  - Metal rasterization/loss/optimizer dispatch strategy (likely split implementation files).
-  - Apple build path and CI lane.
-- Exit criteria:
-  - Functional Metal smoke training on a reference config.
-  - Core regression tests enabled under Metal-capable build.
+### Phase 1: Runtime Contract Foundation
+Goal:
+- Establish backend runtime contract as the single operation surface.
 
-## Phase 5: Cross-Backend Parity and Hardening
-- Deliverables:
-  - Numerical parity budgets and tolerance checks across CUDA/HIP/Metal.
-  - Backend capability reporting and graceful fallback messages.
-  - Performance baseline tracking and regression gates.
-- Exit criteria:
-  - Defined parity thresholds met for representative scenes.
-  - CI matrix includes CUDA + HIP + Metal checks (where runners available).
+Outputs:
+- Stable runtime contract for queue/event/buffer/device operations.
+- Capability profile model for backend feature checks.
+- Lifecycle rules for runtime objects.
 
-## Testing Strengthening Plan
-- Unit tests:
-  - Backend config parsing and factory behavior.
-  - Scheduler and optimizer API contract tests (already improved this iteration).
-- Integration tests:
-  - End-to-end config wiring with backend selection.
-  - Factory composition checks in `config_train` path.
-- Smoke tests:
-  - Short training run on canonical config for CUDA each PR.
-  - Add HIP/Metal smoke lanes once each backend is executable.
-- Regression checks:
-  - Loss/metric sanity ranges.
-  - Basic throughput sanity to catch severe perf regressions.
+Exit Criteria:
+- Contract is complete enough to express current CUDA execution behavior.
+- No unresolved contract ambiguity for ownership, ordering, or status reporting.
 
-## Progress Tracker
+### Phase 2: BackendError and Memory Contract Standardization
+Goal:
+- Standardize status/error and memory semantics before backend expansion.
 
-## Iteration: 2026-03-04
-- [x] Replaced draft roadmap with phased CUDA/HIP/Metal plan (Vulkan deferred).
-- [x] Added backend abstraction headers and backend factory source.
-- [x] Migrated key public module stream interfaces to `BackendStream`.
-- [x] Added stream conversion helpers and compatibility launch wrappers.
-- [x] Wired backend parsing + CUDA device selection in `config_train`.
-- [x] Updated sample configs with explicit backend section.
-- [x] Re-enabled `tinygs_lr_scheduler_test` target.
-- [x] Added `tinygs_backend_types_test` target and tests.
-- [ ] Introduce backend runtime operation interface (Phase 2).
-- [ ] HIP runtime + kernel bring-up (Phase 3).
-- [ ] Metal runtime + kernel bring-up (Phase 4).
+Outputs:
+- `BackendError` adopted as mandatory operation status.
+- Unified memory descriptors covering alignment, accessibility, and interop intent.
+- Copy and synchronization semantics aligned across runtime operations.
 
-## Risks and Mitigations
-- Risk: stream/memory APIs stay CUDA-leaky in orchestrator and strategy internals.
-  - Mitigation: Phase 2 runtime interface with strict layering rules.
-- Risk: parity divergence across backends in optimizer/loss numerics.
-  - Mitigation: add parity tests with explicit tolerances before enabling default backend switching.
-- Risk: test coverage lags behind backend expansion.
-  - Mitigation: every phase includes required unit + smoke gates before phase completion.
+Exit Criteria:
+- Runtime operations have deterministic status behavior.
+- Memory behavior is spec-defined and backend-independent at the contract level.
+
+### Phase 3: Public API Decoupling
+Goal:
+- Remove backend-specific types from public-facing interfaces.
+
+Outputs:
+- Public API uses backend-agnostic runtime entities.
+- Domain APIs no longer expose CUDA-native containers or handles.
+- Planned API break communicated and versioned.
+
+Exit Criteria:
+- Public interface is backend-neutral and stable for future backends.
+- No vendor runtime assumptions leak into public contracts.
+
+### Phase 4: CUDA Path Migration to New Runtime
+Goal:
+- Make CUDA implementation conform fully to the new runtime contract.
+
+Outputs:
+- CUDA backend provides full runtime behavior through the new abstraction.
+- Backend-agnostic modules consume runtime contract only.
+- Existing CUDA training behavior remains intact.
+
+Exit Criteria:
+- CUDA remains functional and performance-stable within agreed budgets.
+- Backend-agnostic layers are free of direct vendor runtime calls.
+
+### Phase 5: HIP Bring-Up
+Goal:
+- Enable functional HIP backend using the same runtime contract.
+
+Outputs:
+- HIP runtime implementation with queue/event/buffer parity.
+- HIP-enabled training slice for core forward/backward/optimization flow.
+
+Exit Criteria:
+- HIP smoke training passes on reference scenes.
+- Numerical parity stays within approved tolerance against CUDA baseline.
+
+### Phase 6: Metal Bring-Up
+Goal:
+- Enable functional Metal backend with queue-based execution semantics.
+
+Outputs:
+- Metal runtime implementation aligned with contract.
+- Metal execution path for core training/inference slice.
+
+Exit Criteria:
+- Metal smoke runs pass on supported hardware.
+- Contract-level behavior parity verified against CUDA baseline expectations.
+
+### Phase 7: GUI and Interop Readiness
+Goal:
+- Ensure architecture supports external rendering/UI integration cleanly.
+
+Outputs:
+- Interop-capable buffer/event model validated.
+- Forward/backward invocation model suitable for library embedding.
+
+Exit Criteria:
+- External integration path avoids ad-hoc backend-specific glue.
+- Ownership and synchronization contracts are sufficient for GUI workflows.
+
+### Phase 8: Parity, Hardening, and Lifecycle Maintenance
+Goal:
+- Stabilize multiplatform development with enforceable quality gates.
+
+Outputs:
+- Cross-backend parity test strategy and tolerance policy.
+- Performance baseline tracking and regression gates.
+- Capability reporting and fallback/error messaging policy.
+
+Exit Criteria:
+- CI matrix and release process include multiplatform quality gates.
+- Backends meet functional, numerical, and stability acceptance criteria.
+
+## Cross-Phase Acceptance Gates
+Each phase must satisfy:
+- Functional correctness on targeted scope.
+- Deterministic `BackendError` behavior.
+- Clear ownership and synchronization semantics.
+- No layering regressions.
+- Documented risk review and rollback strategy.
+
+## Testing Strategy (Roadmap-Level)
+- Contract tests: runtime entity lifecycle, memory semantics, queue/event ordering, status behavior.
+- Integration tests: end-to-end training slice per backend.
+- Parity tests: metric and loss tolerance comparisons across backends.
+- Regression tests: performance and memory stability trend checks.
+
+## Risk Register
+- Risk: abstraction drift causes hidden backend-specific behavior.
+  Mitigation: strict contract tests and boundary enforcement.
+
+- Risk: memory semantics diverge by backend and break correctness.
+  Mitigation: explicit memory/accessibility/alignment policy with mandatory validation.
+
+- Risk: parity regressions during backend bring-up.
+  Mitigation: staged parity gates and fixed-scene baselines.
+
+- Risk: short-term refactor velocity drops.
+  Mitigation: narrow phase scope, clear exit criteria, and incremental stabilization.
+
+## Default Decisions for This Roadmap
+- Planned API break is accepted for backend-neutral public interfaces.
+- Backend rollout order: CUDA abstraction completion, then HIP, then Metal.
+- Queue abstraction models stream/command-queue semantics.
+- Graph replay/capture is not a required part of this roadmap.
+- Backend selection at compile time via CMake (`-DTINYGS_BACKEND=CUDA/HIP/METAL`).
+- Per-backend kernel files and algorithm implementations; no shared kernel source translation.
+- Custom device algorithms per backend; no cross-platform algorithm library dependency.
+- Global device pointer pattern; device context accessible throughout runtime.
+- Rasterizer implementations are per-backend with shared algorithmic structure.
+
+## Completion Definition
+The roadmap is complete when:
+- Runtime contract is the only cross-backend execution interface.
+- `BackendError` is the mandatory status model for runtime operations.
+- CUDA, HIP, and Metal satisfy agreed functional and parity gates.
+- Library interfaces are stable, maintainable, and suitable for both CLI and GUI integration.
