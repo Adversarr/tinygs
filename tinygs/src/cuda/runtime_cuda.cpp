@@ -1,4 +1,5 @@
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -15,6 +16,17 @@ namespace {
 
 inline bool is_power_of_two(size_t value) noexcept {
   return value != 0 && (value & (value - 1)) == 0;
+}
+
+inline std::string normalize_operation(const std::string& operation) {
+  if (operation.empty()) {
+    return "unspecified_operation";
+  }
+  return operation;
+}
+
+inline bool add_overflows(size_t lhs, size_t rhs) noexcept {
+  return lhs > std::numeric_limits<size_t>::max() - rhs;
 }
 
 BackendErrorCode map_cuda_error_code(cudaError_t error) {
@@ -43,12 +55,13 @@ BackendErrorCode map_cuda_error_code(cudaError_t error) {
 }
 
 BackendError cuda_status(cudaError_t error, const std::string& operation) {
+  const std::string op_name = normalize_operation(operation);
   if (error == cudaSuccess) {
-    return backend_success(BackendType::Cuda, operation);
+    return backend_success(BackendType::Cuda, op_name);
   }
   return backend_error(BackendType::Cuda,
                        map_cuda_error_code(error),
-                       operation,
+                       op_name,
                        cudaGetErrorString(error));
 }
 
@@ -232,7 +245,7 @@ public:
                         operation,
                         "buffer alignment must be a power of two"));
     }
-    if (desc.interop) {
+    if (desc.interop_mode != BufferInteropMode::None) {
       return Result<BackendBuffer>::failure(
           backend_error(BackendType::Cuda,
                         BackendErrorCode::Unsupported,
@@ -245,6 +258,14 @@ public:
                         BackendErrorCode::Unsupported,
                         operation,
                         "host-pinned buffers are not implemented for CUDA runtime yet"));
+    }
+    if (desc.memory_class == BufferMemoryClass::Device &&
+        desc.host_access != BufferHostAccess::None) {
+      return Result<BackendBuffer>::failure(
+          backend_error(BackendType::Cuda,
+                        BackendErrorCode::Unsupported,
+                        operation,
+                        "device buffers do not support host access in CUDA runtime"));
     }
 
     const BackendError device_status = ensure_device(operation);
@@ -271,7 +292,10 @@ public:
     }
 
     BufferDesc normalized_desc = desc;
-    normalized_desc.host_visible = normalized_desc.memory_class == BufferMemoryClass::Unified;
+    if (normalized_desc.memory_class == BufferMemoryClass::Unified &&
+        normalized_desc.host_access == BufferHostAccess::None) {
+      normalized_desc.host_access = BufferHostAccess::ReadWrite;
+    }
     return Result<BackendBuffer>::success(
         std::make_shared<CudaBuffer>(m_device, std::move(normalized_desc), data),
         BackendType::Cuda,
@@ -349,9 +373,7 @@ public:
   BackendError copy_buffer_async(const std::shared_ptr<BackendQueue>& queue,
                                  const std::shared_ptr<BackendBuffer>& dst,
                                  const std::shared_ptr<BackendBuffer>& src,
-                                 size_t size_bytes,
-                                 size_t dst_offset,
-                                 size_t src_offset) override {
+                                 const CopyRegion& region) override {
     constexpr const char* operation = "copy_buffer_async";
     std::shared_ptr<CudaQueue> cuda_queue;
     std::shared_ptr<CudaBuffer> cuda_dst;
@@ -369,26 +391,29 @@ public:
       return status;
     }
 
-    status = validate_copy_region(cuda_dst, cuda_src, size_bytes, dst_offset, src_offset, operation);
+    status = validate_copy_region(cuda_dst, cuda_src, region, operation);
     if (!status.ok()) {
       return status;
     }
-    if (size_bytes == 0) {
+    if (region.size_bytes == 0) {
       return backend_success(BackendType::Cuda, operation);
     }
 
-    const auto* src_bytes = static_cast<const char*>(cuda_src->data()) + src_offset;
-    auto* dst_bytes = static_cast<char*>(cuda_dst->data()) + dst_offset;
+    const auto* src_bytes = static_cast<const char*>(cuda_src->data()) + region.src_offset;
+    auto* dst_bytes = static_cast<char*>(cuda_dst->data()) + region.dst_offset;
     const cudaError_t error =
-        cudaMemcpyAsync(dst_bytes, src_bytes, size_bytes, cudaMemcpyDeviceToDevice, cuda_queue->stream());
+        cudaMemcpyAsync(dst_bytes,
+                        src_bytes,
+                        region.size_bytes,
+                        cudaMemcpyDeviceToDevice,
+                        cuda_queue->stream());
     return cuda_status(error, operation);
   }
 
   BackendError copy_from_host_async(const std::shared_ptr<BackendQueue>& queue,
                                     const std::shared_ptr<BackendBuffer>& dst,
                                     const void* src,
-                                    size_t size_bytes,
-                                    size_t dst_offset) override {
+                                    const BufferTransferRegion& region) override {
     constexpr const char* operation = "copy_from_host_async";
     std::shared_ptr<CudaQueue> cuda_queue;
     std::shared_ptr<CudaBuffer> cuda_dst;
@@ -400,7 +425,7 @@ public:
     if (!status.ok()) {
       return status;
     }
-    if (size_bytes == 0) {
+    if (region.size_bytes == 0) {
       return backend_success(BackendType::Cuda, operation);
     }
     if (src == nullptr) {
@@ -409,24 +434,28 @@ public:
                            operation,
                            "src must not be null when size_bytes > 0");
     }
-    if (dst_offset + size_bytes > cuda_dst->size_bytes()) {
+    if (add_overflows(region.buffer_offset, region.size_bytes) ||
+        region.buffer_offset + region.size_bytes > cuda_dst->size_bytes()) {
       return backend_error(BackendType::Cuda,
                            BackendErrorCode::InvalidArgument,
                            operation,
                            "destination copy range exceeds buffer size");
     }
 
-    auto* dst_bytes = static_cast<char*>(cuda_dst->data()) + dst_offset;
+    auto* dst_bytes = static_cast<char*>(cuda_dst->data()) + region.buffer_offset;
     const cudaError_t error =
-        cudaMemcpyAsync(dst_bytes, src, size_bytes, cudaMemcpyHostToDevice, cuda_queue->stream());
+        cudaMemcpyAsync(dst_bytes,
+                        src,
+                        region.size_bytes,
+                        cudaMemcpyHostToDevice,
+                        cuda_queue->stream());
     return cuda_status(error, operation);
   }
 
   BackendError copy_to_host_async(const std::shared_ptr<BackendQueue>& queue,
                                   void* dst,
                                   const std::shared_ptr<BackendBuffer>& src,
-                                  size_t size_bytes,
-                                  size_t src_offset) override {
+                                  const BufferTransferRegion& region) override {
     constexpr const char* operation = "copy_to_host_async";
     std::shared_ptr<CudaQueue> cuda_queue;
     std::shared_ptr<CudaBuffer> cuda_src;
@@ -438,7 +467,7 @@ public:
     if (!status.ok()) {
       return status;
     }
-    if (size_bytes == 0) {
+    if (region.size_bytes == 0) {
       return backend_success(BackendType::Cuda, operation);
     }
     if (dst == nullptr) {
@@ -447,16 +476,21 @@ public:
                            operation,
                            "dst must not be null when size_bytes > 0");
     }
-    if (src_offset + size_bytes > cuda_src->size_bytes()) {
+    if (add_overflows(region.buffer_offset, region.size_bytes) ||
+        region.buffer_offset + region.size_bytes > cuda_src->size_bytes()) {
       return backend_error(BackendType::Cuda,
                            BackendErrorCode::InvalidArgument,
                            operation,
                            "source copy range exceeds buffer size");
     }
 
-    const auto* src_bytes = static_cast<const char*>(cuda_src->data()) + src_offset;
+    const auto* src_bytes = static_cast<const char*>(cuda_src->data()) + region.buffer_offset;
     const cudaError_t error =
-        cudaMemcpyAsync(dst, src_bytes, size_bytes, cudaMemcpyDeviceToHost, cuda_queue->stream());
+        cudaMemcpyAsync(dst,
+                        src_bytes,
+                        region.size_bytes,
+                        cudaMemcpyDeviceToHost,
+                        cuda_queue->stream());
     return cuda_status(error, operation);
   }
 
@@ -577,9 +611,7 @@ private:
 
   BackendError validate_copy_region(const std::shared_ptr<CudaBuffer>& dst,
                                     const std::shared_ptr<CudaBuffer>& src,
-                                    size_t size_bytes,
-                                    size_t dst_offset,
-                                    size_t src_offset,
+                                    const CopyRegion& region,
                                     const std::string& operation) const {
     if (dst == nullptr || src == nullptr) {
       return backend_error(BackendType::Cuda,
@@ -587,13 +619,15 @@ private:
                            operation,
                            "copy buffers must not be null");
     }
-    if (dst_offset + size_bytes > dst->size_bytes()) {
+    if (add_overflows(region.dst_offset, region.size_bytes) ||
+        region.dst_offset + region.size_bytes > dst->size_bytes()) {
       return backend_error(BackendType::Cuda,
                            BackendErrorCode::InvalidArgument,
                            operation,
                            "destination copy range exceeds buffer size");
     }
-    if (src_offset + size_bytes > src->size_bytes()) {
+    if (add_overflows(region.src_offset, region.size_bytes) ||
+        region.src_offset + region.size_bytes > src->size_bytes()) {
       return backend_error(BackendType::Cuda,
                            BackendErrorCode::InvalidArgument,
                            operation,

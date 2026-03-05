@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "tinygs/platform/backend_factory.hpp"
+#include "tinygs/platform/backend_types.hpp"
 
 using namespace tinygs;
 
@@ -36,25 +36,4 @@ TEST(BackendTypesTest, BackendConfigRoundTrip) {
 TEST(BackendTypesTest, BackendConfigRequiresType) {
   BackendConfig cfg;
   EXPECT_THROW(cfg.from_json(json{{"device", 0}}), std::runtime_error);
-}
-
-TEST(BackendFactoryTest, CreatesCudaContext) {
-  BackendConfig cfg;
-  cfg.type = BackendType::Cuda;
-  cfg.device = 2;
-
-  auto ctx = create_backend_context(cfg);
-  ASSERT_NE(ctx, nullptr);
-  EXPECT_EQ(ctx->type(), BackendType::Cuda);
-  EXPECT_EQ(ctx->device(), 2);
-}
-
-TEST(BackendFactoryTest, HipAndMetalNotImplementedYet) {
-  BackendConfig hip_cfg;
-  hip_cfg.type = BackendType::Hip;
-  EXPECT_THROW(create_backend_context(hip_cfg), std::runtime_error);
-
-  BackendConfig metal_cfg;
-  metal_cfg.type = BackendType::Metal;
-  EXPECT_THROW(create_backend_context(metal_cfg), std::runtime_error);
 }

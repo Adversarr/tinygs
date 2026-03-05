@@ -246,7 +246,9 @@ def print_scan(findings: dict[FindingKey, int]) -> None:
 
 
 def check_against_allowlist(
-    findings: dict[FindingKey, int], allowlist: dict[FindingKey, int]
+    findings: dict[FindingKey, int],
+    allowlist: dict[FindingKey, int],
+    strict_public_zero: bool = False,
 ) -> int:
     regressions: list[str] = []
     resolved: list[str] = []
@@ -275,6 +277,25 @@ def check_against_allowlist(
                 print(f"  - {line}")
         return 1
 
+    if strict_public_zero:
+        strict_lines: list[str] = []
+        for key, count in findings.items():
+            if count == 0:
+                continue
+            if key.rule_id in {
+                "public_header_forbidden_include",
+                "public_header_forbidden_vendor_type",
+            }:
+                strict_lines.append(encode_entry(key, count))
+        if strict_lines:
+            print(
+                "Boundary policy strict check failed: "
+                "public non-CUDA headers still contain vendor dependencies."
+            )
+            for line in sorted(strict_lines):
+                print(f"  * {line}")
+            return 1
+
     print("Boundary policy check passed: no new violations.")
     if resolved:
         print("Resolved/decreased violations (non-blocking):")
@@ -296,6 +317,13 @@ def main() -> int:
         default=DEFAULT_ALLOWLIST,
         help=f"Allowlist path (default: {DEFAULT_ALLOWLIST.relative_to(REPO_ROOT)})",
     )
+    parser.add_argument(
+        "--strict-public-zero",
+        action="store_true",
+        help=(
+            "For check mode only: require zero vendor includes/types in non-CUDA public headers."
+        ),
+    )
     args = parser.parse_args()
 
     findings = scan_findings()
@@ -314,7 +342,9 @@ def main() -> int:
     except (FileNotFoundError, ValueError) as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    return check_against_allowlist(findings, allowlist)
+    return check_against_allowlist(
+        findings, allowlist, strict_public_zero=args.strict_public_zero
+    )
 
 
 if __name__ == "__main__":

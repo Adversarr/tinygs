@@ -1,11 +1,15 @@
 #pragma once
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/core/gaussian.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/platform/backend_types.hpp"
 
 namespace tinygs {
+
+template <typename T>
+class GPUBuffer;
+
+class GPUMemoryArena;
 
 /// @brief Context object that carries all inputs, outputs, and intermediate state for a
 ///        forward/backward rasterization pass.

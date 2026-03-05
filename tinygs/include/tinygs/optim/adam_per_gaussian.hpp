@@ -1,7 +1,6 @@
 #pragma once
 
 #include "tinygs/common.hpp"
-#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/optim/adam.hpp"
 #include "tinygs/optim/optim.hpp"
 

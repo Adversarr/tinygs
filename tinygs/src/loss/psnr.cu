@@ -1,4 +1,5 @@
 #include "tinygs/cuda/common_device.cuh"
+#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/loss/psnr.hpp"
 #include "tinygs/cuda/reduce.hpp"
 #include <cuda_fp16.h>
@@ -77,6 +78,9 @@ __global__ void psnr_squared_diff_kernel_f16_h2(int N_pairs, const __half2 *__re
 
 namespace tinygs {
 
+PsnrMetric::PsnrMetric() = default;
+PsnrMetric::~PsnrMetric() = default;
+
 float PsnrMetric::evaluate(Image pred, Image target) {
   // Total elements in padded memory layout (includes padding, which is zero-initialized)
   int n = pred.shape.padded_size();
@@ -98,12 +102,12 @@ float PsnrMetric::evaluate(Image pred, Image target) {
   }
 
   // Allocate temporary memory for squared differences
-  if (m_sqr_diff.size() < n) {
-    m_sqr_diff = GPUBuffer<float>(n);
+  if (!m_sqr_diff || m_sqr_diff->size() < static_cast<size_t>(n)) {
+    m_sqr_diff = std::make_unique<GPUBuffer<float>>(n);
   }
-  m_sqr_diff.memset(0);
+  m_sqr_diff->memset(0);
 
-  float* squared_diff = m_sqr_diff.data();
+  float* squared_diff = m_sqr_diff->data();
   // Compute squared differences
   if (pred.data_type == DataType::Float32) {
     linear_kernel(psnr_squared_diff_kernel, 0, nullptr, n,

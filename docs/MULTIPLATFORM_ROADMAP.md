@@ -85,7 +85,10 @@ Minimum error categories:
 - HIP and Metal are fail-fast placeholders.
 - Public/runtime surfaces still carry substantial CUDA assumptions.
 - Memory and temporary storage systems remain CUDA-specific.
-- Existing tests validate backend type parsing/factory fail-fast behavior, not multiplatform runtime execution.
+- Runtime contract coverage exists for queue/event/buffer lifecycle and copy flow on CUDA.
+- Phase 2 contract standardization work tracks in:
+  - `docs/MULTIPLATFORM_PHASE2_MEMORY_AND_ERROR.md`
+  - `docs/MULTIPLATFORM_PHASE2_STATUS.md`
 
 ## Roadmap Phases
 ### Phase 0: Governance and Guardrails

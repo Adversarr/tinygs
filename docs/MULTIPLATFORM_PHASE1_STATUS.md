@@ -18,7 +18,7 @@
   - Command: `python3 scripts/check_backend_boundaries.py check`
   - Result: pass (`Boundary policy check passed: no new violations.`)
 - Targeted tests:
-  - Command: `ctest --test-dir build/Release --output-on-failure -R "BackendTypesTest|BackendFactoryTest|BackendRuntime"`
+  - Command: `ctest --test-dir build/Release --output-on-failure -R "BackendTypesTest|BackendRuntime"`
   - Result: pass (`12/12` tests)
   - Command: `ctest --test-dir build/Release --output-on-failure -R tinygs_phase0_backend_boundaries`
   - Result: pass (`1/1` tests)

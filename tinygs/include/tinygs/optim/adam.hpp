@@ -1,5 +1,4 @@
 #pragma once
-#include "tinygs/cuda/gpu_memory.hpp"
 #include "tinygs/optim/optim.hpp"
 #include "tinygs/common.hpp"
 

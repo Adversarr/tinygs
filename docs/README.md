@@ -11,7 +11,9 @@ tinygs is a lightweight C++/CUDA library for 3D Gaussian Splatting scene reconst
 5. [Phase 0 Guardrails](./MULTIPLATFORM_PHASE0_GUARDRAILS.md) - Boundary and layering policy
 6. [Phase 1 Runtime Contract](./MULTIPLATFORM_PHASE1_RUNTIME_CONTRACT.md) - Backend runtime interfaces and lifecycle rules
 7. [Phase 1 Status](./MULTIPLATFORM_PHASE1_STATUS.md) - Phase gate checklist and follow-ups
-8. [Modules](./modules/)
+8. [Phase 2 Memory and Error Contract](./MULTIPLATFORM_PHASE2_MEMORY_AND_ERROR.md) - Runtime memory semantics and deterministic status rules
+9. [Phase 2 Status](./MULTIPLATFORM_PHASE2_STATUS.md) - Phase gate checklist and follow-ups
+10. [Modules](./modules/)
    - [Core](./modules/core.md) - Data structures for Gaussians, cameras, and images
    - [CUDA](./modules/cuda.md) - CUDA utilities, memory management, and kernels
    - [Orchestrator](./modules/orchestrator.md) - Main training coordinator and pipeline

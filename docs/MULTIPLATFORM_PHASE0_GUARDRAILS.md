@@ -21,4 +21,6 @@ Phase 0 establishes a no-regression safety boundary while backend-neutral runtim
 ```bash
 python3 scripts/check_backend_boundaries.py check
 python3 scripts/check_backend_boundaries.py scan
+# Optional strict mode (Phase 3 readiness):
+python3 scripts/check_backend_boundaries.py check --strict-public-zero
 ```

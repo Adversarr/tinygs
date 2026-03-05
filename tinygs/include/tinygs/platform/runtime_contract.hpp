@@ -67,13 +67,36 @@ enum class BufferMemoryClass : uint8_t {
   HostPinned = 2,
 };
 
+enum class BufferHostAccess : uint8_t {
+  None = 0,
+  Read = 1,
+  Write = 2,
+  ReadWrite = 3,
+};
+
+enum class BufferInteropMode : uint8_t {
+  None = 0,
+  External = 1,
+};
+
 struct BufferDesc {
   size_t size_bytes = 0;
   size_t alignment = 256;
   BufferMemoryClass memory_class = BufferMemoryClass::Device;
-  bool host_visible = false;
-  bool interop = false;
+  BufferHostAccess host_access = BufferHostAccess::None;
+  BufferInteropMode interop_mode = BufferInteropMode::None;
   std::string debug_name;
+};
+
+struct CopyRegion {
+  size_t size_bytes = 0;
+  size_t dst_offset = 0;
+  size_t src_offset = 0;
+};
+
+struct BufferTransferRegion {
+  size_t size_bytes = 0;
+  size_t buffer_offset = 0;
 };
 
 class BackendQueue {
@@ -130,19 +153,15 @@ public:
   virtual BackendError copy_buffer_async(const std::shared_ptr<BackendQueue>& queue,
                                          const std::shared_ptr<BackendBuffer>& dst,
                                          const std::shared_ptr<BackendBuffer>& src,
-                                         size_t size_bytes,
-                                         size_t dst_offset = 0,
-                                         size_t src_offset = 0) = 0;
+                                         const CopyRegion& region) = 0;
   virtual BackendError copy_from_host_async(const std::shared_ptr<BackendQueue>& queue,
                                             const std::shared_ptr<BackendBuffer>& dst,
                                             const void* src,
-                                            size_t size_bytes,
-                                            size_t dst_offset = 0) = 0;
+                                            const BufferTransferRegion& region) = 0;
   virtual BackendError copy_to_host_async(const std::shared_ptr<BackendQueue>& queue,
                                           void* dst,
                                           const std::shared_ptr<BackendBuffer>& src,
-                                          size_t size_bytes,
-                                          size_t src_offset = 0) = 0;
+                                          const BufferTransferRegion& region) = 0;
   virtual BackendError copy_device_to_host_async(const std::shared_ptr<BackendQueue>& queue,
                                                  void* dst,
                                                  const void* src,

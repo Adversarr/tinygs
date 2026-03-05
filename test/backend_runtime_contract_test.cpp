@@ -1,3 +1,4 @@
+#include <limits>
 #include <numeric>
 #include <stdexcept>
 #include <vector>
@@ -111,8 +112,10 @@ TEST(BackendRuntimeContractTest, QueueEventAndBufferCopyFlow) {
 
   std::vector<int> in_values(32);
   std::iota(in_values.begin(), in_values.end(), 7);
+  BufferTransferRegion host_to_device_region;
+  host_to_device_region.size_bytes = buffer_desc.size_bytes;
   BackendError status = runtime->copy_from_host_async(
-      produce_queue, src_buffer, in_values.data(), buffer_desc.size_bytes);
+      produce_queue, src_buffer, in_values.data(), host_to_device_region);
   ASSERT_TRUE(status.ok()) << to_string(status);
 
   status = runtime->record_event(produce_queue, ready_event);
@@ -120,13 +123,17 @@ TEST(BackendRuntimeContractTest, QueueEventAndBufferCopyFlow) {
   status = runtime->wait_event(consume_queue, ready_event);
   ASSERT_TRUE(status.ok()) << to_string(status);
 
+  CopyRegion device_to_device_region;
+  device_to_device_region.size_bytes = buffer_desc.size_bytes;
   status = runtime->copy_buffer_async(
-      consume_queue, dst_buffer, src_buffer, buffer_desc.size_bytes);
+      consume_queue, dst_buffer, src_buffer, device_to_device_region);
   ASSERT_TRUE(status.ok()) << to_string(status);
 
   std::vector<int> out_values(32, -1);
+  BufferTransferRegion device_to_host_region;
+  device_to_host_region.size_bytes = buffer_desc.size_bytes;
   status = runtime->copy_to_host_async(
-      consume_queue, out_values.data(), dst_buffer, buffer_desc.size_bytes);
+      consume_queue, out_values.data(), dst_buffer, device_to_host_region);
   ASSERT_TRUE(status.ok()) << to_string(status);
   status = runtime->synchronize_queue(consume_queue);
   ASSERT_TRUE(status.ok()) << to_string(status);
@@ -152,8 +159,63 @@ TEST(BackendRuntimeContractTest, NullQueueIsInvalidArgument) {
   const std::shared_ptr<BackendBuffer> buffer = buffer_result.value();
 
   const std::vector<float> values(8, 1.0f);
+  BufferTransferRegion region;
+  region.size_bytes = buffer_desc.size_bytes;
   BackendError status = runtime->copy_from_host_async(
-      std::shared_ptr<BackendQueue>{}, buffer, values.data(), buffer_desc.size_bytes);
+      std::shared_ptr<BackendQueue>{}, buffer, values.data(), region);
+  EXPECT_EQ(status.code, BackendErrorCode::InvalidArgument);
+  EXPECT_FALSE(status.operation.empty());
+}
+
+TEST(BackendRuntimeContractTest, DeviceBufferHostAccessIsUnsupported) {
+  if (!has_cuda_device()) {
+    GTEST_SKIP() << "No CUDA device available.";
+  }
+
+  const auto runtime_result = create_backend_runtime(make_cuda_config());
+  ASSERT_TRUE(runtime_result.ok()) << to_string(runtime_result.error());
+  auto runtime = runtime_result.value();
+  ASSERT_NE(runtime, nullptr);
+
+  BufferDesc buffer_desc;
+  buffer_desc.size_bytes = sizeof(float) * 8;
+  buffer_desc.memory_class = BufferMemoryClass::Device;
+  buffer_desc.host_access = BufferHostAccess::ReadWrite;
+  const auto buffer_result = runtime->create_buffer(buffer_desc);
+  EXPECT_FALSE(buffer_result.ok());
+  EXPECT_EQ(buffer_result.error().code, BackendErrorCode::Unsupported);
+}
+
+TEST(BackendRuntimeContractTest, CopyRegionOverflowIsInvalidArgument) {
+  if (!has_cuda_device()) {
+    GTEST_SKIP() << "No CUDA device available.";
+  }
+
+  const auto runtime_result = create_backend_runtime(make_cuda_config());
+  ASSERT_TRUE(runtime_result.ok()) << to_string(runtime_result.error());
+  auto runtime = runtime_result.value();
+  ASSERT_NE(runtime, nullptr);
+
+  QueueDesc queue_desc;
+  auto queue_result = runtime->create_queue(queue_desc);
+  ASSERT_TRUE(queue_result.ok()) << to_string(queue_result.error());
+  auto queue = queue_result.value();
+  ASSERT_NE(queue, nullptr);
+
+  BufferDesc buffer_desc;
+  buffer_desc.size_bytes = sizeof(float) * 8;
+  buffer_desc.memory_class = BufferMemoryClass::Device;
+  auto src_result = runtime->create_buffer(buffer_desc);
+  ASSERT_TRUE(src_result.ok()) << to_string(src_result.error());
+  auto dst_result = runtime->create_buffer(buffer_desc);
+  ASSERT_TRUE(dst_result.ok()) << to_string(dst_result.error());
+
+  CopyRegion region;
+  region.size_bytes = 16;
+  region.dst_offset = std::numeric_limits<size_t>::max() - 8;
+  region.src_offset = 0;
+  const BackendError status = runtime->copy_buffer_async(
+      queue, dst_result.value(), src_result.value(), region);
   EXPECT_EQ(status.code, BackendErrorCode::InvalidArgument);
 }
 

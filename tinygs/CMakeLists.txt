@@ -46,7 +46,6 @@ set(TINYGS_SOURCES
     "src/pose_opt/adamw.cpp"
 
     # Platform
-    "src/platform/backend_factory.cpp"
     "src/platform/runtime_factory.cpp"
 
     # Random utilities
