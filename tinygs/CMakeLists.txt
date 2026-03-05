@@ -42,7 +42,6 @@ set(TINYGS_SOURCES
 
     # Pose Optimizers
     "src/pose_opt/pose_opt.cpp"
-    "src/pose_opt/sgdm.cpp"
     "src/pose_opt/adamw.cpp"
 
     # Platform

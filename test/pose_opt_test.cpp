@@ -1,7 +1,6 @@
 #include <gtest/gtest.h>
 #include "tinygs/pose_opt/pose_opt.hpp"
 #include "tinygs/pose_opt/none.hpp"
-#include "tinygs/pose_opt/sgdm.hpp"
 #include "tinygs/pose_opt/adamw.hpp"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
@@ -62,98 +61,6 @@ TEST_F(PoseOptNoneTest, SetParamsDoesNothing) {
   json params = {{"lr", 0.5f}};
   
   EXPECT_NO_THROW(opt.set_params(params));
-}
-
-class PoseOptSgdMTest : public ::testing::Test {
-protected:
-  void SetUp() override {
-    ident_mat = mat4x4(1.0f);
-    test_w2c = mat4x4(
-      1.0f, 0.0f, 0.0f, 0.0f,
-      0.0f, 1.0f, 0.0f, 0.0f,
-      0.0f, 0.0f, 1.0f, 0.0f,
-      0.0f, 0.0f, 0.0f, 1.0f
-    );
-  }
-
-  mat4x4 ident_mat;
-  mat4x4 test_w2c;
-};
-
-TEST_F(PoseOptSgdMTest, QueryWithIdentityMatrix) {
-  PoseOptSgdM opt;
-  mat4x4 result = opt.query(1, ident_mat);
-  
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < 4; ++j) {
-      EXPECT_FLOAT_EQ(result[i][j], ident_mat[i][j]);
-    }
-  }
-}
-
-TEST_F(PoseOptSgdMTest, DefaultParams) {
-  PoseOptSgdM opt;
-  json params = opt.get_params();
-  
-  EXPECT_EQ(params["type"], "sgdm");
-  EXPECT_FLOAT_EQ(params["lr"].get<float>(), 0.01f);
-  EXPECT_FLOAT_EQ(params["momentum"].get<float>(), 0.9f);
-  EXPECT_FLOAT_EQ(params["weight_decay"].get<float>(), 0.01f);
-}
-
-TEST_F(PoseOptSgdMTest, SetParamsFromJson) {
-  PoseOptSgdM opt;
-  json new_params = {
-    {"lr", 0.05f},
-    {"momentum", 0.95f},
-    {"weight_decay", 0.02f}
-  };
-  
-  opt.set_params(new_params);
-  json params = opt.get_params();
-  
-  EXPECT_FLOAT_EQ(params["lr"].get<float>(), 0.05f);
-  EXPECT_FLOAT_EQ(params["momentum"].get<float>(), 0.95f);
-  EXPECT_FLOAT_EQ(params["weight_decay"].get<float>(), 0.02f);
-}
-
-TEST_F(PoseOptSgdMTest, SetParamsPartialUpdate) {
-  PoseOptSgdM opt;
-  json new_params = {{"lr", 0.1f}};
-  
-  opt.set_params(new_params);
-  json params = opt.get_params();
-  
-  EXPECT_FLOAT_EQ(params["lr"].get<float>(), 0.1f);
-  EXPECT_FLOAT_EQ(params["momentum"].get<float>(), 0.9f);
-}
-
-TEST_F(PoseOptSgdMTest, UpdateWithZeroGradient) {
-  PoseOptSgdM opt;
-  mat4x4 zero_grad = mat4x4(0.0f);
-  
-  opt.query(1, test_w2c);
-  opt.update(1, zero_grad, 1.0f);
-  
-  mat4x4 result = opt.query(1, test_w2c);
-  for (int i = 0; i < 4; ++i) {
-    for (int j = 0; j < 4; ++j) {
-      EXPECT_FLOAT_EQ(result[i][j], test_w2c[i][j]);
-    }
-  }
-}
-
-TEST_F(PoseOptSgdMTest, MultipleUpdatesAccumulate) {
-  PoseOptSgdM opt;
-  mat4x4 grad = mat4x4(0.0f);
-  grad[3] = vec4(0.01f, 0.0f, 0.0f, 0.0f);
-  
-  opt.query(1, test_w2c);
-  opt.update(1, grad, 1.0f);
-  opt.update(1, grad, 1.0f);
-  
-  mat4x4 result = opt.query(1, test_w2c);
-  EXPECT_NE(result[3][0], test_w2c[3][0]);
 }
 
 class PoseOptAdamWTest : public ::testing::Test {
@@ -267,14 +174,6 @@ TEST_F(PoseOptFactoryTest, CreateNone) {
   EXPECT_EQ(params["type"], "none");
 }
 
-TEST_F(PoseOptFactoryTest, CreateSgdm) {
-  auto opt = create_pose_opt("sgdm");
-  EXPECT_NE(opt, nullptr);
-  
-  json params = opt->get_params();
-  EXPECT_EQ(params["type"], "sgdm");
-}
-
 TEST_F(PoseOptFactoryTest, CreateAdamW) {
   auto opt = create_pose_opt("adamw");
   EXPECT_NE(opt, nullptr);
@@ -288,13 +187,9 @@ TEST_F(PoseOptFactoryTest, CreateCaseInsensitive) {
   EXPECT_NE(opt1, nullptr);
   EXPECT_EQ(opt1->get_params()["type"], "none");
   
-  auto opt2 = create_pose_opt("SGDM");
+  auto opt2 = create_pose_opt("AdamW");
   EXPECT_NE(opt2, nullptr);
-  EXPECT_EQ(opt2->get_params()["type"], "sgdm");
-  
-  auto opt3 = create_pose_opt("AdamW");
-  EXPECT_NE(opt3, nullptr);
-  EXPECT_EQ(opt3->get_params()["type"], "adamw");
+  EXPECT_EQ(opt2->get_params()["type"], "adamw");
 }
 
 TEST_F(PoseOptFactoryTest, CreateUnknownThrows) {
@@ -313,27 +208,6 @@ protected:
   mat4x4 w2c_1;
   mat4x4 w2c_2;
 };
-
-TEST_F(PoseOptMultiTimestampTest, MultipleTimestampsIndependent) {
-  PoseOptSgdM opt;
-  
-  mat4x4 result1 = opt.query(100, w2c_1);
-  mat4x4 result2 = opt.query(200, w2c_2);
-  
-  EXPECT_FLOAT_EQ(result1[3][0], w2c_1[3][0]);
-  EXPECT_FLOAT_EQ(result2[3][0], w2c_2[3][0]);
-  
-  mat4x4 grad = mat4x4(0.0f);
-  grad[3] = vec4(0.1f, 0.0f, 0.0f, 0.0f);
-  
-  opt.update(100, grad, 1.0f);
-  
-  mat4x4 result1_after = opt.query(100, w2c_1);
-  mat4x4 result2_after = opt.query(200, w2c_2);
-  
-  EXPECT_NE(result1_after[3][0], result1[3][0]);
-  EXPECT_FLOAT_EQ(result2_after[3][0], result2[3][0]);
-}
 
 TEST_F(PoseOptMultiTimestampTest, AdamWMultipleTimestamps) {
   PoseOptAdamW opt;

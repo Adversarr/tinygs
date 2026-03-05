@@ -19,7 +19,6 @@ public_header_forbidden_include|tinygs/include/tinygs/optim/adam_per_gaussian.hp
 public_header_forbidden_include|tinygs/include/tinygs/orchestrator.hpp|include:tinygs/cuda/gpu_memory.hpp|1
 public_header_forbidden_include|tinygs/include/tinygs/pose_opt/adamw.hpp|include:tinygs/cuda/vec.hpp|1
 public_header_forbidden_include|tinygs/include/tinygs/pose_opt/pose_opt.hpp|include:tinygs/cuda/vec.hpp|1
-public_header_forbidden_include|tinygs/include/tinygs/pose_opt/sgdm.hpp|include:tinygs/cuda/vec.hpp|1
 public_header_forbidden_include|tinygs/include/tinygs/random/device.cuh|include:tinygs/cuda/common_device.cuh|1
 public_header_forbidden_include|tinygs/include/tinygs/random/multinomial.hpp|include:tinygs/cuda/gpu_memory.hpp|1
 public_header_forbidden_include|tinygs/include/tinygs/rasterizer/rasterizer.hpp|include:tinygs/cuda/gpu_memory.hpp|1

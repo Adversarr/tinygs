@@ -31,7 +31,7 @@ public:
 };
 
 /// @brief Factory function for creating pose optimizers
-/// @param pose_opt_type Type of pose optimizer to create (e.g., "none", "sgdm", "adamw")
+/// @param pose_opt_type Type of pose optimizer to create (e.g., "none", "adamw")
 /// @return Unique pointer to the created PoseOptBase instance
 std::unique_ptr<PoseOptBase> create_pose_opt(const std::string& pose_opt_type);
 

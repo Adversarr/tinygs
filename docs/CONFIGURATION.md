@@ -235,7 +235,7 @@ Same structure as `dataset`, for evaluation:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `type` | string | `none`, `adamw`, `sgdm` |
+| `type` | string | `none`, `adamw` |
 | `lr` | float | Learning rate |
 | `beta1` | float | Adam beta1 |
 | `beta2` | float | Adam beta2 |

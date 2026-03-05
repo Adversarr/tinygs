@@ -8,7 +8,6 @@ The pose optimization module handles camera pose refinement during training.
 |------|-------------|
 | `pose_opt.hpp` | Base class interface |
 | `adamw.hpp` | AdamW-based pose optimization |
-| `sgdm.hpp` | SGD with momentum |
 | `none.hpp` | No optimization (fixed poses) |
 
 ---
@@ -19,7 +18,6 @@ The pose optimization module handles camera pose refinement during training.
 |------|-------------|----------|
 | `none` | No pose optimization | Fixed camera poses |
 | `adamw` | AdamW optimizer | Adaptive learning |
-| `sgdm` | SGD with momentum | Simple baseline |
 
 ---
 
@@ -86,22 +84,6 @@ class AdamWPoseOpt : public PoseOptBase {
     mat4x4 query(uuid_t timestamp, mat4x4 w2c) override;
     void update(uuid_t timestamp, const mat4x4& grad, float step_size) override;
 };
-```
-
----
-
-## SGD with Momentum
-
-Simple SGD with momentum for pose optimization:
-
-### Configuration
-
-```json
-{
-    "type": "sgdm",
-    "lr": 0.0001,
-    "momentum": 0.9
-}
 ```
 
 ---
