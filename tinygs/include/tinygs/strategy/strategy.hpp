@@ -4,7 +4,7 @@
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/rasterizer/rasterizer.hpp"
 #include "tinygs/optim/optim.hpp"
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 namespace tinygs {
 
 struct StrategyParams {

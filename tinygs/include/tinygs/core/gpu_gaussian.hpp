@@ -1,6 +1,6 @@
 #pragma once
 
-#include "tinygs/core/device_span.hpp"
+#include "tinygs/platform/buffer_view.hpp"
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/platform/backend_types.hpp"
 

@@ -145,8 +145,10 @@ using float16_t = uint16_t;
 #define log_success(...) SPDLOG_TRACE(__VA_ARGS__)
 #endif
 
+#ifndef CHECK_THROW
 #define CHECK_THROW(x) \
   do { if (!(x)) throw std::runtime_error{__FILE__ ":" STR(__LINE__) " check failed: " #x}; } while(0)
+#endif
 
 ////////////////////////////// Utility Functions //////////////////////////////
 

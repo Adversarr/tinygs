@@ -4,7 +4,7 @@
 #include "tinygs/core/camera_loader.hpp"
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/dataset/dataset.hpp"
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 
 namespace tinygs {
 

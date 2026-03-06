@@ -3,7 +3,7 @@
 #include "tinygs/core/gaussian.hpp"
 #include "tinygs/dataloader/dataloader.hpp"
 #include "tinygs/platform/backend_types.hpp"
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 
 namespace tinygs {
 

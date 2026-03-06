@@ -4,7 +4,7 @@
 #include "tinygs/core/camera_loader.hpp"
 #include "tinygs/core/image.hpp"
 #include "tinygs/core/pointcloud.hpp"
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 namespace tinygs {
 
 /// @brief A single training/evaluation sample returned by DatasetBase::operator[].

@@ -5,7 +5,7 @@
 #include <thrust/execution_policy.h>
 #include <thrust/sequence.h>
 
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 #include "tinygs/platform/buffer_utils.hpp"
 
 namespace tinygs::optim_detail {

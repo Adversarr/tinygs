@@ -1,6 +1,6 @@
 #pragma once
 
-#include <tinygs/platform/runtime_contract.hpp>
+#include <tinygs/platform/runtime.hpp>
 #include <vector>
 #include <memory>
 

@@ -8,7 +8,7 @@
 #include "cuda/common_host.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
 #include "tinygs/platform/buffer_utils.hpp"
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 #include "utils/scope_timer.hpp"
 #include <nvtx3/nvtx3.hpp>
 
@@ -54,67 +54,67 @@ size_t GPUGaussian3d::size() const {
 }
 
 DeviceSpan<const vec3> GPUGaussian3d::means() const {
-  return DeviceSpan<const vec3>{buffer_data_const<vec3>(m_means), m_size};
+  return DeviceSpan<const vec3>{m_means, 0, m_size};
 }
 
 DeviceSpan<const float> GPUGaussian3d::opacities() const {
-  return DeviceSpan<const float>{buffer_data_const<float>(m_opacities), m_size};
+  return DeviceSpan<const float>{m_opacities, 0, m_size};
 }
 
 DeviceSpan<const vec4> GPUGaussian3d::rotations() const {
-  return DeviceSpan<const vec4>{buffer_data_const<vec4>(m_rotations), m_size};
+  return DeviceSpan<const vec4>{m_rotations, 0, m_size};
 }
 
 DeviceSpan<const vec3> GPUGaussian3d::scales() const {
-  return DeviceSpan<const vec3>{buffer_data_const<vec3>(m_scales), m_size};
+  return DeviceSpan<const vec3>{m_scales, 0, m_size};
 }
 
 DeviceSpan<vec3> GPUGaussian3d::means() {
-  return DeviceSpan<vec3>{buffer_data<vec3>(m_means), m_size};
+  return DeviceSpan<vec3>{m_means, 0, m_size};
 }
 
 DeviceSpan<float> GPUGaussian3d::opacities() {
-  return DeviceSpan<float>{buffer_data<float>(m_opacities), m_size};
+  return DeviceSpan<float>{m_opacities, 0, m_size};
 }
 
 DeviceSpan<vec4> GPUGaussian3d::rotations() {
-  return DeviceSpan<vec4>{buffer_data<vec4>(m_rotations), m_size};
+  return DeviceSpan<vec4>{m_rotations, 0, m_size};
 }
 
 DeviceSpan<vec3> GPUGaussian3d::scales() {
-  return DeviceSpan<vec3>{buffer_data<vec3>(m_scales), m_size};
+  return DeviceSpan<vec3>{m_scales, 0, m_size};
 }
 
 DeviceSpan<const float> GPUGaussian3d::sh0() const {
-  return DeviceSpan<const float>{buffer_data_const<float>(m_sh0), buffer_count<float>(m_sh0)};
+  return DeviceSpan<const float>{m_sh0};
 }
 
 DeviceSpan<const float> GPUGaussian3d::sh1() const {
-  return DeviceSpan<const float>{buffer_data_const<float>(m_sh1), buffer_count<float>(m_sh1)};
+  return DeviceSpan<const float>{m_sh1};
 }
 
 DeviceSpan<const float> GPUGaussian3d::sh2() const {
-  return DeviceSpan<const float>{buffer_data_const<float>(m_sh2), buffer_count<float>(m_sh2)};
+  return DeviceSpan<const float>{m_sh2};
 }
 
 DeviceSpan<const float> GPUGaussian3d::sh3() const {
-  return DeviceSpan<const float>{buffer_data_const<float>(m_sh3), buffer_count<float>(m_sh3)};
+  return DeviceSpan<const float>{m_sh3};
 }
 
 DeviceSpan<float> GPUGaussian3d::sh0() {
-  return DeviceSpan<float>{buffer_data<float>(m_sh0), buffer_count<float>(m_sh0)};
+  return DeviceSpan<float>{m_sh0};
 }
 
 DeviceSpan<float> GPUGaussian3d::sh1() {
-  return DeviceSpan<float>{buffer_data<float>(m_sh1), buffer_count<float>(m_sh1)};
+  return DeviceSpan<float>{m_sh1};
 }
 
 DeviceSpan<float> GPUGaussian3d::sh2() {
-  return DeviceSpan<float>{buffer_data<float>(m_sh2), buffer_count<float>(m_sh2)};
+  return DeviceSpan<float>{m_sh2};
 }
 
 DeviceSpan<float> GPUGaussian3d::sh3() {
-  return DeviceSpan<float>{buffer_data<float>(m_sh3), buffer_count<float>(m_sh3)};
+  return DeviceSpan<float>{m_sh3};
 }
 
 __global__ void aos_to_soa_sh_kernel(

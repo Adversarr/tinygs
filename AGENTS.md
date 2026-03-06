@@ -34,7 +34,7 @@
 BUILD_TYPE=Debug ./build.sh
 TARGETS="config_train export_default single_gs" ./build.sh
 TINYGS_CUDA_ARCHITECTURES="86" ./build.sh
-./config_train -c configs/garden.json # Test, the data is already prepared
+timeout 40 ./config_train -c configs/garden.json # Test, the data is already prepared
 # Test changes: build and run affected tests; smoke-test training path if affected.
 cmake -S . -B build/Release -DTINYGS_BUILD_TESTS=ON
 cmake --build build/Release --target tinygs_<xxx>_test -j "$(nproc)"

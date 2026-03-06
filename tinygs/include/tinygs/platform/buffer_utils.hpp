@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "tinygs/platform/buffer_view.hpp"
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 
 namespace tinygs {
 

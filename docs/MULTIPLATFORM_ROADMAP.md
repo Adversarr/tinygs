@@ -102,7 +102,7 @@ Minimum error categories:
 - `backend_types.hpp`: `BackendType`, `BackendConfig`, `BackendStream`
 - `backend_error.hpp`: `BackendError`, `BackendErrorCode` (9 categories)
 - `backend_build.hpp`: Compile-time selection via `TINYGS_BACKEND_{CUDA|HIP|METAL}`
-- `runtime_contract.hpp`: `BackendRuntime`, `BackendQueue`, `BackendEvent`, `BackendBuffer`, `CapabilityProfile`
+- `runtime.hpp`: `BackendRuntime`, `BackendQueue`, `BackendEvent`, `BackendBuffer`, `CapabilityProfile`
 - `runtime_factory.hpp`: `create_backend_runtime()`
 - `buffer_utils.hpp`: Helpers (`create_device_buffer`, `copy_from_host`, `copy_to_host`, `fill_buffer_zero`, `clone_buffer`, `resize_buffer`)
 - `buffer_view.hpp`: `BufferView` for buffer slices

@@ -8,7 +8,7 @@
 #include <cuda_runtime.h>
 
 #include "tinygs/cuda/common_host.hpp"
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 
 namespace tinygs {
 

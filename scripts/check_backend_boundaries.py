@@ -102,7 +102,7 @@ def is_runtime_contract_header(path: Path) -> bool:
         return False
     return path.name in {
         "backend_error.hpp",
-        "runtime_contract.hpp",
+        "runtime.hpp",
         "runtime_factory.hpp",
     }
 
