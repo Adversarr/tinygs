@@ -31,8 +31,10 @@ public:
 
   std::shared_ptr<BackendRuntime> runtime() const;
 
+  void copy_from_host_async(const Gaussian3d &gaussians, const std::shared_ptr<BackendQueue>& queue);
   void copy_from_host(const Gaussian3d &gaussians, const std::shared_ptr<BackendQueue>& queue);
 
+  void copy_to_host_async(Gaussian3d& gaussians, const std::shared_ptr<BackendQueue>& queue);
   void copy_to_host(Gaussian3d& gaussians, const std::shared_ptr<BackendQueue>& queue);
 
   size_t size() const;

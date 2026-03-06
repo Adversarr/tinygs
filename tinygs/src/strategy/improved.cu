@@ -59,7 +59,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
-    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
+    fill_buffer_zero_async(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   const int step = this_step();
@@ -75,7 +75,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
     // Reset densification info since indices may have changed.
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
-    fill_buffer_zero(ctx.runtime, ctx.queue, ctx.densification_info);
+    fill_buffer_zero_async(ctx.runtime, ctx.queue, ctx.densification_info);
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&

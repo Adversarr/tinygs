@@ -498,7 +498,8 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
 
   // Export PLY at eval end
   Gaussian3d gs_host;
-  m_gaussians->copy_to_host(gs_host, m_major_queue);
+  m_gaussians->copy_to_host_async(gs_host, m_major_queue);
+  backend_check_throw(m_backend_runtime->synchronize_queue(m_major_queue), "eval export points");
   save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features || m_state.should_stop);
 
   // Return mean metrics

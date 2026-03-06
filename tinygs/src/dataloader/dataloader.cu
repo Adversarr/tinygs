@@ -231,7 +231,6 @@ void DataLoaderBase::transfer_gpu(BackendStream stream, const Image &gpu_data,
   else {
     throw std::runtime_error("Unsupported host image data type for transfer.");
   }
-  CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
 }
 
 /// @brief Transfer image data from host to GPU using default stream
@@ -240,6 +239,7 @@ void DataLoaderBase::transfer_gpu(BackendStream stream, const Image &gpu_data,
 void DataLoaderBase::transfer_gpu(const Image &gpu_data,
                                   const Image &host_data) {
   transfer_gpu(nullptr, gpu_data, host_data);
+  CUDA_CHECK_THROW(cudaStreamSynchronize(nullptr));
 }
 
 /// @brief Get the dataset associated with this dataloader

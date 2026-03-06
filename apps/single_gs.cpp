@@ -91,10 +91,17 @@ int main(int argc, char** argv) {
     return 1;
   }
   auto queue = q_result.value();
+  auto queue_stream = static_cast<tinygs::BackendStream>(queue->native_handle());
+  auto sync_queue_or_throw = [&](const char* op_name) {
+    const auto status = runtime->synchronize_queue(queue);
+    if (!status.ok()) {
+      throw std::runtime_error(std::string(op_name) + " failed: " + tinygs::to_string(status));
+    }
+  };
 
   auto gpu_gaussian = std::make_shared<GPUGaussian3d>(runtime);
   gpu_gaussian->set_sh_degree(3);
-  gpu_gaussian->copy_from_host(gaussian, queue);
+  gpu_gaussian->copy_from_host_async(gaussian, queue);
 
   int width = 480;
   int height = 360;
@@ -168,11 +175,12 @@ int main(int argc, char** argv) {
     std::vector<float> tiled_data(padded_size);
     if (use_fp16) {
       half_to_float_gpu(tinygs::buffer_data<float>(out_image_convert),
-                        tinygs::buffer_data<tinygs::float16_t>(out_image_fp16), padded_size);
-      tinygs::copy_to_host(runtime, queue, out_image_convert, tiled_data);
+                        tinygs::buffer_data<tinygs::float16_t>(out_image_fp16), padded_size, queue_stream);
+      tinygs::copy_to_host_async(runtime, queue, out_image_convert, tiled_data);
     } else {
-      tinygs::copy_to_host(runtime, queue, out_image_fp32, tiled_data);
+      tinygs::copy_to_host_async(runtime, queue, out_image_fp32, tiled_data);
     }
+    sync_queue_or_throw("single_gs read image");
     std::vector<float> linear_hwc(total_pixels * 3);
     for (int y = 0; y < height; ++y) {
       for (int x = 0; x < width; ++x) {
@@ -226,27 +234,29 @@ int main(int argc, char** argv) {
 
   if (use_fp16) {
     out_image_grad_fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, padded_size, "out_image_grad_fp16");
-    float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16),
-                      out_image_grad_tiled.data(), padded_size);
     out_image_grad_convert = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_grad_convert");
+    tinygs::copy_from_host_async(runtime, queue, out_image_grad_convert, out_image_grad_tiled);
+    float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16),
+                      tinygs::buffer_data<float>(out_image_grad_convert), padded_size, queue_stream);
   } else {
     out_image_grad_fp32 = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_grad_fp32");
-    tinygs::copy_from_host(runtime, queue, out_image_grad_fp32, out_image_grad_tiled);
+    tinygs::copy_from_host_async(runtime, queue, out_image_grad_fp32, out_image_grad_tiled);
   }
 
   std::vector<float> fd_loss_weights;
   if (use_fp16) {
     half_to_float_gpu(tinygs::buffer_data<float>(out_image_grad_convert),
-                      tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16), padded_size);
+                      tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16), padded_size, queue_stream);
     std::vector<float> out_image_grad_tiled_effective(padded_size);
-    tinygs::copy_to_host(runtime, queue, out_image_grad_convert, out_image_grad_tiled_effective);
+    tinygs::copy_to_host_async(runtime, queue, out_image_grad_convert, out_image_grad_tiled_effective);
+    sync_queue_or_throw("single_gs read fp16 loss weights");
     fd_loss_weights = tiled_to_linear_hwc(out_image_grad_tiled_effective);
   } else {
     fd_loss_weights = tiled_to_linear_hwc(out_image_grad_tiled);
   }
 
   auto eval_scalar_loss = [&](const Gaussian3d& g) -> double {
-    gpu_gaussian->copy_from_host(g, queue);
+    gpu_gaussian->copy_from_host_async(g, queue);
     rast->forward(params);
 
     std::vector<float> pred = get_image_as_linear_hwc();
@@ -310,16 +320,21 @@ int main(int argc, char** argv) {
   std::cout << "Std color: R=" << std_r << " G=" << std_g << " B=" << std_b << std::endl;
 
   // backward pass
-  std::shared_ptr<GPUGaussian3d> grad = gpu_gaussian->clone();
+  auto grad_owned = gpu_gaussian->clone_async(queue_stream);
+  std::shared_ptr<GPUGaussian3d> grad(std::move(grad_owned));
   void* grad_image_data = use_fp16 ? static_cast<void*>(tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16))
                                    : static_cast<void*>(tinygs::buffer_data<float>(out_image_grad_fp32));
   params.grad_output.image = Image(shape, out_data_type, grad_image_data);
   params.gaussians_grad = grad;
-  grad->memset(0);
+  grad->memset_async(0, queue_stream);
   rast->backward(params);
 
   Gaussian3d gaussian_grad;
-  grad->copy_to_host(gaussian_grad, queue);
+  grad->copy_to_host_async(gaussian_grad, queue);
+  size_t dinfo_count = params.densification_info->size_bytes() / sizeof(DensificationInfo);
+  std::vector<DensificationInfo> dinfo(dinfo_count);
+  tinygs::copy_to_host_async(runtime, queue, params.densification_info, dinfo);
+  sync_queue_or_throw("single_gs read backward outputs");
   const std::vector<vec3>& means_grad = gaussian_grad.means;
   const std::vector<vec3>& scales_grad = gaussian_grad.scales;
   const std::vector<vec4>& rotations_grad = gaussian_grad.rotations;
@@ -343,10 +358,6 @@ int main(int argc, char** argv) {
     std::cout << "  dOpacities: " << o << std::endl;
     std::cout << "  dSH0: [" << c0.x << ", " << c0.y << ", " << c0.z << "]" << std::endl;
   }
-  // Copy densification info from GPU to host
-  size_t dinfo_count = params.densification_info->size_bytes() / sizeof(DensificationInfo);
-  std::vector<DensificationInfo> dinfo(dinfo_count);
-  tinygs::copy_to_host(runtime, queue, params.densification_info, dinfo);
 
   std::cout << "=== Densification Info ===" << std::endl;
   for (int i = 0; i < dinfo.size(); ++i) {
@@ -424,7 +435,7 @@ int main(int argc, char** argv) {
     }
 
     // Restore original parameters on GPU for consistency after checking.
-    gpu_gaussian->copy_from_host(gauss_base, queue);
+    gpu_gaussian->copy_from_host_async(gauss_base, queue);
 
     size_t count = 0;
     double sum_abs = 0.0;

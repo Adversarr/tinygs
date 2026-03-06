@@ -287,7 +287,12 @@ void CPUReferenceRasterizer::forward(const RasterizeContext& ctx) {
 
   // Copy gaussian data from GPU to host
   Gaussian3d gs;
-  m_gaussians->copy_to_host(gs, ctx.queue);
+  m_gaussians->copy_to_host_async(gs, ctx.queue);
+  auto sync_gaussians = ctx.runtime->synchronize_queue(ctx.queue);
+  if (!sync_gaussians.ok()) {
+    throw std::runtime_error(
+        "CPU rasterizer forward: synchronize_queue failed: " + to_string(sync_gaussians));
+  }
   int sh_degree = m_gaussians->get_sh_degree();
 
   // ──── Per-Gaussian preprocessing ────
@@ -483,7 +488,7 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
 
   // Copy gaussian data from GPU
   Gaussian3d gs;
-  m_gaussians->copy_to_host(gs, ctx.queue);
+  m_gaussians->copy_to_host_async(gs, ctx.queue);
   int sh_degree = m_gaussians->get_sh_degree();
 
   // Copy grad_output image from GPU (dL/d_image) — CHW-tiled
@@ -502,9 +507,17 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
   copy_raw_device_to_host_async(
       ctx.runtime, ctx.queue, grad_image.data(), ctx.grad_output.image.data,
       total_size * sizeof(float));
-  auto sync_grad = ctx.runtime->synchronize_queue(ctx.queue);
-  if (!sync_grad.ok()) {
-    throw std::runtime_error("CPU rasterizer backward: synchronize_queue failed: " + to_string(sync_grad));
+
+  // Densification info: copy existing from GPU (preserves max_radii_screen from forward)
+  std::vector<DensificationInfo> dinfo(N);
+  if (ctx.densification_info) {
+    copy_raw_device_to_host_async(
+        ctx.runtime, ctx.queue, dinfo.data(), buffer_data<DensificationInfo>(ctx.densification_info),
+        N * sizeof(DensificationInfo));
+  }
+  auto sync_inputs = ctx.runtime->synchronize_queue(ctx.queue);
+  if (!sync_inputs.ok()) {
+    throw std::runtime_error("CPU rasterizer backward: synchronize_queue failed: " + to_string(sync_inputs));
   }
 
   // ──── Preprocessing: identical to forward ────
@@ -632,18 +645,6 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
   // Reset transmittance
   std::fill(T_pixel.begin(), T_pixel.end(), 1.0f);
 
-  // Densification info: copy existing from GPU (preserves max_radii_screen from forward)
-  std::vector<DensificationInfo> dinfo(N);
-  if (ctx.densification_info) {
-    copy_raw_device_to_host_async(
-        ctx.runtime, ctx.queue, dinfo.data(), buffer_data<DensificationInfo>(ctx.densification_info),
-        N * sizeof(DensificationInfo));
-    auto sync_dinfo = ctx.runtime->synchronize_queue(ctx.queue);
-    if (!sync_dinfo.ok()) {
-      throw std::runtime_error("CPU rasterizer backward: synchronize_queue failed: " + to_string(sync_dinfo));
-    }
-  }
-  
   // For each visible Gaussian, iterate over its covered pixels
   // First pass: record per-pixel per-gaussian alpha and T_before
   struct PixelContrib {
@@ -1135,7 +1136,7 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
   }
 
   // Copy gradients to GPU
-  ctx.gaussians_grad->copy_from_host(grad_gs, ctx.queue);
+  ctx.gaussians_grad->copy_from_host_async(grad_gs, ctx.queue);
 
   // Copy densification info to GPU if present
   if (ctx.densification_info) {

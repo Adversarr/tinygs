@@ -512,6 +512,20 @@ void copy_to_host_async(
   copy_to_host_async(runtime, queue, src, dst.data(), count);
 }
 
+/// Copy data from device buffer to host vector asynchronously. Resizes dst if needed.
+template <typename T>
+void copy_to_host_async(
+    const std::shared_ptr<BackendRuntime>& runtime,
+    const std::shared_ptr<BackendQueue>& queue,
+    const std::shared_ptr<BackendBuffer>& buffer,
+    std::vector<T>& dst) {
+  const size_t count = buffer_count<T>(buffer);
+  if (dst.size() < count) {
+    dst.resize(count);
+  }
+  copy_to_host_async(runtime, queue, buffer, dst.data(), count);
+}
+
 /// Copy data from device buffer to host vector. Resizes dst if needed.
 template <typename T>
 void copy_to_host(

@@ -645,18 +645,20 @@ void Adam::remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQu
 
 void Adam::duplicate(int* indices, int* new_indices, int num_duplicate, const std::shared_ptr<BackendQueue>& queue) {
   if (num_duplicate == 0) return;
+  CHECK_THROW(indices != nullptr);
+  CHECK_THROW(new_indices != nullptr);
 
   const int old_n = static_cast<int>(m_size);
   const int new_n = static_cast<int>(m_gaussians->size());
 
-  m_means_first = resize_buffer<vec3>(m_runtime, queue, m_means_first, new_n, "means_first");
-  m_means_second = resize_buffer<vec3>(m_runtime, queue, m_means_second, new_n, "means_second");
-  m_opacities_first = resize_buffer<float>(m_runtime, queue, m_opacities_first, new_n, "opacities_first");
-  m_opacities_second = resize_buffer<float>(m_runtime, queue, m_opacities_second, new_n, "opacities_second");
-  m_rotations_first = resize_buffer<vec4>(m_runtime, queue, m_rotations_first, new_n, "rotations_first");
-  m_rotations_second = resize_buffer<vec4>(m_runtime, queue, m_rotations_second, new_n, "rotations_second");
-  m_scales_first = resize_buffer<vec3>(m_runtime, queue, m_scales_first, new_n, "scales_first");
-  m_scales_second = resize_buffer<vec3>(m_runtime, queue, m_scales_second, new_n, "scales_second");
+  m_means_first = resize_buffer_async<vec3>(m_runtime, queue, m_means_first, new_n, "means_first");
+  m_means_second = resize_buffer_async<vec3>(m_runtime, queue, m_means_second, new_n, "means_second");
+  m_opacities_first = resize_buffer_async<float>(m_runtime, queue, m_opacities_first, new_n, "opacities_first");
+  m_opacities_second = resize_buffer_async<float>(m_runtime, queue, m_opacities_second, new_n, "opacities_second");
+  m_rotations_first = resize_buffer_async<vec4>(m_runtime, queue, m_rotations_first, new_n, "rotations_first");
+  m_rotations_second = resize_buffer_async<vec4>(m_runtime, queue, m_rotations_second, new_n, "rotations_second");
+  m_scales_first = resize_buffer_async<vec3>(m_runtime, queue, m_scales_first, new_n, "scales_first");
+  m_scales_second = resize_buffer_async<vec3>(m_runtime, queue, m_scales_second, new_n, "scales_second");
 
   for (int deg = 0; deg < 4; deg++) {
     int nc = GPUGaussian3d::sh_degree_num_coeffs(deg) * 3;
@@ -670,6 +672,33 @@ void Adam::duplicate(int* indices, int* new_indices, int num_duplicate, const st
       case 2: relayout_pair(m_sh2_first, m_sh2_second); break;
       case 3: relayout_pair(m_sh3_first, m_sh3_second); break;
     }
+  }
+
+  if (m_adam_params.copy_state_on_duplicate) {
+    optim_detail::duplicate_optim_buffer<vec3>(queue, m_means_first, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec3>(queue, m_means_second, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<float>(queue, m_opacities_first, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<float>(queue, m_opacities_second, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec4>(queue, m_rotations_first, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec4>(queue, m_rotations_second, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec3>(queue, m_scales_first, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec3>(queue, m_scales_second, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_soa_optim_buffer(
+        queue, m_sh0_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(0) * 3, new_n, block_size);
+    optim_detail::duplicate_soa_optim_buffer(
+        queue, m_sh0_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(0) * 3, new_n, block_size);
+    optim_detail::duplicate_soa_optim_buffer(
+        queue, m_sh1_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(1) * 3, new_n, block_size);
+    optim_detail::duplicate_soa_optim_buffer(
+        queue, m_sh1_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(1) * 3, new_n, block_size);
+    optim_detail::duplicate_soa_optim_buffer(
+        queue, m_sh2_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(2) * 3, new_n, block_size);
+    optim_detail::duplicate_soa_optim_buffer(
+        queue, m_sh2_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(2) * 3, new_n, block_size);
+    optim_detail::duplicate_soa_optim_buffer(
+        queue, m_sh3_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(3) * 3, new_n, block_size);
+    optim_detail::duplicate_soa_optim_buffer(
+        queue, m_sh3_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(3) * 3, new_n, block_size);
   }
   
   m_size = new_n;
@@ -702,22 +731,22 @@ void Adam::reset(const std::shared_ptr<BackendQueue>& queue) {
   m_sh3_first = create_device_buffer_for<float>(m_runtime, num_gaussians * 21, "sh3_first");
   m_sh3_second = create_device_buffer_for<float>(m_runtime, num_gaussians * 21, "sh3_second");
 
-  fill_buffer_zero(m_runtime, queue, m_means_first);
-  fill_buffer_zero(m_runtime, queue, m_means_second);
-  fill_buffer_zero(m_runtime, queue, m_opacities_first);
-  fill_buffer_zero(m_runtime, queue, m_opacities_second);
-  fill_buffer_zero(m_runtime, queue, m_rotations_first);
-  fill_buffer_zero(m_runtime, queue, m_rotations_second);
-  fill_buffer_zero(m_runtime, queue, m_scales_first);
-  fill_buffer_zero(m_runtime, queue, m_scales_second);
-  fill_buffer_zero(m_runtime, queue, m_sh0_first);
-  fill_buffer_zero(m_runtime, queue, m_sh0_second);
-  fill_buffer_zero(m_runtime, queue, m_sh1_first);
-  fill_buffer_zero(m_runtime, queue, m_sh1_second);
-  fill_buffer_zero(m_runtime, queue, m_sh2_first);
-  fill_buffer_zero(m_runtime, queue, m_sh2_second);
-  fill_buffer_zero(m_runtime, queue, m_sh3_first);
-  fill_buffer_zero(m_runtime, queue, m_sh3_second);
+  fill_buffer_zero_async(m_runtime, queue, m_means_first);
+  fill_buffer_zero_async(m_runtime, queue, m_means_second);
+  fill_buffer_zero_async(m_runtime, queue, m_opacities_first);
+  fill_buffer_zero_async(m_runtime, queue, m_opacities_second);
+  fill_buffer_zero_async(m_runtime, queue, m_rotations_first);
+  fill_buffer_zero_async(m_runtime, queue, m_rotations_second);
+  fill_buffer_zero_async(m_runtime, queue, m_scales_first);
+  fill_buffer_zero_async(m_runtime, queue, m_scales_second);
+  fill_buffer_zero_async(m_runtime, queue, m_sh0_first);
+  fill_buffer_zero_async(m_runtime, queue, m_sh0_second);
+  fill_buffer_zero_async(m_runtime, queue, m_sh1_first);
+  fill_buffer_zero_async(m_runtime, queue, m_sh1_second);
+  fill_buffer_zero_async(m_runtime, queue, m_sh2_first);
+  fill_buffer_zero_async(m_runtime, queue, m_sh2_second);
+  fill_buffer_zero_async(m_runtime, queue, m_sh3_first);
+  fill_buffer_zero_async(m_runtime, queue, m_sh3_second);
 }
 
 void Adam::reset(int* indices, int num_reset) {
@@ -761,8 +790,8 @@ void Adam::reset(int* indices, int num_reset) {
 }
 
 void Adam::reset_opacity(const std::shared_ptr<BackendQueue>& queue) {
-  fill_buffer_zero(m_runtime, queue, m_opacities_first);
-  fill_buffer_zero(m_runtime, queue, m_opacities_second);
+  fill_buffer_zero_async(m_runtime, queue, m_opacities_first);
+  fill_buffer_zero_async(m_runtime, queue, m_opacities_second);
 }
 
 void Adam::set_params(const json& config) {
@@ -788,6 +817,7 @@ json AdamParameters::to_json() const {
   j["decouple_decay"] = decouple_decay;
   j["weight_decay"] = weight_decay;
   j["tf_style"] = tf_style;
+  j["copy_state_on_duplicate"] = copy_state_on_duplicate;
   return j;
 }
 
@@ -798,6 +828,7 @@ void AdamParameters::from_json(const json& config) {
   if (config.contains("decouple_decay")) decouple_decay = config.at("decouple_decay").get<bool>();
   if (config.contains("weight_decay")) weight_decay = config.at("weight_decay").get<float>();
   if (config.contains("tf_style")) tf_style = config.at("tf_style").get<bool>();
+  if (config.contains("copy_state_on_duplicate")) copy_state_on_duplicate = config.at("copy_state_on_duplicate").get<bool>();
 }
 
 void Adam::reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) {

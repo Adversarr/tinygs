@@ -10,6 +10,15 @@ SimpleDataLoader::SimpleDataLoader(std::shared_ptr<BackendRuntime> runtime, std:
   : DataLoaderBase(runtime, dataset), m_current_index(0) {
   m_rng.seed(0);
   generate_permutation();
+  QueueDesc queue_desc;
+  queue_desc.non_blocking = true;
+  queue_desc.debug_name = "SimpleDataLoader::transfer_queue";
+  const auto queue_result = m_runtime->create_queue(queue_desc);
+  if (!queue_result.ok()) {
+    throw std::runtime_error(
+        "SimpleDataLoader: failed to create transfer queue: " + to_string(queue_result.error()));
+  }
+  m_transfer_queue = queue_result.value();
   // Preallocate maximum GPU buffer once to avoid future reallocations
   size_t max_stride = m_dataset->image_shape().padded_size();
   m_gpu_memory = create_device_buffer(m_runtime, max_stride * sizeof(float), "SimpleDataLoader::m_gpu_memory");
@@ -79,10 +88,11 @@ GPUBatchInputOutput SimpleDataLoader::next(BackendStream stream) {
 GPUBatchInputOutput SimpleDataLoader::next() {
   DL_FUNC_RANGE();
 
-  auto r = next(nullptr);
-  auto status = m_runtime->synchronize_device();
+  CHECK_THROW(m_transfer_queue != nullptr);
+  auto r = next(BackendStream(m_transfer_queue->native_handle()));
+  auto status = m_runtime->synchronize_queue(m_transfer_queue);
   if (!status.ok()) {
-    throw std::runtime_error("SimpleDataLoader::next() sync failed: " + to_string(status));
+    throw std::runtime_error("SimpleDataLoader::next() queue sync failed: " + to_string(status));
   }
   return std::move(r);
 }

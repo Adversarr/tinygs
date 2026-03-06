@@ -29,6 +29,7 @@ private:
   /// @brief Generate a new random permutation of dataset indices
   void generate_permutation();
 
+  std::shared_ptr<BackendQueue> m_transfer_queue; ///< Queue used by the blocking next() overload
   std::shared_ptr<BackendBuffer> m_gpu_memory;  ///< GPU buffer for data storage
   pcg32 m_rng;                    ///< Random number generator
   std::vector<size_t> m_permutation;  ///< Current permutation of dataset indices
