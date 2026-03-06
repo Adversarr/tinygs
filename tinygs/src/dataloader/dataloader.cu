@@ -12,33 +12,15 @@ namespace tinygs {
 
 namespace {
 
-/// @brief Minimal CUDA device buffer implementing BackendBuffer for internal use.
-class InternalCudaBuffer final : public BackendBuffer {
-public:
-  explicit InternalCudaBuffer(size_t size_bytes) : m_size(size_bytes) {
-    if (size_bytes > 0) {
-      CUDA_CHECK_THROW(cudaMalloc(&m_data, size_bytes));
-    }
-  }
-  ~InternalCudaBuffer() override {
-    if (m_data) cudaFree(m_data);
-  }
-  BackendType backend_type() const noexcept override { return BackendType::Cuda; }
-  int device() const noexcept override { return 0; }
-  size_t size_bytes() const noexcept override { return m_size; }
-  const BufferDesc& desc() const noexcept override { static BufferDesc d; return d; }
-  void* data() const noexcept override { return m_data; }
-  void* native_handle() const noexcept override { return m_data; }
-private:
-  void* m_data = nullptr;
-  size_t m_size = 0;
-};
-
 /// @brief Create or grow a shared BackendBuffer to at least the given size.
 ///        If the existing buffer is large enough, it is reused.
-inline void ensure_buffer_size(std::shared_ptr<BackendBuffer>& buf, size_t required_bytes) {
+inline void ensure_buffer_size(
+    const std::shared_ptr<BackendRuntime>& runtime,
+    std::shared_ptr<BackendBuffer>& buf,
+    size_t required_bytes,
+    const std::string& debug_name) {
   if (!buf || buf->size_bytes() < required_bytes) {
-    buf = std::make_shared<InternalCudaBuffer>(required_bytes);
+    buf = create_device_buffer(runtime, required_bytes, debug_name);
   }
 }
 
@@ -276,7 +258,7 @@ void DataLoaderBase::reset() {
     const size_t max_elements = static_cast<size_t>(m_dataset->image_shape().padded_size());
     const size_t max_bytes = max_elements * sizeof(float); // reserve enough for float-sized scratch
     if (!m_raw_data || m_raw_data->size_bytes() < max_bytes) {
-      ensure_buffer_size(m_raw_data, max_bytes);
+      ensure_buffer_size(m_runtime, m_raw_data, max_bytes, "DataLoaderBase::m_raw_data");
     }
   }
 }

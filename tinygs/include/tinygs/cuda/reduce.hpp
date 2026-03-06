@@ -1,7 +1,12 @@
 #pragma once
+
+#include "tinygs/common.hpp"
+#include "tinygs/platform/backend_types.hpp"
+
 namespace tinygs {
 
-/// @brief Compute sum of array elements on GPU
-float gpu_sum(float* data, int size);
+float gpu_sum(float* data, int size, BackendStream stream = nullptr);
+
+void gpu_mean_vec3(const vec3* data, int size, vec3& out, BackendStream stream = nullptr);
 
 }

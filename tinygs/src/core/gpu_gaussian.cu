@@ -1,12 +1,19 @@
 #include <thrust/copy.h>
+#include <thrust/device_vector.h>
 #include <thrust/execution_policy.h>
+#include <thrust/iterator/counting_iterator.h>
+#include <thrust/reduce.h>
 #include <thrust/sequence.h>
+#include <thrust/transform.h>
 
 #include <cub/cub.cuh>
+
+#include <cfloat>
 #include <memory>
 
 #include "cuda/common_host.hpp"
 #include "tinygs/core/gpu_gaussian.hpp"
+#include "tinygs/cuda/common_device.cuh"
 #include "tinygs/platform/buffer_utils.hpp"
 #include "tinygs/platform/runtime.hpp"
 #include "utils/scope_timer.hpp"
@@ -442,32 +449,16 @@ void GPUGaussian3d::append(int num_dup, const std::shared_ptr<BackendQueue>& que
   auto new_rotations = create_device_buffer_for<vec4>(m_runtime, target_size, "rotations");
   auto new_scales = create_device_buffer_for<vec3>(m_runtime, target_size, "scales");
 
-  fill_buffer_zero(m_runtime, queue, new_means);
-  fill_buffer_zero(m_runtime, queue, new_opacities);
-  fill_buffer_zero(m_runtime, queue, new_rotations);
-  fill_buffer_zero(m_runtime, queue, new_scales);
+  fill_buffer_zero_async(m_runtime, queue, new_means);
+  fill_buffer_zero_async(m_runtime, queue, new_opacities);
+  fill_buffer_zero_async(m_runtime, queue, new_rotations);
+  fill_buffer_zero_async(m_runtime, queue, new_scales);
 
   if (m_means && m_means->size_bytes() > 0) {
-    CUDA_CHECK_THROW(cudaMemcpyAsync(
-        buffer_data<void>(new_means),
-        buffer_data<void>(m_means),
-        old_size * sizeof(vec3),
-        cudaMemcpyDeviceToDevice, cuda_stream));
-    CUDA_CHECK_THROW(cudaMemcpyAsync(
-        buffer_data<void>(new_opacities),
-        buffer_data<void>(m_opacities),
-        old_size * sizeof(float),
-        cudaMemcpyDeviceToDevice, cuda_stream));
-    CUDA_CHECK_THROW(cudaMemcpyAsync(
-        buffer_data<void>(new_rotations),
-        buffer_data<void>(m_rotations),
-        old_size * sizeof(vec4),
-        cudaMemcpyDeviceToDevice, cuda_stream));
-    CUDA_CHECK_THROW(cudaMemcpyAsync(
-        buffer_data<void>(new_scales),
-        buffer_data<void>(m_scales),
-        old_size * sizeof(vec3),
-        cudaMemcpyDeviceToDevice, cuda_stream));
+    copy_buffer_async(m_runtime, queue, new_means, m_means, old_size * sizeof(vec3));
+    copy_buffer_async(m_runtime, queue, new_opacities, m_opacities, old_size * sizeof(float));
+    copy_buffer_async(m_runtime, queue, new_rotations, m_rotations, old_size * sizeof(vec4));
+    copy_buffer_async(m_runtime, queue, new_scales, m_scales, old_size * sizeof(vec3));
   }
 
   auto resize_soa_sh = [&](std::shared_ptr<BackendBuffer>& buf, int num_coeffs) {
@@ -475,7 +466,7 @@ void GPUGaussian3d::append(int num_dup, const std::shared_ptr<BackendQueue>& que
     int new_total = num_coeffs * 3 * static_cast<int>(target_size);
 
     auto new_buf = create_device_buffer_for<float>(m_runtime, new_total, "sh_resize");
-    fill_buffer_zero(m_runtime, queue, new_buf);
+    fill_buffer_zero_async(m_runtime, queue, new_buf);
 
     if (old_size == 0 || !buf || buf->size_bytes() == 0) {
       buf = std::move(new_buf);
@@ -618,6 +609,87 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
   return gaussians;
 }
 
+std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(BackendStream stream) {
+  NVTX3_FUNC_RANGE();
+  const uint n = static_cast<uint>(size());
+  if (n == 0) return nullptr;
+
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const vec3* positions = buffer_data_const<vec3>(m_means);
+
+  auto idx_in_buf = create_device_buffer_for<uint>(m_runtime, n, "morton_idx_in");
+  auto idx_out_buf = create_device_buffer_for<uint>(m_runtime, n, "morton_idx_out");
+  auto enc_in_buf = create_device_buffer_for<uint>(m_runtime, n, "morton_enc_in");
+  auto enc_out_buf = create_device_buffer_for<uint>(m_runtime, n, "morton_enc_out");
+
+  uint* idx_in = buffer_data<uint>(idx_in_buf);
+  uint* idx_out = buffer_data<uint>(idx_out_buf);
+  uint* enc_in = buffer_data<uint>(enc_in_buf);
+  uint* enc_out = buffer_data<uint>(enc_out_buf);
+
+  thrust::copy(
+    thrust::cuda::par.on(cuda_stream),
+    thrust::make_counting_iterator<uint>(0),
+    thrust::make_counting_iterator<uint>(n),
+    thrust::device_pointer_cast(idx_in)
+  );
+
+  vec3 min_pos = thrust::reduce(
+    thrust::cuda::par.on(cuda_stream),
+    positions, positions + n,
+    vec3(FLT_MAX, FLT_MAX, FLT_MAX),
+    [] __host__ __device__ (const vec3& a, const vec3& b) -> vec3 {
+      return vec3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z));
+    }
+  );
+
+  vec3 max_pos = thrust::reduce(
+    thrust::cuda::par.on(cuda_stream),
+    positions, positions + n,
+    vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX),
+    [] __host__ __device__ (const vec3& a, const vec3& b) -> vec3 {
+      return vec3(fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z));
+    }
+  );
+
+  const float inv_dx = 1.0f / std::max(max_pos.x - min_pos.x, 1e-8f);
+  const float inv_dy = 1.0f / std::max(max_pos.y - min_pos.y, 1e-8f);
+  const float inv_dz = 1.0f / std::max(max_pos.z - min_pos.z, 1e-8f);
+
+  thrust::transform(
+    thrust::cuda::par.on(cuda_stream),
+    positions, positions + n,
+    thrust::device_pointer_cast(enc_in),
+    [min_pos, inv_dx, inv_dy, inv_dz] __device__ (const vec3& p) -> uint {
+      const float nx = fminf(fmaxf((p.x - min_pos.x) * inv_dx, 0.0f), 1.0f);
+      const float ny = fminf(fmaxf((p.y - min_pos.y) * inv_dy, 0.0f), 1.0f);
+      const float nz = fminf(fmaxf((p.z - min_pos.z) * inv_dz, 0.0f), 1.0f);
+      const uint32_t xi = static_cast<uint32_t>(nx * 1023.0f);
+      const uint32_t yi = static_cast<uint32_t>(ny * 1023.0f);
+      const uint32_t zi = static_cast<uint32_t>(nz * 1023.0f);
+      return morton3D(xi, yi, zi);
+    }
+  );
+
+  void* d_temp_storage = nullptr;
+  size_t temp_storage_bytes = 0;
+  cub::DeviceRadixSort::SortPairs(
+    d_temp_storage, temp_storage_bytes,
+    enc_in, enc_out, idx_in, idx_out,
+    n, 0, 30, cuda_stream
+  );
+
+  auto temp_storage_buf = create_device_buffer(m_runtime, temp_storage_bytes, "morton_temp");
+  d_temp_storage = buffer_data<void>(temp_storage_buf);
+  cub::DeviceRadixSort::SortPairs(
+    d_temp_storage, temp_storage_bytes,
+    enc_in, enc_out, idx_in, idx_out,
+    n, 0, 30, cuda_stream
+  );
+
+  return idx_out_buf;
+}
+
 void GPUGaussian3d::reorder(uint* indices, BackendStream stream) {
   NVTX3_FUNC_RANGE();
   const int N = static_cast<int>(size());
@@ -654,6 +726,37 @@ void GPUGaussian3d::reorder(uint* indices, BackendStream stream) {
   m_sh1 = std::move(sh1_new);
   m_sh2 = std::move(sh2_new);
   m_sh3 = std::move(sh3_new);
+}
+
+static __global__ void densification_update_kernel(
+    uint n,
+    const DensificationInfo* __restrict__ old_info,
+    DensificationInfo* __restrict__ new_info,
+    const uint* __restrict__ indices) {
+  uint i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= n) return;
+  new_info[i] = old_info[indices[i]];
+}
+
+std::shared_ptr<BackendBuffer> reorder_densification_info(
+    const std::shared_ptr<BackendBuffer>& info,
+    const uint* indices,
+    size_t n,
+    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendStream stream) {
+  if (!info || n == 0) return nullptr;
+
+  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  auto new_info = create_device_buffer_for<DensificationInfo>(runtime, n, "densification_reorder");
+
+  const int grid = (static_cast<int>(n) + 255) / 256;
+  densification_update_kernel<<<grid, 256, 0, cuda_stream>>>(
+      static_cast<uint>(n),
+      buffer_data_const<DensificationInfo>(info),
+      buffer_data<DensificationInfo>(new_info),
+      indices);
+
+  return new_info;
 }
 
 #undef m_runtime

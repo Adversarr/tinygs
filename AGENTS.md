@@ -6,6 +6,7 @@
 - Logging/errors: use `log_*`, `CUDA_CHECK_THROW()`, `CHECK_THROW()`; avoid new `std::cout`/`printf` in runtime/library code.
 - CUDA kernels: `__restrict__` pointer args, first-line bounds checks, launch via `n_blocks_linear()`/`N_THREADS_LINEAR` (see `tinygs/src/loss/l1.cu`).
 - Optional JSON fields must use `config.contains(...)` guards (see `apps/config_train.cpp`, `tinygs/src/optim/optim.cu`).
+- Comments: write concise and precise comments, do not write comments for trivial code (e.g. getter/setter). Write short inline comments for complex code with multi-stage, recursive, or nested logic for human reviewers.
 
 ## Architecture
 - Orchestrator-centered pipeline: dataloader -> rasterizer -> loss/metric -> optimizer -> strategy (`tinygs/src/orchestrator.cu`, `docs/ARCHITECTURE.md`).
@@ -29,11 +30,7 @@
 
 ## Build and Test
 ```bash
-# Only build the apps by default for quick iteration
-./build.sh
-BUILD_TYPE=Debug ./build.sh
-TARGETS="config_train export_default single_gs" ./build.sh
-TINYGS_CUDA_ARCHITECTURES="86" ./build.sh
+./build.sh # it only build the apps by default for quick iteration, review its content to see how to change the behavior
 timeout 40 ./config_train -c configs/garden.json # Test, the data is already prepared
 # Test changes: build and run affected tests; smoke-test training path if affected.
 cmake -S . -B build/Release -DTINYGS_BUILD_TESTS=ON

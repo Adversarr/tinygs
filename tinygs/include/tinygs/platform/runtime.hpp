@@ -10,6 +10,7 @@
 
 namespace tinygs {
 
+/// Result wrapper used by runtime factory and allocation APIs.
 template <typename T>
 class Result {
 public:
@@ -18,11 +19,13 @@ public:
   Result(std::shared_ptr<T> value, BackendError error)
       : m_value(std::move(value)), m_error(std::move(error)) {}
 
-  static Result<T> success(std::shared_ptr<T> value,
-                            BackendType backend,
-                            std::string operation = {}) {
-    return Result<T>(std::move(value),
-                      backend_success(backend, std::move(operation)));
+  static Result<T> success(
+      std::shared_ptr<T> value,
+      BackendType backend,
+      std::string operation = {}) {
+    return Result<T>(
+        std::move(value),
+        backend_success(backend, std::move(operation)));
   }
 
   static Result<T> failure(BackendError error) {
@@ -38,6 +41,7 @@ private:
   BackendError m_error{};
 };
 
+/// Backend feature flags and device properties.
 struct CapabilityProfile {
   bool supports_queues = true;
   bool supports_events = true;
@@ -51,22 +55,26 @@ struct CapabilityProfile {
   size_t total_global_memory_bytes = 0;
 };
 
+/// Queue creation parameters.
 struct QueueDesc {
   bool non_blocking = true;
   std::string debug_name;
 };
 
+/// Event creation parameters.
 struct EventDesc {
   bool disable_timing = true;
   std::string debug_name;
 };
 
+/// Buffer residency and ownership class.
 enum class BufferMemoryClass : uint8_t {
   Device = 0,
   Unified = 1,
   HostPinned = 2,
 };
 
+/// Allowed host-side access for a buffer allocation.
 enum class BufferHostAccess : uint8_t {
   None = 0,
   Read = 1,
@@ -74,11 +82,13 @@ enum class BufferHostAccess : uint8_t {
   ReadWrite = 3,
 };
 
+/// External interop mode for a buffer allocation.
 enum class BufferInteropMode : uint8_t {
   None = 0,
   External = 1,
 };
 
+/// Buffer allocation descriptor.
 struct BufferDesc {
   size_t size_bytes = 0;
   size_t alignment = 256;
@@ -88,17 +98,20 @@ struct BufferDesc {
   std::string debug_name;
 };
 
+/// Device-to-device copy region.
 struct CopyRegion {
   size_t size_bytes = 0;
   size_t dst_offset = 0;
   size_t src_offset = 0;
 };
 
+/// Host-to-buffer or buffer-to-host copy region.
 struct BufferTransferRegion {
   size_t size_bytes = 0;
   size_t buffer_offset = 0;
 };
 
+/// Opaque execution queue handle.
 class BackendQueue {
 public:
   virtual ~BackendQueue() = default;
@@ -108,6 +121,7 @@ public:
   virtual void* native_handle() const noexcept = 0;
 };
 
+/// Opaque synchronization event handle.
 class BackendEvent {
 public:
   virtual ~BackendEvent() = default;
@@ -117,6 +131,7 @@ public:
   virtual void* native_handle() const noexcept = 0;
 };
 
+/// Opaque backend-owned buffer handle.
 class BackendBuffer {
 public:
   virtual ~BackendBuffer() = default;
@@ -129,6 +144,7 @@ public:
   virtual void* native_handle() const noexcept = 0;
 };
 
+/// Backend-neutral runtime contract for queues, buffers, and copies.
 class BackendRuntime {
 public:
   virtual ~BackendRuntime() = default;
@@ -141,61 +157,71 @@ public:
   virtual Result<BackendEvent> create_event(const EventDesc& desc) = 0;
   virtual Result<BackendBuffer> create_buffer(const BufferDesc& desc) = 0;
 
-  virtual BackendError record_event(const std::shared_ptr<BackendQueue>& queue,
-                                    const std::shared_ptr<BackendEvent>& event) = 0;
-  virtual BackendError wait_event(const std::shared_ptr<BackendQueue>& queue,
-                                  const std::shared_ptr<BackendEvent>& event) = 0;
+  virtual BackendError record_event(
+      const std::shared_ptr<BackendQueue>& queue,
+      const std::shared_ptr<BackendEvent>& event) = 0;
+  virtual BackendError wait_event(
+      const std::shared_ptr<BackendQueue>& queue,
+      const std::shared_ptr<BackendEvent>& event) = 0;
 
   virtual BackendError synchronize_queue(const std::shared_ptr<BackendQueue>& queue) = 0;
   virtual BackendError synchronize_event(const std::shared_ptr<BackendEvent>& event) = 0;
   virtual BackendError synchronize_device() = 0;
 
-  virtual BackendError copy_buffer_async(const std::shared_ptr<BackendQueue>& queue,
-                                         const std::shared_ptr<BackendBuffer>& dst,
-                                         const std::shared_ptr<BackendBuffer>& src,
-                                         const CopyRegion& region) = 0;
-  virtual BackendError copy_from_host_async(const std::shared_ptr<BackendQueue>& queue,
-                                            const std::shared_ptr<BackendBuffer>& dst,
-                                            const void* src,
-                                            const BufferTransferRegion& region) = 0;
-  virtual BackendError copy_to_host_async(const std::shared_ptr<BackendQueue>& queue,
-                                          void* dst,
-                                          const std::shared_ptr<BackendBuffer>& src,
-                                          const BufferTransferRegion& region) = 0;
-  virtual BackendError copy_device_to_host_async(const std::shared_ptr<BackendQueue>& queue,
-                                                 void* dst,
-                                                 const void* src,
-                                                 size_t size_bytes) = 0;
+  /// Enqueue a device-to-device copy.
+  virtual BackendError copy_buffer_async(
+      const std::shared_ptr<BackendQueue>& queue,
+      const std::shared_ptr<BackendBuffer>& dst,
+      const std::shared_ptr<BackendBuffer>& src,
+      const CopyRegion& region) = 0;
 
-  /// @brief Copy data from host memory to a raw device pointer asynchronously.
-  /// @param queue Queue on which the copy is enqueued.
-  /// @param dst Destination device pointer.
-  /// @param src Source host pointer.
-  /// @param size_bytes Number of bytes to copy.
-  virtual BackendError copy_host_to_device_async(const std::shared_ptr<BackendQueue>& queue,
-                                                  void* dst,
-                                                  const void* src,
-                                                  size_t size_bytes) = 0;
+  /// Enqueue a host-to-buffer copy.
+  virtual BackendError copy_from_host_async(
+      const std::shared_ptr<BackendQueue>& queue,
+      const std::shared_ptr<BackendBuffer>& dst,
+      const void* src,
+      const BufferTransferRegion& region) = 0;
 
-  /// @brief Asynchronously fill a buffer region with a byte value.
-  /// @param queue Queue on which the fill is enqueued.
-  /// @param buffer Destination buffer.
-  /// @param value  Byte value to fill with.
-  /// @param offset Byte offset into the buffer.
-  /// @param size_bytes Number of bytes to fill.
-  virtual BackendError fill_buffer_async(const std::shared_ptr<BackendQueue>& queue,
-                                         const std::shared_ptr<BackendBuffer>& buffer,
-                                         uint8_t value,
-                                         size_t offset,
-                                         size_t size_bytes) = 0;
+  /// Enqueue a buffer-to-host copy.
+  virtual BackendError copy_to_host_async(
+      const std::shared_ptr<BackendQueue>& queue,
+      void* dst,
+      const std::shared_ptr<BackendBuffer>& src,
+      const BufferTransferRegion& region) = 0;
 
-  /// Convenience overload: fill the entire buffer with the given byte value.
-  BackendError fill_buffer_async(const std::shared_ptr<BackendQueue>& queue,
-                                 const std::shared_ptr<BackendBuffer>& buffer,
-                                 uint8_t value) {
+  /// Enqueue a raw device-pointer to host copy.
+  virtual BackendError copy_device_to_host_async(
+      const std::shared_ptr<BackendQueue>& queue,
+      void* dst,
+      const void* src,
+      size_t size_bytes) = 0;
+
+  /// Enqueue a host-to-raw-device-pointer copy.
+  virtual BackendError copy_host_to_device_async(
+      const std::shared_ptr<BackendQueue>& queue,
+      void* dst,
+      const void* src,
+      size_t size_bytes) = 0;
+
+  /// Enqueue a byte fill over a buffer region.
+  virtual BackendError fill_buffer_async(
+      const std::shared_ptr<BackendQueue>& queue,
+      const std::shared_ptr<BackendBuffer>& buffer,
+      uint8_t value,
+      size_t offset,
+      size_t size_bytes) = 0;
+
+  /// Enqueue a byte fill over the entire buffer.
+  BackendError fill_buffer_async(
+      const std::shared_ptr<BackendQueue>& queue,
+      const std::shared_ptr<BackendBuffer>& buffer,
+      uint8_t value) {
     if (!buffer) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument,
-                           "fill_buffer_async", "buffer must not be null");
+      return backend_error(
+          backend_type(),
+          BackendErrorCode::InvalidArgument,
+          "fill_buffer_async",
+          "buffer must not be null");
     }
     return fill_buffer_async(queue, buffer, value, 0, buffer->size_bytes());
   }

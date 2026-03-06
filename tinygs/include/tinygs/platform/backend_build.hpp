@@ -4,6 +4,7 @@
 
 namespace tinygs {
 
+/// Backend compiled into this build.
 inline constexpr BackendType compiled_backend_type() noexcept {
 #if defined(TINYGS_BACKEND_CUDA)
   return BackendType::Cuda;
@@ -16,6 +17,7 @@ inline constexpr BackendType compiled_backend_type() noexcept {
 #endif
 }
 
+/// Lowercase backend name for the compiled backend.
 inline constexpr const char* compiled_backend_name() noexcept {
   switch (compiled_backend_type()) {
     case BackendType::Cuda:

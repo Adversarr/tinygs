@@ -88,6 +88,8 @@ public:
   /// @note the indices buffer must be on device memory.
   void reorder(uint* indices, BackendStream stream = nullptr);
 
+  std::shared_ptr<BackendBuffer> compute_morton_order_indices(BackendStream stream = nullptr);
+
   void append(int num_dup, const std::shared_ptr<BackendQueue>& queue);
 
   float scene_scale() const { return m_scene_scale; }
@@ -98,12 +100,19 @@ public:
 
   int get_sh_degree() const { return m_current_sh_degree; }
 
-private:
+ private:
   struct Impl;
   std::unique_ptr<Impl> m_impl;
 
   int m_current_sh_degree = 0;
   float m_scene_scale = 1.0f;
 };
+
+std::shared_ptr<BackendBuffer> reorder_densification_info(
+    const std::shared_ptr<BackendBuffer>& info,
+    const uint* indices,
+    size_t n,
+    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendStream stream);
 
 }  // namespace tinygs

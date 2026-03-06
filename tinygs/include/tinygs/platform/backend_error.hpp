@@ -8,6 +8,7 @@
 
 namespace tinygs {
 
+/// Stable runtime error categories.
 enum class BackendErrorCode : uint8_t {
   Success = 0,
   InvalidArgument = 1,
@@ -45,6 +46,7 @@ inline const char* to_string(BackendErrorCode code) noexcept {
   }
 }
 
+/// Structured status returned by `BackendRuntime` operations.
 struct BackendError {
   BackendErrorCode code = BackendErrorCode::Success;
   BackendType backend = BackendType::Cuda;
@@ -62,10 +64,11 @@ inline BackendError backend_success(BackendType backend, std::string operation =
   return status;
 }
 
-inline BackendError backend_error(BackendType backend,
-                                  BackendErrorCode code,
-                                  std::string operation,
-                                  std::string message = {}) {
+inline BackendError backend_error(
+    BackendType backend,
+    BackendErrorCode code,
+    std::string operation,
+    std::string message = {}) {
   BackendError status;
   status.code = code;
   status.backend = backend;

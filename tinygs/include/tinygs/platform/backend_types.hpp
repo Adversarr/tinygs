@@ -11,12 +11,14 @@
 
 namespace tinygs {
 
+/// Backend selected at build or runtime.
 enum class BackendType : uint8_t {
   Cuda = 0,
   Hip = 1,
   Metal = 2,
 };
 
+/// Opaque native stream handle passed through backend-neutral APIs.
 struct BackendStream {
   void* handle = nullptr;
 
@@ -24,8 +26,7 @@ struct BackendStream {
   constexpr BackendStream(std::nullptr_t) : handle(nullptr) {}
   constexpr BackendStream(void* stream_handle) : handle(stream_handle) {}
 
-  template <typename PointerType,
-            typename = std::enable_if_t<std::is_pointer_v<PointerType>>>
+  template <typename PointerType, typename = std::enable_if_t<std::is_pointer_v<PointerType>>>
   operator PointerType() const {
     return reinterpret_cast<PointerType>(handle);
   }
@@ -47,8 +48,11 @@ inline std::string to_string(BackendType type) {
 }
 
 inline BackendType backend_type_from_string(std::string type) {
-  std::transform(type.begin(), type.end(), type.begin(),
-                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  std::transform(
+      type.begin(),
+      type.end(),
+      type.begin(),
+      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   if (type == "cuda") {
     return BackendType::Cuda;
   }
@@ -61,6 +65,7 @@ inline BackendType backend_type_from_string(std::string type) {
   throw std::runtime_error("Unknown backend type: " + type);
 }
 
+/// Runtime backend selection parsed from config.
 struct BackendConfig {
   BackendType type = BackendType::Cuda;
   int device = 0;

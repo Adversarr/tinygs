@@ -1,16 +1,5 @@
-#include <cuda_runtime.h>
-#include <nvtx3/nvtx3.hpp>
 #include <opencv2/opencv.hpp>
 #include <spdlog/spdlog.h>
-#include <thrust/copy.h>
-#include <thrust/device_vector.h>
-#include <thrust/execution_policy.h>
-#include <thrust/fill.h>
-#include <thrust/iterator/counting_iterator.h>
-#include <thrust/reduce.h>
-#include <thrust/transform.h>
-#include <thrust/transform_reduce.h>
-#include <cub/device/device_radix_sort.cuh>
 
 #include <algorithm>
 #include <iomanip>
@@ -20,7 +9,6 @@
 #include "tinygs/core/pointcloud.hpp"
 #include "tinygs/platform/backend_build.hpp"
 #include "tinygs/platform/runtime_factory.hpp"
-#include "tinygs/cuda/common_device.cuh"
 #include "tinygs/platform/buffer_utils.hpp"
 #include "tinygs/cuda/reduce.hpp"
 #include "tinygs/orchestrator.hpp"
@@ -40,115 +28,6 @@ static inline void backend_check_throw(const BackendError& status, const char* o
       "Runtime operation failed (" + std::string(operation) + "): " + to_string(status));
 }
 
-static inline void debug_cuda_stage_check(const OrchestratorConfig& cfg,
-                                          size_t step,
-                                          const std::shared_ptr<BackendRuntime>& runtime,
-                                          const std::shared_ptr<BackendQueue>& queue,
-                                          const char* stage_name) {
-  if (!cfg.debug_cuda_check_each_stage && !cfg.debug_cuda_sync_each_stage) {
-    return;
-  }
-  if (cfg.debug_cuda_check_every == 0 || (step % cfg.debug_cuda_check_every) != 0) {
-    return;
-  }
-
-  if (cfg.debug_cuda_log_each_stage) {
-    log_info("[CUDA-DBG] step={} stage={}", step, stage_name);
-  }
-
-  if (cfg.debug_cuda_sync_each_stage) {
-    // Device-wide sync intentionally used for debug mode so failures on auxiliary
-    // streams (e.g., async dataloader stream) are surfaced at the nearest stage.
-    CHECK_THROW(runtime != nullptr);
-    backend_check_throw(runtime->synchronize_device(), "debug synchronize device");
-  } else {
-    CHECK_THROW(runtime != nullptr);
-    CHECK_THROW(queue != nullptr);
-    backend_check_throw(runtime->synchronize_queue(queue), "debug synchronize queue");
-  }
-  if (cfg.debug_cuda_check_each_stage) {
-    CUDA_CHECK_THROW(cudaPeekAtLastError());
-  }
-}
-
-static thrust::device_vector<uint> reorder(const vec3* positions, uint n, BackendStream stream) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
-  thrust::device_vector<uint> idx_in(n), idx_out(n);
-  thrust::device_vector<uint> enc_in(n), enc_out(n);
-
-  thrust::copy(
-    thrust::cuda::par.on(cuda_stream),
-    thrust::make_counting_iterator<uint>(0),
-    thrust::make_counting_iterator<uint>(n),
-    idx_in.begin()
-  );
-
-  vec3 min_pos = thrust::reduce(
-    thrust::cuda::par.on(cuda_stream),
-    positions, positions + n,
-    vec3(FLT_MAX, FLT_MAX, FLT_MAX),
-    [] __host__ __device__ (const vec3& a, const vec3& b) -> vec3 { return vec3(fminf(a.x, b.x), fminf(a.y, b.y), fminf(a.z, b.z)); }
-  );
-
-  vec3 max_pos = thrust::reduce(
-    thrust::cuda::par.on(cuda_stream),
-    positions, positions + n,
-    vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX),
-    [] __host__ __device__ (const vec3& a, const vec3& b) -> vec3 { return vec3(fmaxf(a.x, b.x), fmaxf(a.y, b.y), fmaxf(a.z, b.z)); }
-  );
-
-  // Precompute inverse deltas on host to avoid per-element device computation
-  const float inv_dx = 1.0f / std::max(max_pos.x - min_pos.x, 1e-8f);
-  const float inv_dy = 1.0f / std::max(max_pos.y - min_pos.y, 1e-8f);
-  const float inv_dz = 1.0f / std::max(max_pos.z - min_pos.z, 1e-8f);
-
-  thrust::transform(
-    thrust::cuda::par.on(cuda_stream),
-    positions, positions + n,
-    enc_in.begin(), [min_pos, inv_dx, inv_dy, inv_dz] __device__ (const vec3& p) -> uint {
-      // Normalize position to [0,1] within the bounding box
-      const float nx = fminf(fmaxf((p.x - min_pos.x) * inv_dx, 0.0f), 1.0f);
-      const float ny = fminf(fmaxf((p.y - min_pos.y) * inv_dy, 0.0f), 1.0f);
-      const float nz = fminf(fmaxf((p.z - min_pos.z) * inv_dz, 0.0f), 1.0f);
-
-      // Map to 10-bit integer grid per axis and compute Morton code
-      const uint32_t xi = static_cast<uint32_t>(nx * 1023.0f);
-      const uint32_t yi = static_cast<uint32_t>(ny * 1023.0f);
-      const uint32_t zi = static_cast<uint32_t>(nz * 1023.0f);
-      return morton3D(xi, yi, zi);
-    }
-  );
-
-  // sort.
-  void* d_temp_storage = nullptr;
-  size_t temp_storage_bytes = 0;
-  // Query temporary storage size
-  cub::DeviceRadixSort::SortPairs(
-    d_temp_storage, temp_storage_bytes,
-    thrust::raw_pointer_cast(enc_in.data()),
-    thrust::raw_pointer_cast(enc_out.data()),
-    thrust::raw_pointer_cast(idx_in.data()),
-    thrust::raw_pointer_cast(idx_out.data()),
-    n, 0, 30, cuda_stream
-  );
-
-  // Allocate temporary storage and perform sort
-  thrust::device_vector<uint8_t> temp_storage(temp_storage_bytes);
-  d_temp_storage = thrust::raw_pointer_cast(temp_storage.data());
-  cub::DeviceRadixSort::SortPairs(
-    d_temp_storage, temp_storage_bytes,
-    thrust::raw_pointer_cast(enc_in.data()),
-    thrust::raw_pointer_cast(enc_out.data()),
-    thrust::raw_pointer_cast(idx_in.data()),
-    thrust::raw_pointer_cast(idx_out.data()),
-    n, 0, 30, cuda_stream
-  );
-  
-
-  return idx_out;
-}
-
-// TrainerConfig serialization methods
 json OrchestratorConfig::to_json() const {
   json j;
   j["max_steps"] = max_steps;
@@ -231,26 +110,13 @@ void OrchestratorConfig::from_json(const json& j) {
   if (j.contains("debug_cuda_log_each_stage")) debug_cuda_log_each_stage = j["debug_cuda_log_each_stage"].get<bool>();
 }
 
-void mean(const vec3* data, size_t size, vec3& out, BackendStream stream) {
-  auto exec = thrust::cuda::par.on(to_cuda_stream(stream));
-  out = thrust::transform_reduce(
-    exec,
-    data,
-    data + size,
-    [inv_s = 1.0f / static_cast<float>(size)] __device__ (const vec3& p) -> vec3 { return p * inv_s; },
-    vec3{0.0f, 0.0f, 0.0f},
-    thrust::plus<vec3>()
-  );
-}
-
 
 void Orchestrator::recompute_scene_scale() {
   auto ds = m_dataloader->get_dataset();
   auto pc = m_gaussians->means();
 
-  // avg_pc_mean
   vec3 avg_pc_mean;
-  mean(thrust::raw_pointer_cast(pc.data()), pc.size(), avg_pc_mean, m_major_stream);
+  gpu_mean_vec3(pc.data(), static_cast<int>(pc.size()), avg_pc_mean, m_major_stream);
 
   float scale = 0;
   for (auto c: ds->get_camera_loader().get_camera_extrinsics()) {
@@ -377,9 +243,6 @@ TrainingState Orchestrator::train() {
 }
 
 void Orchestrator::train_step() {
-  NVTX3_FUNC_RANGE();
-
-  // Pre-step callback
   const bool means_cycle_start = (m_state.current_step % group_accumulate_steps(OptimParamGroup::Means)) == 0;
   const bool shs_cycle_start = (m_state.current_step % group_accumulate_steps(OptimParamGroup::Shs)) == 0;
   const bool opacities_cycle_start = (m_state.current_step % group_accumulate_steps(OptimParamGroup::Opacities)) == 0;
@@ -391,28 +254,25 @@ void Orchestrator::train_step() {
     m_pre_step_callback(m_state);
   }
 
-  // TODO: async, not in the major/default stream.
-  // Clear gradients and buffers
   auto clear_group_gradients = [this](OptimParamGroup group) {
-    auto exec = thrust::cuda::par.on(to_cuda_stream(m_major_stream));
     switch (group) {
       case OptimParamGroup::Means:
-        thrust::fill(exec, m_gradients->means().begin(), m_gradients->means().end(), vec3(0.0f));
+        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->means().view());
         break;
       case OptimParamGroup::Shs:
-        thrust::fill(exec, m_gradients->sh0().begin(), m_gradients->sh0().end(), 0.0f);
-        thrust::fill(exec, m_gradients->sh1().begin(), m_gradients->sh1().end(), 0.0f);
-        thrust::fill(exec, m_gradients->sh2().begin(), m_gradients->sh2().end(), 0.0f);
-        thrust::fill(exec, m_gradients->sh3().begin(), m_gradients->sh3().end(), 0.0f);
+        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->sh0().view());
+        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->sh1().view());
+        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->sh2().view());
+        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->sh3().view());
         break;
       case OptimParamGroup::Opacities:
-        thrust::fill(exec, m_gradients->opacities().begin(), m_gradients->opacities().end(), 0.0f);
+        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->opacities().view());
         break;
       case OptimParamGroup::Scales:
-        thrust::fill(exec, m_gradients->scales().begin(), m_gradients->scales().end(), vec3(0.0f));
+        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->scales().view());
         break;
       case OptimParamGroup::Rotations:
-        thrust::fill(exec, m_gradients->rotations().begin(), m_gradients->rotations().end(), vec4(0.0f));
+        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->rotations().view());
         break;
     }
   };
@@ -421,17 +281,11 @@ void Orchestrator::train_step() {
   if (opacities_cycle_start) clear_group_gradients(OptimParamGroup::Opacities);
   if (scales_cycle_start) clear_group_gradients(OptimParamGroup::Scales);
   if (rotations_cycle_start) clear_group_gradients(OptimParamGroup::Rotations);
-  fill_buffer_zero(m_backend_runtime, m_major_queue, m_loss_buffer);
-  fill_buffer_zero(m_backend_runtime, m_major_queue, m_image_grad_buffer);
-  debug_cuda_stage_check(
-      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "clear-buffers");
+  fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_loss_buffer);
+  fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_image_grad_buffer);
 
-  // Get next batch of data
   auto data = m_dataloader->next();
-  debug_cuda_stage_check(
-      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "dataloader-next");
 
-  // Update rasterization context with current data
   m_rasterize_ctx.fwd_input = data.input;
 
   if (m_pose_opt) {
@@ -440,32 +294,18 @@ void Orchestrator::train_step() {
     w2c = m_pose_opt->query(timestamp, w2c);
     m_rasterize_ctx.fwd_input.w2c = w2c;
   }
-  debug_cuda_stage_check(
-      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "prepare-input");
 
-  // Forward pass
   m_rasterizer->forward(m_rasterize_ctx);
-  debug_cuda_stage_check(
-      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "rasterizer-forward");
 
-  // Evaluate losses and accumulate gradients
   evaluate_losses(data);
-  debug_cuda_stage_check(
-      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "evaluate-losses");
 
-  // Setup gradient output for backward pass
   m_rasterize_ctx.grad_output.image = m_loss_ctx.grad;
 
-  // Backward pass
   m_rasterizer->backward(m_rasterize_ctx);
-  debug_cuda_stage_check(
-      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "rasterizer-backward");
   auto grad_w2c = m_rasterize_ctx.grad_input.w2c;
   if (m_pose_opt && m_state.current_step >= m_config.start_pose_opt) {
     float lr = m_optimizer ? m_optimizer->get_lr(OptimParamGroup::Means) : 1.0f;
     m_pose_opt->update(m_rasterize_ctx.fwd_input.timestamp, grad_w2c, lr);
-    debug_cuda_stage_check(
-        m_config, m_state.current_step, m_backend_runtime, m_major_queue, "pose-update");
   }
 
   const bool step_means = should_step_group(OptimParamGroup::Means, m_state.current_step);
@@ -494,65 +334,45 @@ void Orchestrator::train_step() {
     step_cfg.scales_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Scales));
     step_cfg.rotations_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Rotations));
     m_optimizer->step(step_cfg, m_major_stream);
-    debug_cuda_stage_check(
-        m_config, m_state.current_step, m_backend_runtime, m_major_queue, "optimizer-step");
   }
 
-  // Strategy step (densification) — only after a full accumulation cycle completes
   if ((step_means || step_shs || step_opacities || step_scales || step_rotations) && m_strategy) {
     m_strategy->step(m_rasterize_ctx);
-    debug_cuda_stage_check(
-        m_config, m_state.current_step, m_backend_runtime, m_major_queue, "strategy-step");
   }
 
   if (m_state.current_step > 0) {
     if (m_config.scene_scale_recompute_interval > 0 &&
         m_state.current_step % m_config.scene_scale_recompute_interval == 0) {
       recompute_scene_scale();
-      debug_cuda_stage_check(
-          m_config, m_state.current_step, m_backend_runtime, m_major_queue,
-          "recompute-scene-scale");
     }
     if (m_config.reorder_gaussians_interval > 0 &&
         m_state.current_step % m_config.reorder_gaussians_interval == 0) {
       reorder_gaussians();
-      debug_cuda_stage_check(
-          m_config, m_state.current_step, m_backend_runtime, m_major_queue, "reorder-gaussians");
     }
   }
 
-  // Update spherical harmonics degree
   update_sh_degree();
-  debug_cuda_stage_check(
-      m_config, m_state.current_step, m_backend_runtime, m_major_queue, "update-sh-degree");
 
-  // Post-step callback (for logging, visualization, etc.)
   if (m_post_step_callback) {
     m_post_step_callback(m_state);
   }
 
-  // Checkpoint callback
   if (m_checkpoint_callback && m_state.current_step % m_config.checkpoint_interval == 0) {
     m_checkpoint_callback(m_state);
   }
 
-  // Increment global training step every call; accumulation gating uses current_step
   m_state.current_step++;
 }
 
 void Orchestrator::test_step() {
-  NVTX3_FUNC_RANGE();
   DataLoaderBase* use_loader = m_test_dataloader ? m_test_dataloader.get() : m_dataloader.get();
   eval(use_loader);
 }
 
 std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader) {
-  NVTX3_FUNC_RANGE();
-  // Store training state
   const ImageShape current_shape{m_rasterize_ctx.fwd_input.width, m_rasterize_ctx.fwd_input.height, 3};
   const DataType current_dtype = m_active_data_type;
 
-  // Switch to eval dtype
   m_active_data_type = m_config.eval_data_type;
   DataLoaderBase* effective_loader = loader ? loader : m_dataloader.get();
 
@@ -749,7 +569,6 @@ void Orchestrator::initialize() {
   if (!m_backend_runtime) {
     BackendConfig backend_config;
     backend_config.type = compiled_backend_type();
-    backend_config.device = cuda_device();
     const auto runtime_result = create_backend_runtime(backend_config);
     backend_check_throw(runtime_result.error(), "initialize create backend runtime");
     m_backend_runtime = runtime_result.value();
@@ -1116,37 +935,26 @@ void Orchestrator::set_render_resolution(const ImageShape& new_shape) {
   m_loss_ctx.grad = grad_rgb;
 }
 
-static __global__ void densification_update( //
-    uint n, const tinygs::DensificationInfo *__restrict__ old_info,
-    tinygs::DensificationInfo *__restrict__ new_info,
-    uint *old_idx) {
-  uint i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= n) return;
-
-  new_info[i] = old_info[old_idx[i]];
-}
-
 void Orchestrator::reorder_gaussians() {
-  NVTX3_FUNC_RANGE();
   log_info("Reordering gaussians by Morton code for better spatial locality...");
-  auto pos = m_gaussians->means();
   uint n = m_gaussians->size();
 
-  // Reorder gaussians by Morton code
-  auto idx = reorder(thrust::raw_pointer_cast(pos.data()), n, m_major_stream);
-  
-  // Apply reordering to gaussians
-  m_gaussians->reorder(thrust::raw_pointer_cast(idx.data()), m_major_stream);
-  m_gradients->reorder(thrust::raw_pointer_cast(idx.data()), m_major_stream);
-  m_optimizer->reorder(thrust::raw_pointer_cast(idx.data()), m_major_queue);
+  auto idx_buffer = m_gaussians->compute_morton_order_indices(m_major_stream);
+  if (!idx_buffer) return;
+
+  uint* indices = buffer_data<uint>(idx_buffer);
+
+  m_gaussians->reorder(indices, m_major_stream);
+  m_gradients->reorder(indices, m_major_stream);
+  m_optimizer->reorder(indices, m_major_queue);
 
   if (m_rasterize_ctx.densification_info) {
-    auto new_info = create_device_buffer_for<tinygs::DensificationInfo>(m_backend_runtime, n, "densification_reorder");
-    linear_kernel(densification_update, 0, m_major_stream, n,
-                  buffer_data_const<tinygs::DensificationInfo>(m_rasterize_ctx.densification_info),
-                  buffer_data<tinygs::DensificationInfo>(new_info),
-                  thrust::raw_pointer_cast(idx.data()));
-    m_rasterize_ctx.densification_info = new_info;
+    m_rasterize_ctx.densification_info = reorder_densification_info(
+        m_rasterize_ctx.densification_info,
+        indices,
+        n,
+        m_backend_runtime,
+        m_major_stream);
   }
 }
 

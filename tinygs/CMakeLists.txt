@@ -74,7 +74,7 @@ set(TINYGS_SOURCES
     "src/tinygs.cpp"
     
     # Trainer
-    "src/orchestrator.cu"
+    "src/orchestrator.cpp"
     
     # Utilities
     "src/utils/file.cpp"

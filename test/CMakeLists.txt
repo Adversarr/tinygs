@@ -220,6 +220,23 @@ set_target_properties(tinygs_backend_runtime_contract_test PROPERTIES
 
 gtest_discover_tests(tinygs_backend_runtime_contract_test)
 
+add_executable(tinygs_buffer_utils_test
+    buffer_utils_test.cpp
+)
+
+target_link_libraries(tinygs_buffer_utils_test
+    PRIVATE
+        tinygs::tinygs
+        GTest::gtest_main
+)
+
+set_target_properties(tinygs_buffer_utils_test PROPERTIES
+    CXX_STANDARD 20
+    CXX_STANDARD_REQUIRED ON
+)
+
+gtest_discover_tests(tinygs_buffer_utils_test)
+
 add_executable(tinygs_optimizer_factory_test
     optimizer_factory_test.cpp
 )
