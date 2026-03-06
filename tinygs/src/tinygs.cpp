@@ -1,6 +1,6 @@
 #include "tinygs/common.hpp"
 
-#ifdef TINYGS_CUDA_ENABLED
+#if defined(TINYGS_BACKEND_CUDA)
 #include <cuda_runtime.h>
 #endif
 

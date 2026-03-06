@@ -115,5 +115,5 @@ done
 for t in ${TARGETS}; do
     cp "${BUILD_DIR}/apps/${t}" .
 done
-
+cp "${BUILD_DIR}/compile_commands.json" .
 echo -e "${BLUE}Essential binaries built: ${TARGETS}.${NC}"

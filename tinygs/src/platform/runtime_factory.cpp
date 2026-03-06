@@ -5,6 +5,7 @@
 namespace tinygs {
 
 Result<BackendRuntime> create_cuda_backend_runtime(int device);
+Result<BackendRuntime> create_metal_backend_runtime(int device);
 
 Result<BackendRuntime> create_backend_runtime(const BackendConfig& config) {
   constexpr const char* operation = "create_backend_runtime";
@@ -29,11 +30,7 @@ Result<BackendRuntime> create_backend_runtime(const BackendConfig& config) {
                         operation,
                         "HIP backend is planned but not implemented yet."));
     case BackendType::Metal:
-      return Result<BackendRuntime>::failure(
-          backend_error(config.type,
-                        BackendErrorCode::Unsupported,
-                        operation,
-                        "Metal backend is planned but not implemented yet."));
+      return create_metal_backend_runtime(config.device);
     default:
       return Result<BackendRuntime>::failure(
           backend_error(config.type,
