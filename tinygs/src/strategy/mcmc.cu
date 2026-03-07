@@ -164,7 +164,7 @@ MCMCStrategy::MCMCStrategy(
 
 void MCMCStrategy::step_impl(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream)); // make sure the operations on training stream are done.
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue))); // make sure the operations on training stream are done.
 
   ctx.densification_info.reset();
   const size_t step = this_step();
@@ -192,7 +192,7 @@ void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
     0.0f, 1.0f
   ); // TODO: fuse the two kernels.
 
-  add_noise_kernel<<<(num_gaussians + 255) / 256, 256, 0, ctx.stream>>>(
+  add_noise_kernel<<<(num_gaussians + 255) / 256, 256, 0, to_cuda_stream(ctx.queue)>>>(
     num_gaussians,
     thrust::raw_pointer_cast(m_gaussians->opacities().data()),
     reinterpret_cast<const float*>(thrust::raw_pointer_cast(m_gaussians->scales().data())),
@@ -201,12 +201,12 @@ void MCMCStrategy::add_noise(const RasterizeContext& ctx) {
     reinterpret_cast<float*>(thrust::raw_pointer_cast(m_gaussians->means().data())),
     m_mcmc_params.noise_lr_init * m_optimizer->get_lr()
   );
-  maybe_sync(ctx.stream);
+  maybe_sync(to_cuda_stream(ctx.queue));
 }
 
 void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   // Expand exponentially.
   const int num_gaussians = m_gaussians->size();
   const int target_size = std::min(
@@ -231,10 +231,11 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   thrust::device_vector<int> sampled_idxs(num_to_add);
   {
     auto sampled_idxs_buf = multinomial_cuda_with_replacement(
-    thrust::raw_pointer_cast(probs.data()),
+      thrust::raw_pointer_cast(probs.data()),
       num_gaussians,
       num_to_add,
-      m_rng.next_uint()
+      m_rng.next_uint(),
+      ctx.queue.get()
     );
     const int* sampled_ptr = buffer_data<int>(sampled_idxs_buf);
 
@@ -291,7 +292,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
   // Call the CUDA relocation function from gsplat
   thrust::device_vector<float> new_opacities(num_to_add); // activated
   thrust::device_vector<vec3> new_scales(num_to_add);     // activated
-  relocation_kernel<<<(num_to_add + 255) / 256, 256, 0, ctx.stream>>>(
+  relocation_kernel<<<(num_to_add + 255) / 256, 256, 0, to_cuda_stream(ctx.queue)>>>(
     num_to_add,
     thrust::raw_pointer_cast(sampled_opacities.data()),
     thrust::raw_pointer_cast(sampled_scales.data()), // scales in exponential space.
@@ -357,7 +358,7 @@ MCMCStrategy::~MCMCStrategy() = default;
 
 void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   size_t num_gaussians = m_gaussians->size();
   thrust::device_vector<float> opacities(num_gaussians);
   thrust::transform(
@@ -439,7 +440,8 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     thrust::raw_pointer_cast(probs.data()),
     num_kept,
     num_dead,
-    m_rng.next_uint() // TODO: replace with real seed.
+    m_rng.next_uint(), // TODO: replace with real seed.
+    ctx.queue.get()
   );
   const int* sampled_local_ptr = buffer_data<int>(sampled_idxs_buf);
   thrust::device_vector<int> sampled_idxs(num_dead);
@@ -508,7 +510,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
   // Call the CUDA relocation function from gsplat
   thrust::device_vector<float> new_opacities(num_dead);
   thrust::device_vector<vec3> new_scales(num_dead);
-  relocation_kernel<<<(num_dead + 255) / 256, 256, 0, ctx.stream>>>(
+  relocation_kernel<<<(num_dead + 255) / 256, 256, 0, to_cuda_stream(ctx.queue)>>>(
     num_dead,
     thrust::raw_pointer_cast(sampled_opacities.data()),
     thrust::raw_pointer_cast(sampled_scales.data()), // scales in exponential space.

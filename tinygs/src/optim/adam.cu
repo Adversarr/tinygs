@@ -171,16 +171,16 @@ struct m_step {
 
 
 
-void Adam::step(float scale, BackendStream stream) {
+void Adam::step(float scale, const BackendQueue* queue) {
   if (m_adam_params.decouple_decay) {
-    step_adamw(scale, stream);
+    step_adamw(scale, queue);
   } else {
-    step_adam(scale, stream);
+    step_adam(scale, queue);
   }
 }
 
-void Adam::step(const GroupStepConfig& step_config, BackendStream stream) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+void Adam::step(const GroupStepConfig& step_config, const BackendQueue* queue) {
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   if (!step_config.any_update()) {
     return;
   }
@@ -195,7 +195,7 @@ void Adam::step(const GroupStepConfig& step_config, BackendStream stream) {
         std::fabs(step_config.scales_scale - s) > tol || std::fabs(step_config.rotations_scale - s) > tol) {
       throw std::runtime_error("Adam(decouple_decay=true) requires equal group scales.");
     }
-    step_adamw(s, stream);
+    step_adamw(s, queue);
     return;
   }
 
@@ -364,11 +364,11 @@ void Adam::step(const GroupStepConfig& step_config, BackendStream stream) {
         kAdamL1DecayNone);
   }
 
-  maybe_sync(stream);
+  maybe_sync(cuda_stream);
 }
 
 
-void Adam::step_adam(float scale, BackendStream stream) {
+void Adam::step_adam(float scale, const BackendQueue* queue) {
   GroupStepConfig step_config;
   step_config.update_means = true;
   step_config.update_shs = true;
@@ -380,13 +380,13 @@ void Adam::step_adam(float scale, BackendStream stream) {
   step_config.opacities_scale = scale;
   step_config.scales_scale = scale;
   step_config.rotations_scale = scale;
-  step(step_config, stream);
+  step(step_config, queue);
 }
 
 
-void Adam::step_adamw(float scale, BackendStream stream) {
+void Adam::step_adamw(float scale, const BackendQueue* queue) {
   NVTX3_FUNC_RANGE();
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   const float gradient_scale = scale;
   constexpr int block_size = 256;
 
@@ -515,7 +515,7 @@ void Adam::step_adamw(float scale, BackendStream stream) {
         bias_correction2_sqrt,
         m_params.max_grad_1);
 
-    maybe_sync(stream);
+    maybe_sync(cuda_stream);
   }
 }
 

@@ -134,12 +134,12 @@ void DataLoaderBase::set_output_shape(const ImageShape &shape) {
 }
 
 /// @brief Transfer image data from host to GPU with format conversion
-/// @param stream CUDA stream for async operations
+/// @param queue Queue used for ordered transfer operations
 /// @param gpu_data Destination GPU image
 /// @param host_data Source host image
-void DataLoaderBase::transfer_gpu(BackendStream stream, const Image &gpu_data,
+void DataLoaderBase::transfer_gpu(const BackendQueue* queue, const Image &gpu_data,
                                   const Image &host_data) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   std::lock_guard lock(m_mutex);
   // Avoid NVTX ranges here because this function is called from
   // both main and background threads.
@@ -233,7 +233,7 @@ void DataLoaderBase::transfer_gpu(BackendStream stream, const Image &gpu_data,
   }
 }
 
-/// @brief Transfer image data from host to GPU using default stream
+/// @brief Transfer image data from host to GPU using default queue
 /// @param gpu_data Destination GPU image
 /// @param host_data Source host image
 void DataLoaderBase::transfer_gpu(const Image &gpu_data,

@@ -116,7 +116,7 @@ void Orchestrator::recompute_scene_scale() {
   auto pc = m_gaussians->means();
 
   vec3 avg_pc_mean;
-  gpu_mean_vec3(pc.data(), static_cast<int>(pc.size()), avg_pc_mean, m_major_stream);
+  gpu_mean_vec3(pc.data(), static_cast<int>(pc.size()), avg_pc_mean, m_major_queue.get());
 
   float scale = 0;
   for (auto c: ds->get_camera_loader().get_camera_extrinsics()) {
@@ -333,7 +333,7 @@ void Orchestrator::train_step() {
     step_cfg.opacities_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Opacities));
     step_cfg.scales_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Scales));
     step_cfg.rotations_scale = inv_grad_scale / static_cast<float>(group_accumulate_steps(OptimParamGroup::Rotations));
-    m_optimizer->step(step_cfg, m_major_stream);
+    m_optimizer->step(step_cfg, m_major_queue.get());
   }
 
   if ((step_means || step_shs || step_opacities || step_scales || step_rotations) && m_strategy) {
@@ -577,7 +577,6 @@ void Orchestrator::initialize() {
   CHECK_THROW(m_backend_runtime != nullptr);
 
   m_major_queue.reset();
-  m_major_stream = nullptr;
   QueueDesc queue_desc;
   queue_desc.non_blocking = true;
   queue_desc.debug_name = "orchestrator_major";
@@ -585,10 +584,12 @@ void Orchestrator::initialize() {
   backend_check_throw(queue_result.error(), "initialize create major queue");
   m_major_queue = queue_result.value();
   CHECK_THROW(m_major_queue != nullptr);
-  m_major_stream = m_major_queue->native_handle();
 
-  m_loss_ctx.stream = m_rasterize_ctx.stream = m_major_stream;
+  m_loss_ctx.queue = m_major_queue;
+  m_rasterize_ctx.queue = m_major_queue;
+  m_rasterize_ctx.runtime = m_backend_runtime;
 
+  
   // Use dataset-owned image resolutions (train and optional test may differ).
   auto train_shape = m_dataloader->get_dataset()->image_shape();
   auto full_shape = train_shape;
@@ -874,7 +875,7 @@ cv::Mat Orchestrator::to_opencv() const {
     half_to_float_gpu(buffer_data<float>(fp32_tmp),
                       reinterpret_cast<const float16_t*>(m_rasterize_ctx.fwd_output.image.data),
                       shape.padded_size(),
-                      m_major_stream);
+                      m_major_queue.get());
     src_ptr = buffer_data<float>(fp32_tmp);
   } else if (m_rasterize_ctx.fwd_output.image.data_type == DataType::Float32) {
     src_ptr = m_rasterize_ctx.fwd_output.image.data;
@@ -940,13 +941,13 @@ void Orchestrator::reorder_gaussians() {
   log_info("Reordering gaussians by Morton code for better spatial locality...");
   uint n = m_gaussians->size();
 
-  auto idx_buffer = m_gaussians->compute_morton_order_indices(m_major_stream);
+  auto idx_buffer = m_gaussians->compute_morton_order_indices(m_major_queue.get());
   if (!idx_buffer) return;
 
   uint* indices = buffer_data<uint>(idx_buffer);
 
-  m_gaussians->reorder(indices, m_major_stream);
-  m_gradients->reorder(indices, m_major_stream);
+  m_gaussians->reorder(indices, m_major_queue.get());
+  m_gradients->reorder(indices, m_major_queue.get());
   m_optimizer->reorder(indices, m_major_queue);
 
   if (m_rasterize_ctx.densification_info) {
@@ -955,7 +956,7 @@ void Orchestrator::reorder_gaussians() {
         indices,
         n,
         m_backend_runtime,
-        m_major_stream);
+        m_major_queue.get());
   }
 }
 

@@ -40,7 +40,7 @@ void reset_opacity(const std::shared_ptr<GPUGaussian3d>& gaussians, float min_op
 
 void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream)); // make sure the operations on training stream are done.
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue))); // make sure the operations on training stream are done.
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
     ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
@@ -64,7 +64,7 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
       step >= m_params.start_refine && step < m_params.end_refine) {
-    reset_opacity(m_gaussians, 2 * m_params.pruning_opacity_threshold, ctx.stream);
+    reset_opacity(m_gaussians, 2 * m_params.pruning_opacity_threshold, to_cuda_stream(ctx.queue));
     on_reset_opacity(ctx.queue);
   }
 }
@@ -75,7 +75,7 @@ void DefaultStrategy::reset() {
 
 void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   auto num_gaussians = m_gaussians->size();
   thrust::device_vector<char> duplication_flags(num_gaussians, 0);
   auto *d_grow_flags = thrust::raw_pointer_cast(duplication_flags.data());
@@ -318,7 +318,7 @@ void DefaultStrategy::duplicate(const RasterizeContext& ctx) {
 
 void DefaultStrategy::prune(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
 
   auto abs_ss_threshold = max(ctx.fwd_input.width, ctx.fwd_input.height) * m_params.max_screen_size;
 

@@ -10,20 +10,20 @@
 
 namespace tinygs {
 
-float gpu_sum(float *data, int size, BackendStream stream) {
-  cudaStream_t cuda_stream = to_cuda_stream(stream);
+float gpu_sum(float *data, int size, const BackendQueue* queue) {
+  cudaStream_t cuda_stream = to_cuda_stream(queue);
   return thrust::reduce(thrust::cuda::par.on(cuda_stream),
                         thrust::device_ptr<float>(data),
                         thrust::device_ptr<float>(data + size), 0.0f,
                         thrust::plus<float>());
 }
 
-void gpu_mean_vec3(const vec3* data, int size, vec3& out, BackendStream stream) {
+void gpu_mean_vec3(const vec3* data, int size, vec3& out, const BackendQueue* queue) {
   if (size <= 0) {
     out = vec3(0.0f, 0.0f, 0.0f);
     return;
   }
-  cudaStream_t cuda_stream = to_cuda_stream(stream);
+  cudaStream_t cuda_stream = to_cuda_stream(queue);
   out = thrust::transform_reduce(
     thrust::cuda::par.on(cuda_stream),
     thrust::device_ptr<const vec3>(data),

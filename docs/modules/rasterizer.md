@@ -29,7 +29,7 @@ Container for all data needed during rasterization:
 struct RasterizeContext {
     bool prepare_input_gradients = false;  // Compute camera gradients
     bool inference = false;                 // Skip backward storage
-    cudaStream_t stream = nullptr;          // CUDA stream
+    const BackendQueue* queue = nullptr;    // Execution queue
     float grad_scaler = 1.0f;               // Gradient scaling (128.0 for fp16)
     
     GPUBatchInput fwd_input;     // Camera parameters

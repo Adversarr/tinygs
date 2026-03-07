@@ -197,8 +197,8 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   auto gs3d = std::make_shared<GPUGaussian3d>(backend_runtime);
   gs3d->copy_from_host_async(init_result, major_queue);
   std::shared_ptr<GPUGaussian3d> grads =
-      gs3d->clone_async(BackendStream(major_queue->native_handle()));
-  grads->memset_async(0, BackendStream(major_queue->native_handle()));
+      gs3d->clone_async(major_queue.get());
+  grads->memset_async(0, major_queue.get());
   auto init_sync_status = backend_runtime->synchronize_queue(major_queue);
   if (!init_sync_status.ok()) {
     throw std::runtime_error(

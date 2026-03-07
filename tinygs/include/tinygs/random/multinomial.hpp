@@ -17,7 +17,7 @@ std::shared_ptr<BackendBuffer> multinomial_cuda_with_replacement(
     int K,
     int num_samples,
     int seed,
-    BackendStream stream = nullptr
+    const BackendQueue* queue = nullptr
 );
 
 /// @brief CPU implementation of multinomial sampling (with replacement)
@@ -39,7 +39,7 @@ std::shared_ptr<BackendBuffer> multinomial_cuda_cpu(
     int K,
     int num_samples,
     int seed,
-    BackendStream stream = nullptr
+    const BackendQueue* queue = nullptr
 );
 
 /// @brief CPU implementation of multinomial sampling (without replacement) on GPU
@@ -51,7 +51,7 @@ std::shared_ptr<BackendBuffer> multinomial_cuda_cpu_without_replacement(
     int K,
     int num_samples,
     int seed,
-    BackendStream stream = nullptr
+    const BackendQueue* queue = nullptr
 );
 
 /// @brief CPU implementation of multinomial sampling (without replacement)

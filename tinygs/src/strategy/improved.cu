@@ -54,7 +54,7 @@ __global__ static void add_noise_opacity(uint N, float noise_scale,
 
 void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
@@ -81,7 +81,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
       step >= m_params.start_refine && step < m_params.end_refine) {
     // this scale is larger than default (10 vs. 2)
-    reset_opacity(m_gaussians, 2.f * m_params.pruning_opacity_threshold, ctx.stream);
+    reset_opacity(m_gaussians, 2.f * m_params.pruning_opacity_threshold, to_cuda_stream(ctx.queue));
     on_reset_opacity(ctx.queue);
   }
 
@@ -91,7 +91,7 @@ void ImprovedStrategy::step_impl(const RasterizeContext& ctx) {
                         m_optimizer->get_optimization_params().opacities_lr;
     thrust::device_vector<float> noise(N);
     generate_random_logistic(m_rng, N, thrust::raw_pointer_cast(noise.data()));
-    linear_kernel(add_noise_opacity, 0, ctx.stream, N, noise_scale,
+    linear_kernel(add_noise_opacity, 0, to_cuda_stream(ctx.queue), N, noise_scale,
                   thrust::raw_pointer_cast(m_gaussians->opacities().data()),
                   thrust::raw_pointer_cast(noise.data()));
   }
@@ -103,7 +103,7 @@ void ImprovedStrategy::reset() {
 
 void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   const int num_gaussians = static_cast<int>(m_gaussians->size());
 
   if (!ctx.densification_info || static_cast<int>(buffer_count<DensificationInfo>(ctx.densification_info)) != num_gaussians) {
@@ -189,7 +189,7 @@ void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
         num_gaussians,                                 // categories
         num_grows,                                     // samples to draw
         static_cast<int>(m_params.seed + this_step()), // seed varies with step
-        ctx.stream);
+      ctx.queue.get());
     d_grow_indices_src = buffer_data<int>(grow_indices_src_sampled_buf);
   }
 
@@ -319,7 +319,7 @@ void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
 
 void ImprovedStrategy::prune(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
 
   const int num_gaussians = static_cast<int>(m_gaussians->size());
   thrust::device_vector<char> is_alive(num_gaussians);

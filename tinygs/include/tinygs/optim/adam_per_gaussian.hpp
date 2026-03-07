@@ -21,8 +21,8 @@ public:
 
   void reset(const std::shared_ptr<BackendQueue>& queue) override;
 
-  void step(float scale, BackendStream stream) override;
-  void step(const GroupStepConfig& step_config, BackendStream stream) override;
+  void step(float scale, const BackendQueue* queue) override;
+  void step(const GroupStepConfig& step_config, const BackendQueue* queue) override;
 
   void remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) override;
   void duplicate(int* indices, int* new_indices, int num_duplicate, const std::shared_ptr<BackendQueue>& queue) override;
@@ -37,8 +37,8 @@ private:
   struct Impl;
   std::unique_ptr<Impl> m_impl;
 
-  void step_adam(float scale, BackendStream stream);
-  void step_adamw(float scale, BackendStream stream);
+  void step_adam(float scale, const BackendQueue* queue);
+  void step_adamw(float scale, const BackendQueue* queue);
 
   AdamParameters m_adam_params;
 };

@@ -45,7 +45,7 @@ void SimpleDataLoader::generate_permutation() {
   m_current_index = 0;
 }
 
-GPUBatchInputOutput SimpleDataLoader::next(BackendStream stream) {
+GPUBatchInputOutput SimpleDataLoader::next(const BackendQueue* queue) {
   // Check if we've consumed the entire permutation
   if (m_current_index >= m_permutation.size()) {
     // Generate a new permutation and reset index
@@ -75,8 +75,8 @@ GPUBatchInputOutput SimpleDataLoader::next(BackendStream stream) {
   gpu_image.data_type = m_params.data_type;
   gpu_image.data = m_gpu_memory->data();
 
-  // Transfer data from host to GPU using the provided CUDA stream
-  transfer_gpu(stream, gpu_image, host_data.image);
+  // Transfer data from host to GPU using the provided queue
+  transfer_gpu(queue, gpu_image, host_data.image);
 
   // Prepare GPU batch output
   GPUBatchOutput gpu_output;
@@ -89,7 +89,7 @@ GPUBatchInputOutput SimpleDataLoader::next() {
   DL_FUNC_RANGE();
 
   CHECK_THROW(m_transfer_queue != nullptr);
-  auto r = next(BackendStream(m_transfer_queue->native_handle()));
+  auto r = next(m_transfer_queue.get());
   auto status = m_runtime->synchronize_queue(m_transfer_queue);
   if (!status.ok()) {
     throw std::runtime_error("SimpleDataLoader::next() queue sync failed: " + to_string(status));

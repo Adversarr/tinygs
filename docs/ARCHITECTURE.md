@@ -237,14 +237,14 @@ All components support JSON configuration via `set_params()`/`get_params()`:
 }
 ```
 
-## CUDA Stream Management
+## Queue Management
 
-CUDA streams are explicitly passed for asynchronous operations:
+Execution queues are explicitly passed for asynchronous operations:
 
 ```cpp
 void train_step() {
-    // Major stream for training operations
-    cudaStream_t stream = m_major_stream;
+    // Major queue for training operations
+    const BackendQueue* queue = m_major_queue.get();
     
     // Forward pass
     rasterizer->forward(ctx);
@@ -256,6 +256,6 @@ void train_step() {
     rasterizer->backward(ctx);
     
     // Optimization step
-    optimizer->step(scale, stream);
+    optimizer->step(scale, queue);
 }
 ```

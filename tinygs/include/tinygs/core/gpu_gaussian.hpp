@@ -77,20 +77,20 @@ public:
     return sh_degree_num_coeffs(degree) * 3 * static_cast<int>(size());
   }
 
-  std::unique_ptr<GPUGaussian3d> clone_async(BackendStream stream = nullptr);
+  std::unique_ptr<GPUGaussian3d> clone_async(const BackendQueue* queue = nullptr);
   std::unique_ptr<GPUGaussian3d> clone();
 
-  void memset_async(char value, BackendStream stream);
+  void memset_async(char value, const BackendQueue* queue);
   void memset(char value);
 
-  void remove(char* kept_flag, int num_kept, BackendStream stream = nullptr);
+  void remove(char* kept_flag, int num_kept, const BackendQueue* queue = nullptr);
 
   /// @brief Reorder gaussians according to the indices.
   //         It performs a gather: new[i] = old[indices[i]]
   /// @note the indices buffer must be on device memory.
-  void reorder(uint* indices, BackendStream stream = nullptr);
+  void reorder(uint* indices, const BackendQueue* queue = nullptr);
 
-  std::shared_ptr<BackendBuffer> compute_morton_order_indices(BackendStream stream = nullptr);
+  std::shared_ptr<BackendBuffer> compute_morton_order_indices(const BackendQueue* queue = nullptr);
 
   void append(int num_dup, const std::shared_ptr<BackendQueue>& queue);
 
@@ -115,6 +115,6 @@ std::shared_ptr<BackendBuffer> reorder_densification_info(
     const uint* indices,
     size_t n,
     const std::shared_ptr<BackendRuntime>& runtime,
-    BackendStream stream);
+  const BackendQueue* queue);
 
 }  // namespace tinygs

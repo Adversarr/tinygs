@@ -482,14 +482,14 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   l1_ctx.target = gt_image;
   l1_ctx.loss = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(l1_loss_buf.data()));
   l1_ctx.grad = Image();
-  l1_ctx.stream = ctx.stream;
+  l1_ctx.queue = ctx.queue;
 
   LossContext ssim_ctx;
   ssim_ctx.pred = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(rendered_f32.data()));
   ssim_ctx.target = gt_image;
   ssim_ctx.loss = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(ssim_loss_buf.data()));
   ssim_ctx.grad = Image();
-  ssim_ctx.stream = ctx.stream;
+  ssim_ctx.queue = ctx.queue;
 
   // Number of cameras to render
   const int num_cameras = std::min(m_metric_num_cameras, static_cast<int>(dataset_size));
@@ -534,7 +534,9 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     // -- First render: get the rendered image (no metric counting) --
     RasterizeContext render_ctx;
     render_ctx.inference = true;
-    render_ctx.stream = ctx.stream;
+    render_ctx.runtime = ctx.runtime;
+    render_ctx.queue = ctx.queue;
+    render_ctx.gaussians_grad = ctx.gaussians_grad;
     render_ctx.grad_scaler = ctx.grad_scaler;
     render_ctx.metric_mode = false;
 
@@ -555,25 +557,25 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     }
 
     m_rasterizer->forward(render_ctx);
-    CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+    CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
     // Transfer GT to GPU
-    m_dataloader->transfer_gpu(ctx.stream, gt_image, data.image);
-    CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+    m_dataloader->transfer_gpu(ctx.queue.get(), gt_image, data.image);
+    CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
     // Convert rendered image to Float32 if needed, then compute metrics in Float32.
     if (render_dtype == DataType::Float16) {
       half_to_float_gpu(thrust::raw_pointer_cast(rendered_f32.data()),
         reinterpret_cast<const float16_t*>(render_ctx.fwd_output.image.data),
         rgb_padded_size,
-        ctx.stream);
+        ctx.queue.get());
     } else {
       CUDA_CHECK_THROW(cudaMemcpyAsync(thrust::raw_pointer_cast(rendered_f32.data()), render_ctx.fwd_output.image.data,
-        rgb_padded_size * sizeof(float), cudaMemcpyDeviceToDevice, ctx.stream));
+        rgb_padded_size * sizeof(float), cudaMemcpyDeviceToDevice, to_cuda_stream(ctx.queue)));
     }
 
     // Compute per-pixel L1 map and threshold into binary metric map.
-    linear_kernel(compute_l1_map_kernel, 0, ctx.stream, n_pixels,
+    linear_kernel(compute_l1_map_kernel, 0, to_cuda_stream(ctx.queue), n_pixels,
         thrust::raw_pointer_cast(rendered_f32.data()),
         static_cast<const float*>(gt_image.data),
         thrust::raw_pointer_cast(l1_map.data()),
@@ -583,7 +585,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
         static_cast<uint32_t>(width),
         static_cast<uint32_t>(height));
 
-    auto exec = thrust::cuda::par.on(ctx.stream);
+    auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
     auto l1_begin = thrust::device_pointer_cast(thrust::raw_pointer_cast(l1_map.data()));
     auto l1_end = l1_begin + n_pixels;
     float min_l1 = thrust::reduce(exec, l1_begin, l1_end,
@@ -597,7 +599,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     }
     const float inv_range = 1.0f / range;
 
-    linear_kernel(threshold_metric_map_kernel, 0, ctx.stream, n_pixels,
+    linear_kernel(threshold_metric_map_kernel, 0, to_cuda_stream(ctx.queue), n_pixels,
         thrust::raw_pointer_cast(l1_map.data()),
         buffer_data<int>(metric_map),
         m_loss_thresh,
@@ -629,7 +631,9 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     // -- Second render: with metric_mode=true to count per-Gaussian contributions --
     RasterizeContext metric_ctx;
     metric_ctx.inference = true;
-    metric_ctx.stream = ctx.stream;
+    metric_ctx.runtime = ctx.runtime;
+    metric_ctx.queue = ctx.queue;
+    metric_ctx.gaussians_grad = ctx.gaussians_grad;
     metric_ctx.grad_scaler = ctx.grad_scaler;
     metric_ctx.metric_mode = true;
 
@@ -649,10 +653,10 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     fill_buffer_zero_async(ctx.runtime, ctx.queue, metric_ctx.metric_counts);
 
     m_rasterizer->forward_metric(metric_ctx);
-    CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+    CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
     // Accumulate results
-    exec = thrust::cuda::par.on(ctx.stream);
+    exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
     const int* d_accum_counts = buffer_data<int>(metric_counts);
     float* d_full_score = thrust::raw_pointer_cast(full_metric_score.data());
     int* d_full_counts = thrust::raw_pointer_cast(full_metric_counts.data());
@@ -736,7 +740,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   // pruning_score = min-max normalize(full_metric_score) to [0, 1]
   m_pruning_score.resize(num_gaussians);
   {
-    auto exec = thrust::cuda::par.on(ctx.stream);
+    auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
     float min_score = thrust::reduce(exec, full_metric_score.begin(), full_metric_score.end(),
         std::numeric_limits<float>::max(), thrust::minimum<float>());
     float max_score = thrust::reduce(exec, full_metric_score.begin(), full_metric_score.end(),
@@ -755,7 +759,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   // importance_score = floor(full_metric_counts / num_cameras) if densify
   if (densify) {
     m_importance_score.resize(num_gaussians);
-    auto exec = thrust::cuda::par.on(ctx.stream);
+    auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
     const float inv_cams = 1.0f / static_cast<float>(num_cameras);
     thrust::transform(exec,
         full_metric_counts.begin(), full_metric_counts.end(),
@@ -766,9 +770,9 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   }
 
   if (m_print_verbose_stats) {
-    auto exec = thrust::cuda::par.on(ctx.stream);
+    auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
     const NumericMoments raw_metric_score_stats = reduce_numeric_moments(
-        ctx.stream,
+        to_cuda_stream(ctx.queue),
         thrust::raw_pointer_cast(full_metric_score.data()),
         static_cast<int>(num_gaussians));
     log_numeric_moments("score.raw_metric_score", raw_metric_score_stats);
@@ -816,16 +820,16 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
     const float* d_pruning = thrust::raw_pointer_cast(m_pruning_score.data());
     const NumericMoments pruning_stats = reduce_numeric_moments(
-        ctx.stream,
+        to_cuda_stream(ctx.queue),
         d_pruning,
         static_cast<int>(num_gaussians));
     const long long pruning_gt_05 = count_above_threshold(
-        ctx.stream,
+        to_cuda_stream(ctx.queue),
         d_pruning,
         static_cast<int>(num_gaussians),
         0.5f);
     const long long pruning_gt_09 = count_above_threshold(
-        ctx.stream,
+        to_cuda_stream(ctx.queue),
         d_pruning,
         static_cast<int>(num_gaussians),
         0.9f);
@@ -838,11 +842,11 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     if (densify) {
       const float* d_importance = thrust::raw_pointer_cast(m_importance_score.data());
       const NumericMoments importance_stats = reduce_numeric_moments(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_importance,
           static_cast<int>(num_gaussians));
       const long long importance_gt_thresh = count_above_threshold(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_importance,
           static_cast<int>(num_gaussians),
           m_importance_threshold);
@@ -854,7 +858,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     }
   }
 
-  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 }
 
 // ---------------------------------------------------------------------------
@@ -863,7 +867,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
 
 void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
@@ -898,7 +902,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
     prune(ctx);
 
     // Clamp opacity after densification (FastGS specific)
-    linear_kernel(clamp_opacity_kernel, 0, ctx.stream,
+    linear_kernel(clamp_opacity_kernel, 0, to_cuda_stream(ctx.queue),
         static_cast<int>(m_gaussians->size()),
         thrust::raw_pointer_cast(m_gaussians->opacities().data()),
         0.8);
@@ -926,7 +930,7 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
       step > m_params.start_refine && step < m_params.end_refine) {
-    linear_kernel(clamp_opacity_kernel, 0, ctx.stream,
+    linear_kernel(clamp_opacity_kernel, 0, to_cuda_stream(ctx.queue),
         static_cast<int>(m_gaussians->size()),
         thrust::raw_pointer_cast(m_gaussians->opacities().data()),
         m_opacity_reset_value);
@@ -945,7 +949,7 @@ void FastGSStrategy::reset() {
 
 void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   const auto num_gaussians = m_gaussians->size();
 
   if (!ctx.densification_info || buffer_count<DensificationInfo>(ctx.densification_info) != num_gaussians) {
@@ -1118,11 +1122,11 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
     if (has_importance) {
       const float* d_importance_score = thrust::raw_pointer_cast(m_importance_score.data());
       const NumericMoments importance_moments = reduce_numeric_moments(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_importance_score,
           static_cast<int>(num_gaussians));
       const long long selected_by_importance = count_above_threshold(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_importance_score,
           static_cast<int>(num_gaussians),
           importance_thresh);
@@ -1136,7 +1140,7 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
     if (m_pruning_score.size() == num_gaussians) {
       const float* d_pruning_score = thrust::raw_pointer_cast(m_pruning_score.data());
       const NumericMoments pruning_moments = reduce_numeric_moments(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_pruning_score,
           static_cast<int>(num_gaussians));
       log_numeric_moments("duplicate.pruning_score", pruning_moments);
@@ -1339,7 +1343,7 @@ void FastGSStrategy::duplicate(const RasterizeContext& ctx) {
 
 void FastGSStrategy::prune(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   const auto num_gaussians = m_gaussians->size();
   const int original_num_gaussians = buffer_count<DensificationInfo>(ctx.densification_info);
   const auto abs_ss_threshold = max(ctx.fwd_input.width, ctx.fwd_input.height) * m_params.max_screen_size;
@@ -1450,11 +1454,11 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
     if (has_pruning_scores) {
       const float* d_pruning_score = thrust::raw_pointer_cast(m_pruning_score.data());
       const NumericMoments all_score_stats = reduce_numeric_moments(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_pruning_score,
           static_cast<int>(num_gaussians));
       const NumericMoments candidate_score_stats = reduce_numeric_moments(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_pruning_score,
           static_cast<int>(num_gaussians),
           d_standard_prune,
@@ -1514,7 +1518,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
       num_standard_candidates,
       budget,
       seed,
-      ctx.stream);
+      ctx.queue.get());
 
     // Mark sampled candidates as dead.
     const int actual_prune = static_cast<int>(buffer_count<int>(sampled_positions_buf));
@@ -1650,14 +1654,14 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
     if (has_pruning_scores) {
       const float* d_pruning_score = thrust::raw_pointer_cast(m_pruning_score.data());
       const NumericMoments removed_score_stats = reduce_numeric_moments(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_pruning_score,
           static_cast<int>(num_gaussians),
           d_is_alive,
           false);
       log_numeric_moments("prune.pruning_score_removed", removed_score_stats);
       const long long removed_score_gt_09 = count_above_threshold(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_pruning_score,
           static_cast<int>(num_gaussians),
           0.9f,
@@ -1675,7 +1679,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
 
 void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   const auto num_gaussians = m_gaussians->size();
   const bool has_pruning = (m_pruning_score.size() == num_gaussians);
 
@@ -1694,12 +1698,12 @@ void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
         opacity_thresh);
     if (has_pruning) {
       const NumericMoments score_stats = reduce_numeric_moments(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_ps,
           static_cast<int>(num_gaussians));
       log_numeric_moments("final_prune.pruning_score_all", score_stats);
       const long long score_gt_thresh = count_above_threshold(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_ps,
           static_cast<int>(num_gaussians),
           score_thresh);
@@ -1755,7 +1759,7 @@ void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
 
     if (has_pruning) {
       const NumericMoments removed_score_stats = reduce_numeric_moments(
-          ctx.stream,
+          to_cuda_stream(ctx.queue),
           d_ps,
           static_cast<int>(num_gaussians),
           d_is_alive,

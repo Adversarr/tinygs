@@ -99,7 +99,7 @@ Minimum error categories:
 #### Runtime Contract (Phases 0-2) ✅
 **Location:** `tinygs/include/tinygs/platform/`
 
-- `backend_types.hpp`: `BackendType`, `BackendConfig`, `BackendStream`
+- `backend_types.hpp`: `BackendType`, `BackendConfig`
 - `backend_error.hpp`: `BackendError`, `BackendErrorCode` (9 categories)
 - `backend_build.hpp`: Compile-time selection via `TINYGS_BACKEND_{CUDA|HIP|METAL}`
 - `runtime.hpp`: `BackendRuntime`, `BackendQueue`, `BackendEvent`, `BackendBuffer`, `CapabilityProfile`

@@ -177,7 +177,7 @@ struct AsyncDataLoader::Impl {
       data_queue->clear();
       index_queue->clear();
       
-      // Clear the prefetch queue (RAII will destroy the CUDA stream)
+      // Clear the prefetch queue (RAII will destroy the internal queue)
       prefetch_queue.reset();
       gpu_memory.reset();
     }
@@ -237,12 +237,11 @@ struct AsyncDataLoader::Impl {
     const size_t stride = dataset.image_shape().padded_size();
     gpu_image.data = static_cast<float*>(gpu_memory->data()) + stride * buffer_idx;
 
-    // Transfer data from host to GPU using the backend stream
+    // Transfer data from host to GPU using the prefetch queue
     if (!prefetch_queue) {
       throw std::runtime_error("AsyncDataLoader: prefetch_queue is null, was start() called?");
     }
-    BackendStream stream = BackendStream(prefetch_queue->native_handle());
-    base.transfer_gpu(stream, gpu_image, host_data.image);
+    base.transfer_gpu(prefetch_queue.get(), gpu_image, host_data.image);
 
     // Prepare GPU batch output
     GPUBatchOutput gpu_output;

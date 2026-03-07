@@ -40,7 +40,7 @@ public:
   void set_dataloader(std::shared_ptr<DataLoaderBase> dataloader) override;
 
   /// @brief Render M random cameras and accumulate per-Gaussian importance / pruning scores.
-  /// @param ctx   The training context (used for stream, grad_scaler, etc.)
+  /// @param ctx   The training context (used for queue, grad_scaler, etc.)
   /// @param densify  If true, also computes importance_score (used for densification filtering).
   ///                 If false, only computes pruning_score (used for final_prune).
   void compute_gaussian_score(const RasterizeContext& ctx, bool densify);

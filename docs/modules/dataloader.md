@@ -125,17 +125,17 @@ class SimpleDataLoader : public DataLoaderBase {
 
 ## Async DataLoader
 
-Asynchronous multi-stream loader with prefetching:
+Asynchronous multi-queue loader with prefetching:
 
 ```cpp
 class AsyncDataLoader : public DataLoaderBase {
-    // Uses multiple CUDA streams
+    // Uses multiple queues
     // Prefetches next batch while GPU processes current
 };
 ```
 
 **Features:**
-- Multiple CUDA streams for overlap
+- Multiple queues for overlap
 - Prefetches data ahead of time
 - Hides data transfer latency
 

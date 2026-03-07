@@ -23,12 +23,11 @@ void StrategyBase::step(const RasterizeContext& ctx) {
 void StrategyBase::on_remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) {
   if (num_kept <= 0) return;
 
-  BackendStream stream = queue ? BackendStream(queue->native_handle()) : nullptr;
   if (m_gaussians) {
-    m_gaussians->remove(kept_flag, num_kept, stream);
+    m_gaussians->remove(kept_flag, num_kept, queue.get());
   }
   if (m_gaussians_grad) {
-    m_gaussians_grad->remove(kept_flag, num_kept, stream);
+    m_gaussians_grad->remove(kept_flag, num_kept, queue.get());
   }
   if (m_optimizer) {
     m_optimizer->remove(kept_flag, num_kept, queue);

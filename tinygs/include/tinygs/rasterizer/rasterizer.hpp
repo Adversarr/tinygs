@@ -13,7 +13,7 @@ namespace tinygs {
 /// Lifecycle: Owned by the Orchestrator.  Fields are populated before calling forward(),
 /// and gradient fields before calling backward().
 ///
-/// Thread-safety: Not thread-safe.  All CUDA work is serialized on `stream`.
+/// Thread-safety: Not thread-safe. All backend work is serialized on `queue`.
 struct RasterizeContext {
   /// @brief When true, the backward pass also computes gradients w.r.t. camera
   ///        intrinsics (K) and extrinsics (w2c) in `grad_input`.
@@ -23,13 +23,10 @@ struct RasterizeContext {
   ///        for back-propagation, reducing memory usage during inference.
   bool inference = false;
 
-  /// @brief Backend stream on which all forward/backward kernels are launched.
-  BackendStream stream = nullptr;
-
   /// @brief Backend runtime for buffer allocation and memory operations.
   std::shared_ptr<BackendRuntime> runtime;
 
-  /// @brief Backend queue used for buffer operations matching the stream.
+  /// @brief Backend queue used for ordered buffer operations and kernel launches.
   std::shared_ptr<BackendQueue> queue;
 
   /// @brief Global gradient scaler applied during backward pass to stabilize
@@ -84,7 +81,7 @@ struct RasterizerParams {
 ///   - `backward()` reads `ctx.grad_output` and fills `ctx.grad_input` +
 ///     `ctx.gaussians_grad`.  It must be called on the same context that was
 ///     last passed to `forward()`.
-///   - All CUDA work is enqueued on `ctx.stream`.
+///   - All backend work is enqueued on `ctx.queue`.
 class RasterizerBase {
 public:
   explicit RasterizerBase(std::shared_ptr<BackendRuntime> runtime);

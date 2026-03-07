@@ -74,7 +74,7 @@ public:
    * - Uses optimized vectorized conversion (packed4) when total elements are divisible by 4
    * - Requires matching image shapes between source and destination (throws on mismatch)
    *
-   * @param stream CUDA stream to use for asynchronous transfer operations
+  * @param queue Queue used for ordered transfer operations
    * @param gpu_data Destination GPU image data structure (must be pre-allocated)
    * @param host_data Source host image data structure containing the data to transfer
    *
@@ -85,7 +85,7 @@ public:
    * @note When data types differ, assumes host data is UInt8 and converts to float on GPU
    * @note Uses internal buffer (m_raw_data) for intermediate storage during type conversion
    */
-  void transfer_gpu(BackendStream stream, const Image& gpu_data, const Image& host_data);
+  void transfer_gpu(const BackendQueue* queue, const Image& gpu_data, const Image& host_data);
 
   void transfer_gpu(const Image &gpu_data, const Image &host_data);
 

@@ -86,11 +86,11 @@ struct GaussianOptimizationParams {
 ///
 /// Contract:
 ///   - Constructed with shared pointers to the Gaussian data and its gradient buffer.
-///   - `step(scale, stream)` reads gradients, updates parameters, and clears grad state
+///   - `step(scale, queue)` reads gradients, updates parameters, and clears grad state
 ///     internally.  `scale` includes both inverse-grad-scaler and 1/accumulation_steps.
 ///   - `remove()` / `duplicate()` / `reorder()` update internal momentum buffers to
 ///     stay consistent after the Strategy adds or removes Gaussians.
-///   - All CUDA work is enqueued on the provided `stream`.
+///   - All GPU work is enqueued on the provided `queue`.
 ///
 /// Implementations: "adam" and "adam_per_gaussian". AdamW behavior is enabled
 /// via parameter `decouple_decay=true`.
@@ -121,11 +121,11 @@ public:
 
   /// @brief Perform one optimization step.
   /// @param scale Combined scale factor: `(1 / grad_scaler) / accumulate_grad_steps`.
-  /// @param stream CUDA stream for all kernels.
-  virtual void step(float scale, BackendStream stream) = 0;
+  /// @param queue Queue for all kernels launched during the step.
+  virtual void step(float scale, const BackendQueue* queue) = 0;
 
   /// @brief Perform one optimization step with per-group update/scale controls.
-  virtual void step(const GroupStepConfig& step_config, BackendStream stream);
+  virtual void step(const GroupStepConfig& step_config, const BackendQueue* queue);
 
   /// @brief Reset all internal momentum / variance buffers (e.g. after reinit).
   virtual void reset(const std::shared_ptr<BackendQueue>& queue);

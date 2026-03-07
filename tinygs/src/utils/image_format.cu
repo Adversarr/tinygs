@@ -1,6 +1,7 @@
 #include "tinygs/utils/image_format.hpp"
 #include "tinygs/common.hpp"
 #include "tinygs/cuda/common_device.cuh"
+#include "tinygs/cuda/common_host.hpp"
 #include <cuda_fp16.h>
 #include <stdexcept>
 
@@ -49,12 +50,12 @@ __global__ void float_to_half_kernel(int n, const float *src, float16_t *dst) {
   dst_half[idx] = __float2half(src[idx]);
 }
 
-void half_to_float_gpu(float* dst, const float16_t* src, int n, BackendStream stream) {
-    linear_kernel(half_to_float_kernel, 0, stream, n, src, dst);
+void half_to_float_gpu(float* dst, const float16_t* src, int n, const BackendQueue* queue) {
+  linear_kernel(half_to_float_kernel, 0, to_cuda_stream(queue), n, src, dst);
 }
 
-void float_to_half_gpu(float16_t* dst, const float* src, int n, BackendStream stream) {
-    linear_kernel(float_to_half_kernel, 0, stream, n, src, dst);
+void float_to_half_gpu(float16_t* dst, const float* src, int n, const BackendQueue* queue) {
+  linear_kernel(float_to_half_kernel, 0, to_cuda_stream(queue), n, src, dst);
 }
 
 } // namespace tinygs

@@ -124,7 +124,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
     // Copy host memory to device memory
     cudaMemcpyAsync(thrust::raw_pointer_cast(m_impl->device_block.data()), m_impl->host_block,
                     sizeof(PoseBlock), cudaMemcpyHostToDevice,
-                    ctx.stream);
+                    to_cuda_stream(ctx.queue));
 
     auto per_primitive_buffers_func = [this](size_t size) -> char * {
       return m_impl->alloc("per_primitive_buffers", size);
@@ -196,7 +196,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
               /* cy */ cy,
               /* near */ ctx.fwd_input.near,
               /* far */ ctx.fwd_input.far,
-              /* major_stream */ ctx.stream,
+              /* major_stream */ to_cuda_stream(ctx.queue),
               /* helper_stream */ m_impl->helper_stream,
               /* zero_copy */ m_impl->zero_copy,
               /* memset_per_tile_done */ m_impl->memset_per_tile_done,
@@ -246,7 +246,7 @@ void FastGSRasterizer::forward(const RasterizeContext& ctx) {
               /* cy */ cy,
               /* near */ ctx.fwd_input.near,
               /* far */ ctx.fwd_input.far,
-              /* major_stream */ ctx.stream,
+              /* major_stream */ to_cuda_stream(ctx.queue),
               /* helper_stream */ m_impl->helper_stream,
               /* zero_copy */ m_impl->zero_copy,
               /* memset_per_tile_done */ m_impl->memset_per_tile_done,
@@ -353,7 +353,7 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
       /* fy */ fy,
       /* cx */ cx,
       /* cy */ cy,
-      /* stream */ ctx.stream
+      /* stream */ to_cuda_stream(ctx.queue)
     );
   } else {
     CUDA_CHECK_THROW(cudaStreamSynchronize(m_impl->helper_stream)); // ensure forward's preparing is done.
@@ -400,7 +400,7 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
       /* fy */ fy,
       /* cx */ cx,
       /* cy */ cy,
-      /* stream */ ctx.stream
+      /* stream */ to_cuda_stream(ctx.queue)
     );
   }
 
@@ -410,9 +410,9 @@ void FastGSRasterizer::backward(RasterizeContext &ctx) {
     thrust::raw_pointer_cast(m_impl->device_block.data()),
     m_impl->device_block.size() * sizeof(PoseBlock),
     cudaMemcpyDeviceToHost,
-    ctx.stream
+    to_cuda_stream(ctx.queue)
   ));
-  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
   ctx.grad_input.w2c = glm::transpose(m_impl->host_block->w2c_grad);
 }

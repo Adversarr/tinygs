@@ -763,7 +763,7 @@ struct FusedSSIMLoss::Impl {
   std::shared_ptr<BackendBuffer> dm_dsigma1_sq;
   std::shared_ptr<BackendBuffer> dm_dsigma12;
 
-  void ensure(size_t total, BackendStream stream) {
+  void ensure(size_t total) {
     if (!dm_dmu1 || buffer_count<float>(dm_dmu1) < total) {
       dm_dmu1 = create_device_buffer_for<float>(runtime, total, "fused_ssim_dm_dmu1");
     }
@@ -803,7 +803,7 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               /*batch_size*/ 1);
     dim3 block(BLOCK_X, BLOCK_Y);
     int total = ctx.pred.shape.padded_size();   // physical
-    m_impl->ensure(total, ctx.stream);
+    m_impl->ensure(total);
     const float actual_scale = scale / ctx.pred.shape.size(); // normalize by element count
 
     if (data_type == DataType::Float32) {
@@ -818,7 +818,7 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
           nvtx3::event_attributes attr(msg, nvtx3::payload{total});
           range range(attr);
 
-          fused_ssim_cuda_fp32<<<grid, block, 0, ctx.stream>>>(
+          fused_ssim_cuda_fp32<<<grid, block, 0, to_cuda_stream(ctx.queue)>>>(
               H, W, m_c1, m_c2, actual_scale,
               pred,
               targ,
@@ -826,14 +826,14 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               buffer_data<float>(m_impl->dm_dmu1),
               buffer_data<float>(m_impl->dm_dsigma1_sq),
               buffer_data<float>(m_impl->dm_dsigma12));
-          tinygs::maybe_sync(ctx.stream);
+          tinygs::maybe_sync(to_cuda_stream(ctx.queue));
         }
         {
           auto msg = regstr::get<m_fused_ssim_bwd>();
           nvtx3::event_attributes attr(msg, nvtx3::payload{total});
           range range(attr);
 
-          fused_ssim_fp32_backward<<<grid, block, 0, ctx.stream>>>(
+          fused_ssim_fp32_backward<<<grid, block, 0, to_cuda_stream(ctx.queue)>>>(
               H, W,
               actual_scale,
               pred,
@@ -842,19 +842,19 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               buffer_data<float>(m_impl->dm_dmu1),
               buffer_data<float>(m_impl->dm_dsigma1_sq),
               buffer_data<float>(m_impl->dm_dsigma12));
-          tinygs::maybe_sync(ctx.stream);
+          tinygs::maybe_sync(to_cuda_stream(ctx.queue));
         }
       } else {
         auto msg = regstr::get<m_fused_ssim_fwd>();
         nvtx3::event_attributes attr(msg, nvtx3::payload{total});
         range range(attr);
-        fused_ssim_cuda_fp32<<<grid, block, 0, ctx.stream>>>(
+        fused_ssim_cuda_fp32<<<grid, block, 0, to_cuda_stream(ctx.queue)>>>(
             H, W, m_c1, m_c2, actual_scale,
             pred,
             targ,
             loss,
             nullptr, nullptr, nullptr);
-        tinygs::maybe_sync(ctx.stream);
+        tinygs::maybe_sync(to_cuda_stream(ctx.queue));
       }
     } else if (data_type == DataType::Float16) {
       const __half* pred = static_cast<const __half*>(ctx.pred.data);
@@ -868,7 +868,7 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
           nvtx3::event_attributes attr(msg, nvtx3::payload{total});
           range range(attr);
 
-          fused_ssim_cuda_fp16<<<grid, block, 0, ctx.stream>>>(
+          fused_ssim_cuda_fp16<<<grid, block, 0, to_cuda_stream(ctx.queue)>>>(
               H, W, m_c1, m_c2, actual_scale,
               pred,
               targ,
@@ -876,14 +876,14 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               buffer_data<float>(m_impl->dm_dmu1),
               buffer_data<float>(m_impl->dm_dsigma1_sq),
               buffer_data<float>(m_impl->dm_dsigma12));
-          tinygs::maybe_sync(ctx.stream);
+          tinygs::maybe_sync(to_cuda_stream(ctx.queue));
         }
         {
           auto msg = regstr::get<m_fused_ssim_bwd>();
           nvtx3::event_attributes attr(msg, nvtx3::payload{total});
           range range(attr);
 
-          fused_ssim_fp16_backward<<<grid, block, 0, ctx.stream>>>(
+          fused_ssim_fp16_backward<<<grid, block, 0, to_cuda_stream(ctx.queue)>>>(
               H, W,
               actual_scale,
               pred,
@@ -892,19 +892,19 @@ void FusedSSIMLoss::evaluate(LossContext ctx, float scale) {
               buffer_data<float>(m_impl->dm_dmu1),
               buffer_data<float>(m_impl->dm_dsigma1_sq),
               buffer_data<float>(m_impl->dm_dsigma12));
-          tinygs::maybe_sync(ctx.stream);
+          tinygs::maybe_sync(to_cuda_stream(ctx.queue));
         }
       } else {
         auto msg = regstr::get<m_fused_ssim_fwd>();
         nvtx3::event_attributes attr(msg, nvtx3::payload{total});
         range range(attr);
-        fused_ssim_cuda_fp16<<<grid, block, 0, ctx.stream>>>(
+        fused_ssim_cuda_fp16<<<grid, block, 0, to_cuda_stream(ctx.queue)>>>(
             H, W, m_c1, m_c2, actual_scale,
             pred,
             targ,
             loss,
             nullptr, nullptr, nullptr);
-        tinygs::maybe_sync(ctx.stream);
+        tinygs::maybe_sync(to_cuda_stream(ctx.queue));
       }
     } else {
       throw std::runtime_error("FusedSSIMLoss: unsupported data type");

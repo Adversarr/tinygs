@@ -284,8 +284,8 @@ void GPUGaussian3d::copy_to_host(Gaussian3d& gaussians, const std::shared_ptr<Ba
   detail::throw_if_status_error(m_runtime->synchronize_queue(queue), "GPUGaussian3d::copy_to_host sync");
 }
 
-void GPUGaussian3d::memset_async(char value, BackendStream stream) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+void GPUGaussian3d::memset_async(char value, const BackendQueue* queue) {
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   if (m_means && m_means->size_bytes() > 0)
     CUDA_CHECK_THROW(cudaMemsetAsync(buffer_data<void>(m_means), value, m_means->size_bytes(), cuda_stream));
   if (m_opacities && m_opacities->size_bytes() > 0)
@@ -387,12 +387,12 @@ static void gather_soa_sh(
     std::shared_ptr<BackendBuffer>& dst,
     const IndexType* mapping,
     int new_N, int old_N, int num_coeffs,
-    BackendStream stream = nullptr) {
+  const BackendQueue* queue = nullptr) {
   if (num_coeffs == 0 || new_N == 0) {
     dst = create_device_buffer_for<float>(runtime, num_coeffs * 3 * new_N, "sh_gather");
     return;
   }
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   dst = create_device_buffer_for<float>(runtime, num_coeffs * 3 * new_N, "sh_gather");
   int total = new_N * num_coeffs * 3;
   int blocks = (total + 255) / 256;
@@ -403,8 +403,8 @@ static void gather_soa_sh(
       new_N, old_N, num_coeffs);
 }
 
-void GPUGaussian3d::remove(char* kept_flag, int num_kept, BackendStream stream) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+void GPUGaussian3d::remove(char* kept_flag, int num_kept, const BackendQueue* queue) {
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   size_t original_size = size();
   
   auto mapping = create_device_buffer_for<int>(m_runtime, original_size, "remove_mapping");
@@ -436,10 +436,10 @@ void GPUGaussian3d::remove(char* kept_flag, int num_kept, BackendStream stream) 
       num_kept);
 
   std::shared_ptr<BackendBuffer> sh0_new, sh1_new, sh2_new, sh3_new;
-  gather_soa_sh(m_runtime, m_sh0, sh0_new, d_mapping, num_kept, (int)original_size, 1, stream);
-  gather_soa_sh(m_runtime, m_sh1, sh1_new, d_mapping, num_kept, (int)original_size, 3, stream);
-  gather_soa_sh(m_runtime, m_sh2, sh2_new, d_mapping, num_kept, (int)original_size, 5, stream);
-  gather_soa_sh(m_runtime, m_sh3, sh3_new, d_mapping, num_kept, (int)original_size, 7, stream);
+  gather_soa_sh(m_runtime, m_sh0, sh0_new, d_mapping, num_kept, (int)original_size, 1, queue);
+  gather_soa_sh(m_runtime, m_sh1, sh1_new, d_mapping, num_kept, (int)original_size, 3, queue);
+  gather_soa_sh(m_runtime, m_sh2, sh2_new, d_mapping, num_kept, (int)original_size, 5, queue);
+  gather_soa_sh(m_runtime, m_sh3, sh3_new, d_mapping, num_kept, (int)original_size, 7, queue);
 
   m_means = std::move(new_means);
   m_opacities = std::move(new_opacities);
@@ -515,8 +515,8 @@ static void copy_sh_async(
     std::shared_ptr<BackendBuffer>& dst,
     const std::shared_ptr<BackendBuffer>& src,
     const std::shared_ptr<BackendRuntime>& runtime,
-    BackendStream stream) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+    const BackendQueue* queue) {
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   if (!src || src->size_bytes() == 0) {
     dst.reset();
     return;
@@ -546,8 +546,8 @@ static void copy_sh_sync(
       cudaMemcpyDeviceToDevice));
 }
 
-std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(BackendStream stream) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(const BackendQueue* queue) {
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   auto gaussians = std::make_unique<GPUGaussian3d>(m_runtime);
   gaussians->m_current_sh_degree = m_current_sh_degree;
   gaussians->m_scene_scale = m_scene_scale;
@@ -577,10 +577,10 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(BackendStream stream) 
         m_scales->size_bytes(), cudaMemcpyDeviceToDevice, cuda_stream));
   }
 
-  copy_sh_async(gaussians->m_sh0, m_sh0, m_runtime, stream);
-  copy_sh_async(gaussians->m_sh1, m_sh1, m_runtime, stream);
-  copy_sh_async(gaussians->m_sh2, m_sh2, m_runtime, stream);
-  copy_sh_async(gaussians->m_sh3, m_sh3, m_runtime, stream);
+  copy_sh_async(gaussians->m_sh0, m_sh0, m_runtime, queue);
+  copy_sh_async(gaussians->m_sh1, m_sh1, m_runtime, queue);
+  copy_sh_async(gaussians->m_sh2, m_sh2, m_runtime, queue);
+  copy_sh_async(gaussians->m_sh3, m_sh3, m_runtime, queue);
 
   return gaussians;
 }
@@ -623,12 +623,12 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
   return gaussians;
 }
 
-std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(BackendStream stream) {
+std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(const BackendQueue* queue) {
   NVTX3_FUNC_RANGE();
   const uint n = static_cast<uint>(size());
   if (n == 0) return nullptr;
 
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   const vec3* positions = buffer_data_const<vec3>(m_means);
 
   auto idx_in_buf = create_device_buffer_for<uint>(m_runtime, n, "morton_idx_in");
@@ -704,10 +704,10 @@ std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(Backe
   return idx_out_buf;
 }
 
-void GPUGaussian3d::reorder(uint* indices, BackendStream stream) {
+void GPUGaussian3d::reorder(uint* indices, const BackendQueue* queue) {
   NVTX3_FUNC_RANGE();
   const int N = static_cast<int>(size());
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
 
   auto new_means = create_device_buffer_for<vec3>(m_runtime, N, "means");
   auto new_opacities = create_device_buffer_for<float>(m_runtime, N, "opacities");
@@ -727,10 +727,10 @@ void GPUGaussian3d::reorder(uint* indices, BackendStream stream) {
       indices, N);
 
   std::shared_ptr<BackendBuffer> sh0_new, sh1_new, sh2_new, sh3_new;
-  gather_soa_sh(m_runtime, m_sh0, sh0_new, indices, N, N, 1, stream);
-  gather_soa_sh(m_runtime, m_sh1, sh1_new, indices, N, N, 3, stream);
-  gather_soa_sh(m_runtime, m_sh2, sh2_new, indices, N, N, 5, stream);
-  gather_soa_sh(m_runtime, m_sh3, sh3_new, indices, N, N, 7, stream);
+  gather_soa_sh(m_runtime, m_sh0, sh0_new, indices, N, N, 1, queue);
+  gather_soa_sh(m_runtime, m_sh1, sh1_new, indices, N, N, 3, queue);
+  gather_soa_sh(m_runtime, m_sh2, sh2_new, indices, N, N, 5, queue);
+  gather_soa_sh(m_runtime, m_sh3, sh3_new, indices, N, N, 7, queue);
 
   m_means = std::move(new_means);
   m_opacities = std::move(new_opacities);
@@ -757,10 +757,10 @@ std::shared_ptr<BackendBuffer> reorder_densification_info(
     const uint* indices,
     size_t n,
     const std::shared_ptr<BackendRuntime>& runtime,
-    BackendStream stream) {
+  const BackendQueue* queue) {
   if (!info || n == 0) return nullptr;
 
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   auto new_info = create_device_buffer_for<DensificationInfo>(runtime, n, "densification_reorder");
 
   const int grid = (static_cast<int>(n) + 255) / 256;

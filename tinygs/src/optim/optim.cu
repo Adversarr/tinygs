@@ -89,7 +89,7 @@ float OptimizerBase::get_lr(OptimParamGroup group) const {
   return m_global_lr;
 }
 
-void OptimizerBase::step(const GroupStepConfig& step_config, BackendStream stream) {
+void OptimizerBase::step(const GroupStepConfig& step_config, const BackendQueue* queue) {
   if (!step_config.any_update()) {
     return;
   }
@@ -103,7 +103,7 @@ void OptimizerBase::step(const GroupStepConfig& step_config, BackendStream strea
       std::fabs(step_config.scales_scale - s) > tol || std::fabs(step_config.rotations_scale - s) > tol) {
     throw std::runtime_error("This optimizer requires equal per-group scales when using grouped step().");
   }
-  step(s, stream);
+  step(s, queue);
 }
 
 void OptimizerBase::reset(const std::shared_ptr<BackendQueue>& queue) {

@@ -1,13 +1,12 @@
 #pragma once
 
 #include "tinygs/core/image.hpp"
-#include "tinygs/platform/backend_types.hpp"
+#include "tinygs/platform/runtime.hpp"
 #include <memory>
 
 namespace tinygs {
 
 class BackendRuntime;
-class BackendBuffer;
 
 /// @brief Shared context for loss computation.
 ///
@@ -20,7 +19,7 @@ struct LossContext {
   Image target;                  ///< Ground-truth image          [read-only]
   Image loss;                    ///< Per-pixel loss buffer       [read-write, accumulated]
   Image grad;                    ///< dL/d(pred) gradient buffer  [read-write, accumulated]
-  BackendStream stream = nullptr; ///< Backend stream for all kernels
+  std::shared_ptr<BackendQueue> queue; ///< Execution queue for all kernels
 };
 
 /// @brief Abstract base class for per-pixel loss functions.

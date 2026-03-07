@@ -72,7 +72,7 @@ struct OrchestratorConfig {
 
   // CUDA debugging
   bool debug_cuda_check_each_stage = false;  ///< Check CUDA error state after each train_step stage
-  bool debug_cuda_sync_each_stage = false;   ///< Synchronize stream after each train_step stage
+  bool debug_cuda_sync_each_stage = false;   ///< Synchronize queue after each train_step stage
   size_t debug_cuda_check_every = 0;         ///< Check cadence in steps (0 = disabled)
   bool debug_cuda_log_each_stage = false;    ///< Log stage names when debug checks run
 
@@ -268,9 +268,6 @@ private:
   std::shared_ptr<BackendBuffer> m_image_grad_buffer;
   RasterizeContext m_rasterize_ctx;
   LossContext m_loss_ctx;
-
-  // Backend stream for training, do not block.
-  BackendStream m_major_stream = nullptr;
 
   // Active render/loss data type used for buffers
   DataType m_active_data_type = DataType::Float32;

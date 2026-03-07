@@ -5,7 +5,6 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
-#include <type_traits>
 
 #include "tinygs/common.hpp"
 
@@ -16,22 +15,6 @@ enum class BackendType : uint8_t {
   Cuda = 0,
   Hip = 1,
   Metal = 2,
-};
-
-/// Opaque native stream handle passed through backend-neutral APIs.
-struct BackendStream {
-  void* handle = nullptr;
-
-  constexpr BackendStream() = default;
-  constexpr BackendStream(std::nullptr_t) : handle(nullptr) {}
-  constexpr BackendStream(void* stream_handle) : handle(stream_handle) {}
-
-  template <typename PointerType, typename = std::enable_if_t<std::is_pointer_v<PointerType>>>
-  operator PointerType() const {
-    return reinterpret_cast<PointerType>(handle);
-  }
-
-  explicit operator bool() const noexcept { return handle != nullptr; }
 };
 
 inline std::string to_string(BackendType type) {

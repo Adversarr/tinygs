@@ -124,7 +124,7 @@ void L1Loss::evaluate(LossContext ctx, float scale) {
   const float actual_scale = scale / nelem;
 
   if (data_type == DataType::Float32) {
-    linear_kernel(l1_kernel_f32, 0, ctx.stream, n,
+    linear_kernel(l1_kernel_f32, 0, to_cuda_stream(ctx.queue), n,
       static_cast<const float*>(ctx.pred.data),
       static_cast<const float*>(ctx.target.data),
       static_cast<float*>(ctx.loss.data),
@@ -133,14 +133,14 @@ void L1Loss::evaluate(LossContext ctx, float scale) {
   } else if (data_type == DataType::Float16) {
     if ((n & 1) == 0) {
       // Use half2 SIMD when the element count is divisible by 2
-      linear_kernel(l1_kernel_f16_h2, 0, ctx.stream, n / 2,
+      linear_kernel(l1_kernel_f16_h2, 0, to_cuda_stream(ctx.queue), n / 2,
         reinterpret_cast<const __half2*>(ctx.pred.data),
         reinterpret_cast<const __half2*>(ctx.target.data),
         reinterpret_cast<__half2*>(ctx.loss.data),
         reinterpret_cast<__half2*>(ctx.grad.data),
         actual_scale);
     } else {
-      linear_kernel(l1_kernel_f16, 0, ctx.stream, n,
+      linear_kernel(l1_kernel_f16, 0, to_cuda_stream(ctx.queue), n,
         static_cast<const half*>(ctx.pred.data),
         static_cast<const half*>(ctx.target.data),
         static_cast<half*>(ctx.loss.data),
@@ -150,7 +150,7 @@ void L1Loss::evaluate(LossContext ctx, float scale) {
   } else {
     throw std::runtime_error("L1Loss: only float32 is supported");
   }
-  tinygs::maybe_sync(ctx.stream);
+  tinygs::maybe_sync(to_cuda_stream(ctx.queue));
 }
 
 } // namespace tinygs

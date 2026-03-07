@@ -23,7 +23,7 @@ Sample from a categorical distribution based on weights.
 /// @param K Number of categories
 /// @param num_samples Number of samples to draw
 /// @param seed Random seed
-/// @param stream CUDA stream
+/// @param queue Execution queue
 /// @return Buffer of sampled indices
 GPUBuffer<int> multinomial_cuda_with_replacement(
     const float* d_weights,
@@ -43,7 +43,7 @@ GPUBuffer<int> multinomial_cuda_with_replacement(
 /// @param K Number of categories
 /// @param num_samples Number of samples (must be <= K)
 /// @param seed Random seed
-/// @param stream CUDA stream
+/// @param queue Execution queue
 /// @return Buffer of sampled indices
 GPUBuffer<int> multinomial_cuda_cpu_without_replacement(
     const float* d_weights,

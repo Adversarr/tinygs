@@ -31,7 +31,7 @@
 
 #include <functional>
 #include <tinygs/common.hpp>
-#include <tinygs/platform/backend_types.hpp>
+#include <tinygs/platform/runtime.hpp>
 // #include <tinygs/cpp_api.h>
 
 #include <cuda_runtime.h>
@@ -274,12 +274,12 @@ private:
 	std::function<void()> m_callback;
 };
 
-inline cudaStream_t to_cuda_stream(BackendStream stream) {
-  return reinterpret_cast<cudaStream_t>(stream.handle);
+inline cudaStream_t to_cuda_stream(const BackendQueue* queue) {
+	return queue ? reinterpret_cast<cudaStream_t>(queue->native_handle()) : nullptr;
 }
 
-inline BackendStream to_backend_stream(cudaStream_t stream) {
-  return BackendStream{reinterpret_cast<void*>(stream)};
+inline cudaStream_t to_cuda_stream(const std::shared_ptr<BackendQueue>& queue) {
+	return to_cuda_stream(queue.get());
 }
 
 #if defined(__CUDACC__) || (defined(__clang__) && defined(__CUDA__))

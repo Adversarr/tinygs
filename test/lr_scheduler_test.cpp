@@ -11,13 +11,13 @@ class MockOptimizer : public OptimizerBase {
 public:
     MockOptimizer() : OptimizerBase(nullptr, nullptr, nullptr) {}
     
-    void step(float scale, BackendStream stream) override { 
+    void step(float scale, const BackendQueue* queue) override { 
         (void)scale; 
-        (void)stream;
+        (void)queue;
     }
-    void step(const GroupStepConfig& step_config, BackendStream stream) override {
+    void step(const GroupStepConfig& step_config, const BackendQueue* queue) override {
         (void)step_config;
-        (void)stream;
+        (void)queue;
     }
     void reset(int* indices, int num_reset) override { 
         (void)indices;

@@ -12,8 +12,8 @@ public:
   ~SimpleDataLoader() = default;
 
   /// @brief Get next batch from dataset
-  /// @param stream CUDA stream for data transfer
-  GPUBatchInputOutput next(BackendStream stream);
+  /// @param queue Queue used for data transfer
+  GPUBatchInputOutput next(const BackendQueue* queue);
   GPUBatchInputOutput next() override;
 
   /// Set the parameters for the dataloader.

@@ -39,7 +39,7 @@ static void reset_opacity_absgs(const std::shared_ptr<GPUGaussian3d>& gaussians,
 
 void AbsGSStrategy::step_impl(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  CUDA_CHECK_THROW(cudaStreamSynchronize(ctx.stream));
+  CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
@@ -63,7 +63,7 @@ void AbsGSStrategy::step_impl(const RasterizeContext& ctx) {
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&
       step >= m_params.start_refine && step < m_params.end_refine) {
-    reset_opacity_absgs(m_gaussians, 2.f * m_params.pruning_opacity_threshold, ctx.stream);
+    reset_opacity_absgs(m_gaussians, 2.f * m_params.pruning_opacity_threshold, to_cuda_stream(ctx.queue));
     on_reset_opacity(ctx.queue);
   }
 }
@@ -74,7 +74,7 @@ void AbsGSStrategy::reset() {
 
 void AbsGSStrategy::duplicate(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   auto num_gaussians = m_gaussians->size();
 
   if (!ctx.densification_info || buffer_count<DensificationInfo>(ctx.densification_info) != num_gaussians) {
@@ -237,7 +237,7 @@ void AbsGSStrategy::duplicate(const RasterizeContext& ctx) {
 
 void AbsGSStrategy::prune(const RasterizeContext& ctx) {
   NVTX3_FUNC_RANGE();
-  auto exec = thrust::cuda::par.on(ctx.stream);
+  auto exec = thrust::cuda::par.on(to_cuda_stream(ctx.queue));
   const auto num_gaussians = m_gaussians->size();
   const int original_num_gaussians = buffer_count<DensificationInfo>(ctx.densification_info);
   const auto abs_ss_threshold = max(ctx.fwd_input.width, ctx.fwd_input.height) * m_params.max_screen_size;

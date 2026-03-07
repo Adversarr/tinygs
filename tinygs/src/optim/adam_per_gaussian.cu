@@ -204,16 +204,16 @@ struct m_step {
   static constexpr char const* message{"adam_per_gaussian_step"};
 };
 
-void AdamPerGaussian::step(float scale, BackendStream stream) {
+void AdamPerGaussian::step(float scale, const BackendQueue* queue) {
   if (m_adam_params.decouple_decay) {
-    step_adamw(scale, stream);
+    step_adamw(scale, queue);
   } else {
-    step_adam(scale, stream);
+    step_adam(scale, queue);
   }
 }
 
-void AdamPerGaussian::step(const GroupStepConfig& step_config, BackendStream stream) {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+void AdamPerGaussian::step(const GroupStepConfig& step_config, const BackendQueue* queue) {
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   if (!step_config.any_update()) {
     return;
   }
@@ -505,10 +505,10 @@ void AdamPerGaussian::step(const GroupStepConfig& step_config, BackendStream str
     }
   }
 
-  maybe_sync(stream);
+  maybe_sync(cuda_stream);
 }
 
-void AdamPerGaussian::step_adam(float scale, BackendStream stream) {
+void AdamPerGaussian::step_adam(float scale, const BackendQueue* queue) {
   GroupStepConfig step_config;
   step_config.update_means = true;
   step_config.update_shs = true;
@@ -520,10 +520,10 @@ void AdamPerGaussian::step_adam(float scale, BackendStream stream) {
   step_config.opacities_scale = scale;
   step_config.scales_scale = scale;
   step_config.rotations_scale = scale;
-  step(step_config, stream);
+  step(step_config, queue);
 }
 
-void AdamPerGaussian::step_adamw(float scale, BackendStream stream) {
+void AdamPerGaussian::step_adamw(float scale, const BackendQueue* queue) {
   NVTX3_FUNC_RANGE();
   GroupStepConfig step_config;
   step_config.update_means = true;
@@ -536,7 +536,7 @@ void AdamPerGaussian::step_adamw(float scale, BackendStream stream) {
   step_config.opacities_scale = scale;
   step_config.scales_scale = scale;
   step_config.rotations_scale = scale;
-  step(step_config, stream);
+  step(step_config, queue);
 }
 
 AdamPerGaussian::AdamPerGaussian(std::shared_ptr<BackendRuntime> runtime,

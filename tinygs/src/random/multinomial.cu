@@ -75,9 +75,9 @@ std::shared_ptr<BackendBuffer> multinomial_cuda_with_replacement(
   int K, 
   int num_samples, 
   int seed,
-  BackendStream stream)
+  const BackendQueue* queue)
 {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   if (K <= 0 || num_samples <= 0) {
       throw std::runtime_error(fmt::format("Invalid K={} or num_samples={}", K, num_samples));
   }
@@ -171,9 +171,9 @@ std::shared_ptr<BackendBuffer> multinomial_cuda_cpu(
   int K,
   int num_samples,
   int seed,
-  BackendStream stream)
+  const BackendQueue* queue)
 {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   std::vector<float> h_weights(K);
   CUDA_CHECK_THROW(cudaMemcpyAsync(h_weights.data(), d_weights, sizeof(float) * K, cudaMemcpyDeviceToHost, cuda_stream));
   CUDA_CHECK_THROW(cudaStreamSynchronize(cuda_stream));
@@ -240,9 +240,9 @@ std::shared_ptr<BackendBuffer> multinomial_cuda_cpu_without_replacement(
   int K,
   int num_samples,
   int seed,
-  BackendStream stream)
+  const BackendQueue* queue)
 {
-  const cudaStream_t cuda_stream = to_cuda_stream(stream);
+  const cudaStream_t cuda_stream = to_cuda_stream(queue);
   if (K <= 0 || num_samples <= 0) {
     throw std::runtime_error(fmt::format("Invalid K={} or num_samples={}", K, num_samples));
   }
