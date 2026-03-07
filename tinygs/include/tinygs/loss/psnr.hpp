@@ -9,7 +9,7 @@ namespace tinygs {
 /// @brief Peak Signal-to-Noise Ratio metric
 class PsnrMetric : public MetricBase {
 public:
-  explicit PsnrMetric(std::shared_ptr<BackendRuntime> runtime);
+  explicit PsnrMetric(BackendRuntime& runtime);
   ~PsnrMetric() override;
 
   /// @brief Evaluate PSNR metric

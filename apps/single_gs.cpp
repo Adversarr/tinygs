@@ -98,9 +98,9 @@ int main(int argc, char** argv) {
     }
   };
 
-  auto gpu_gaussian = std::make_shared<GPUGaussian3d>(runtime);
+  auto gpu_gaussian = std::make_shared<GPUGaussian3d>(*runtime);
   gpu_gaussian->set_sh_degree(3);
-  gpu_gaussian->copy_from_host_async(gaussian, queue);
+  gpu_gaussian->copy_from_host_async(gaussian, queue.get());
 
   int width = 480;
   int height = 360;
@@ -201,12 +201,12 @@ int main(int argc, char** argv) {
   params.fwd_input = io.input;
   params.fwd_output = io.output;
 
-  params.runtime = runtime;
-  params.queue = queue;
+  params.runtime = runtime.get();
+  params.queue = queue.get();
   params.densification_info = tinygs::create_device_buffer_for<DensificationInfo>(
       *params.runtime, gpu_gaussian->size(), "densification_info");
 
-  auto rast = create_rasterizer(rasterizer, runtime);
+  auto rast = create_rasterizer(rasterizer, *runtime);
   rast->set_gaussians(gpu_gaussian);
   params.fwd_input = io.input;
   params.fwd_output = io.output;
@@ -255,7 +255,7 @@ int main(int argc, char** argv) {
   }
 
   auto eval_scalar_loss = [&](const Gaussian3d& g) -> double {
-    gpu_gaussian->copy_from_host_async(g, queue);
+    gpu_gaussian->copy_from_host_async(g, queue.get());
     rast->forward(params);
 
     std::vector<float> pred = get_image_as_linear_hwc();
@@ -329,7 +329,7 @@ int main(int argc, char** argv) {
   rast->backward(params);
 
   Gaussian3d gaussian_grad;
-  grad->copy_to_host_async(gaussian_grad, queue);
+  grad->copy_to_host_async(gaussian_grad, queue.get());
   size_t dinfo_count = params.densification_info->size_bytes() / sizeof(DensificationInfo);
   std::vector<DensificationInfo> dinfo(dinfo_count);
   tinygs::copy_to_host_async(*runtime, *queue, params.densification_info, dinfo);
@@ -434,7 +434,7 @@ int main(int argc, char** argv) {
     }
 
     // Restore original parameters on GPU for consistency after checking.
-    gpu_gaussian->copy_from_host_async(gauss_base, queue);
+    gpu_gaussian->copy_from_host_async(gauss_base, queue.get());
 
     size_t count = 0;
     double sum_abs = 0.0;

@@ -297,7 +297,7 @@ struct FastGSStrategy::Impl {
 #define m_pruning_score m_impl->m_pruning_score
 
 FastGSStrategy::FastGSStrategy(
-    std::shared_ptr<BackendRuntime> runtime,
+    BackendRuntime& runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer)
@@ -475,8 +475,8 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   Image gt_image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(gt_gpu.data()));
 
   // Shared loss contexts reused for every camera.
-  L1Loss l1_loss(ctx.runtime);
-  FusedSSIMLoss ssim_loss(ctx.runtime);
+  L1Loss l1_loss(*ctx.runtime);
+  FusedSSIMLoss ssim_loss(*ctx.runtime);
   LossContext l1_ctx;
   l1_ctx.pred = Image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(rendered_f32.data()));
   l1_ctx.target = gt_image;
@@ -560,7 +560,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
     // Transfer GT to GPU
-    m_dataloader->transfer_gpu(ctx.queue.get(), gt_image, data.image);
+    m_dataloader->transfer_gpu(ctx.queue, gt_image, data.image);
     CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
 
     // Convert rendered image to Float32 if needed, then compute metrics in Float32.
@@ -568,7 +568,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
       half_to_float_gpu(thrust::raw_pointer_cast(rendered_f32.data()),
         reinterpret_cast<const float16_t*>(render_ctx.fwd_output.image.data),
         rgb_padded_size,
-        ctx.queue.get());
+        ctx.queue);
     } else {
       CUDA_CHECK_THROW(cudaMemcpyAsync(thrust::raw_pointer_cast(rendered_f32.data()), render_ctx.fwd_output.image.data,
         rgb_padded_size * sizeof(float), cudaMemcpyDeviceToDevice, to_cuda_stream(ctx.queue)));
@@ -1518,7 +1518,7 @@ pruning_scale_threshold = m_params.pruning_scale_threshold,
       num_standard_candidates,
       budget,
       seed,
-      ctx.queue.get());
+      ctx.queue);
 
     // Mark sampled candidates as dead.
     const int actual_prune = static_cast<int>(buffer_count<int>(sampled_positions_buf));

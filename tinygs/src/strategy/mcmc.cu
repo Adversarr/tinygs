@@ -150,7 +150,7 @@ struct MCMCStrategy::Impl {
 };
 
 MCMCStrategy::MCMCStrategy(
-    std::shared_ptr<BackendRuntime> runtime,
+    BackendRuntime& runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer
@@ -235,7 +235,7 @@ void MCMCStrategy::add_new_gs(const RasterizeContext& ctx) {
       num_gaussians,
       num_to_add,
       m_rng.next_uint(),
-      ctx.queue.get()
+      ctx.queue
     );
     const int* sampled_ptr = buffer_data<int>(sampled_idxs_buf);
 
@@ -441,7 +441,7 @@ void MCMCStrategy::relocate(const RasterizeContext& ctx) {
     num_kept,
     num_dead,
     m_rng.next_uint(), // TODO: replace with real seed.
-    ctx.queue.get()
+    ctx.queue
   );
   const int* sampled_local_ptr = buffer_data<int>(sampled_idxs_buf);
   thrust::device_vector<int> sampled_idxs(num_dead);

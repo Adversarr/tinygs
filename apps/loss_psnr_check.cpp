@@ -114,10 +114,10 @@ inline uint32_t tiled_index(const ImageShape& shape, uint32_t c, uint32_t y, uin
 }
 
 inline void synchronize_queue_or_throw(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue* queue,
     const char* op_name) {
-  const auto status = runtime->synchronize_queue(*queue);
+  const auto status = runtime.synchronize_queue(*queue);
   if (!status.ok()) {
     throw std::runtime_error(std::string(op_name) + " failed: " + tinygs::to_string(status));
   }
@@ -359,24 +359,24 @@ std::vector<TestCase> build_test_cases(const ImageShape& shape, uint32_t seed, i
 }
 
 std::vector<float> quantize_to_fp16(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue* queue,
     const std::vector<float>& values) {
   const size_t n = values.size();
 
-  auto input = tinygs::create_device_buffer_for<float>(*runtime, n, "quantize_input");
-  tinygs::copy_from_host_async(*runtime, *queue, input, values);
+  auto input = tinygs::create_device_buffer_for<float>(runtime, n, "quantize_input");
+  tinygs::copy_from_host_async(runtime, *queue, input, values);
 
-  auto fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, n, "quantize_fp16");
+  auto fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, n, "quantize_fp16");
   tinygs::float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(fp16),
-                             tinygs::buffer_data<float>(input), static_cast<int>(n), queue.get());
+                             tinygs::buffer_data<float>(input), static_cast<int>(n), queue);
 
-  auto back = tinygs::create_device_buffer_for<float>(*runtime, n, "quantize_back");
+  auto back = tinygs::create_device_buffer_for<float>(runtime, n, "quantize_back");
   tinygs::half_to_float_gpu(tinygs::buffer_data<float>(back),
-                            tinygs::buffer_data<tinygs::float16_t>(fp16), static_cast<int>(n), queue.get());
+                            tinygs::buffer_data<tinygs::float16_t>(fp16), static_cast<int>(n), queue);
 
   std::vector<float> out(n, 0.0f);
-  tinygs::copy_to_host_async(*runtime, *queue, back, out);
+  tinygs::copy_to_host_async(runtime, *queue, back, out);
   synchronize_queue_or_throw(runtime, queue, "quantize_to_fp16");
   return out;
 }
@@ -562,23 +562,23 @@ LossGradResult compute_ssim_cpu(const std::vector<float>& pred,
 
 template <typename LossOp>
 LossGradResult run_cuda_loss_fp32(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+  BackendQueue* queue,
     const std::vector<float>& pred,
     const std::vector<float>& target,
     const ImageShape& shape,
     float scale) {
   const size_t n = shape.padded_size();
 
-  auto pred_d = tinygs::create_device_buffer_for<float>(*runtime, n, "pred");
-  auto target_d = tinygs::create_device_buffer_for<float>(*runtime, n, "target");
-  auto loss_d = tinygs::create_device_buffer_for<float>(*runtime, n, "loss");
-  auto grad_d = tinygs::create_device_buffer_for<float>(*runtime, n, "grad");
+  auto pred_d = tinygs::create_device_buffer_for<float>(runtime, n, "pred");
+  auto target_d = tinygs::create_device_buffer_for<float>(runtime, n, "target");
+  auto loss_d = tinygs::create_device_buffer_for<float>(runtime, n, "loss");
+  auto grad_d = tinygs::create_device_buffer_for<float>(runtime, n, "grad");
 
-  tinygs::copy_from_host_async(*runtime, *queue, pred_d, pred);
-  tinygs::copy_from_host_async(*runtime, *queue, target_d, target);
-  tinygs::fill_buffer_zero_async(*runtime, *queue, loss_d);
-  tinygs::fill_buffer_zero_async(*runtime, *queue, grad_d);
+  tinygs::copy_from_host_async(runtime, *queue, pred_d, pred);
+  tinygs::copy_from_host_async(runtime, *queue, target_d, target);
+  tinygs::fill_buffer_zero_async(runtime, *queue, loss_d);
+  tinygs::fill_buffer_zero_async(runtime, *queue, grad_d);
 
   LossContext ctx;
   ctx.pred = Image(shape, DataType::Float32, tinygs::buffer_data<float>(pred_d));
@@ -593,38 +593,38 @@ LossGradResult run_cuda_loss_fp32(
   LossGradResult out;
   out.loss.assign(n, 0.0f);
   out.grad.assign(n, 0.0f);
-  tinygs::copy_to_host_async(*runtime, *queue, loss_d, out.loss);
-  tinygs::copy_to_host_async(*runtime, *queue, grad_d, out.grad);
+  tinygs::copy_to_host_async(runtime, *queue, loss_d, out.loss);
+  tinygs::copy_to_host_async(runtime, *queue, grad_d, out.grad);
   synchronize_queue_or_throw(runtime, queue, "run_cuda_loss_fp32");
   return out;
 }
 
 template <typename LossOp>
 LossGradResult run_cuda_loss_fp16(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+  BackendQueue* queue,
     const std::vector<float>& pred,
     const std::vector<float>& target,
     const ImageShape& shape,
     float scale) {
   const int n = static_cast<int>(shape.padded_size());
 
-  auto pred_f = tinygs::create_device_buffer_for<float>(*runtime, static_cast<size_t>(n), "pred_f");
-  auto target_f = tinygs::create_device_buffer_for<float>(*runtime, static_cast<size_t>(n), "target_f");
-  tinygs::copy_from_host_async(*runtime, *queue, pred_f, pred);
-  tinygs::copy_from_host_async(*runtime, *queue, target_f, target);
+  auto pred_f = tinygs::create_device_buffer_for<float>(runtime, static_cast<size_t>(n), "pred_f");
+  auto target_f = tinygs::create_device_buffer_for<float>(runtime, static_cast<size_t>(n), "target_f");
+  tinygs::copy_from_host_async(runtime, *queue, pred_f, pred);
+  tinygs::copy_from_host_async(runtime, *queue, target_f, target);
 
-  auto pred_h = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, static_cast<size_t>(n), "pred_h");
-  auto target_h = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, static_cast<size_t>(n), "target_h");
-  auto loss_h = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, static_cast<size_t>(n), "loss_h");
-  auto grad_h = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, static_cast<size_t>(n), "grad_h");
+  auto pred_h = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, static_cast<size_t>(n), "pred_h");
+  auto target_h = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, static_cast<size_t>(n), "target_h");
+  auto loss_h = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, static_cast<size_t>(n), "loss_h");
+  auto grad_h = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, static_cast<size_t>(n), "grad_h");
 
   tinygs::float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(pred_h),
-                            tinygs::buffer_data<float>(pred_f), n, queue.get());
+                            tinygs::buffer_data<float>(pred_f), n, queue);
   tinygs::float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(target_h),
-                            tinygs::buffer_data<float>(target_f), n, queue.get());
-  tinygs::fill_buffer_zero_async(*runtime, *queue, loss_h);
-  tinygs::fill_buffer_zero_async(*runtime, *queue, grad_h);
+                            tinygs::buffer_data<float>(target_f), n, queue);
+  tinygs::fill_buffer_zero_async(runtime, *queue, loss_h);
+  tinygs::fill_buffer_zero_async(runtime, *queue, grad_h);
 
   LossContext ctx;
   ctx.pred = Image(shape, DataType::Float16, tinygs::buffer_data<tinygs::float16_t>(pred_h));
@@ -636,33 +636,33 @@ LossGradResult run_cuda_loss_fp16(
   LossOp op(runtime);
   op.evaluate(ctx, scale);
 
-  auto loss_f = tinygs::create_device_buffer_for<float>(*runtime, static_cast<size_t>(n), "loss_f");
-  auto grad_f = tinygs::create_device_buffer_for<float>(*runtime, static_cast<size_t>(n), "grad_f");
+  auto loss_f = tinygs::create_device_buffer_for<float>(runtime, static_cast<size_t>(n), "loss_f");
+  auto grad_f = tinygs::create_device_buffer_for<float>(runtime, static_cast<size_t>(n), "grad_f");
   tinygs::half_to_float_gpu(tinygs::buffer_data<float>(loss_f),
-                            tinygs::buffer_data<tinygs::float16_t>(loss_h), n, queue.get());
+                            tinygs::buffer_data<tinygs::float16_t>(loss_h), n, queue);
   tinygs::half_to_float_gpu(tinygs::buffer_data<float>(grad_f),
-                            tinygs::buffer_data<tinygs::float16_t>(grad_h), n, queue.get());
+                            tinygs::buffer_data<tinygs::float16_t>(grad_h), n, queue);
 
   LossGradResult out;
   out.loss.assign(static_cast<size_t>(n), 0.0f);
   out.grad.assign(static_cast<size_t>(n), 0.0f);
-  tinygs::copy_to_host_async(*runtime, *queue, loss_f, out.loss);
-  tinygs::copy_to_host_async(*runtime, *queue, grad_f, out.grad);
+  tinygs::copy_to_host_async(runtime, *queue, loss_f, out.loss);
+  tinygs::copy_to_host_async(runtime, *queue, grad_f, out.grad);
   synchronize_queue_or_throw(runtime, queue, "run_cuda_loss_fp16");
   return out;
 }
 
 double run_cuda_psnr_fp32(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+  BackendQueue* queue,
     const std::vector<float>& pred,
     const std::vector<float>& target,
     const ImageShape& shape) {
   const size_t n = shape.padded_size();
-  auto pred_d = tinygs::create_device_buffer_for<float>(*runtime, n, "pred");
-  auto target_d = tinygs::create_device_buffer_for<float>(*runtime, n, "target");
-  tinygs::copy_from_host_async(*runtime, *queue, pred_d, pred);
-  tinygs::copy_from_host_async(*runtime, *queue, target_d, target);
+  auto pred_d = tinygs::create_device_buffer_for<float>(runtime, n, "pred");
+  auto target_d = tinygs::create_device_buffer_for<float>(runtime, n, "target");
+  tinygs::copy_from_host_async(runtime, *queue, pred_d, pred);
+  tinygs::copy_from_host_async(runtime, *queue, target_d, target);
   synchronize_queue_or_throw(runtime, queue, "run_cuda_psnr_fp32 uploads");
 
   tinygs::PsnrMetric metric(runtime);
@@ -673,24 +673,24 @@ double run_cuda_psnr_fp32(
 }
 
 double run_cuda_psnr_fp16(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+  BackendQueue* queue,
     const std::vector<float>& pred,
     const std::vector<float>& target,
     const ImageShape& shape) {
   const int n = static_cast<int>(shape.padded_size());
 
-  auto pred_f = tinygs::create_device_buffer_for<float>(*runtime, static_cast<size_t>(n), "pred_f");
-  auto target_f = tinygs::create_device_buffer_for<float>(*runtime, static_cast<size_t>(n), "target_f");
-  tinygs::copy_from_host_async(*runtime, *queue, pred_f, pred);
-  tinygs::copy_from_host_async(*runtime, *queue, target_f, target);
+  auto pred_f = tinygs::create_device_buffer_for<float>(runtime, static_cast<size_t>(n), "pred_f");
+  auto target_f = tinygs::create_device_buffer_for<float>(runtime, static_cast<size_t>(n), "target_f");
+  tinygs::copy_from_host_async(runtime, *queue, pred_f, pred);
+  tinygs::copy_from_host_async(runtime, *queue, target_f, target);
 
-  auto pred_h = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, static_cast<size_t>(n), "pred_h");
-  auto target_h = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, static_cast<size_t>(n), "target_h");
+  auto pred_h = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, static_cast<size_t>(n), "pred_h");
+  auto target_h = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, static_cast<size_t>(n), "target_h");
   tinygs::float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(pred_h),
-                            tinygs::buffer_data<float>(pred_f), n, queue.get());
+                            tinygs::buffer_data<float>(pred_f), n, queue);
   tinygs::float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(target_h),
-                            tinygs::buffer_data<float>(target_f), n, queue.get());
+                            tinygs::buffer_data<float>(target_f), n, queue);
   synchronize_queue_or_throw(runtime, queue, "run_cuda_psnr_fp16 uploads");
 
   tinygs::PsnrMetric metric(runtime);
@@ -832,8 +832,8 @@ int main(int argc, char** argv) {
       std::vector<float> pred = t.pred;
       std::vector<float> target = t.target;
       if (use_fp16) {
-        pred = quantize_to_fp16(runtime, queue, pred);
-        target = quantize_to_fp16(runtime, queue, target);
+          pred = quantize_to_fp16(*runtime, queue.get(), pred);
+          target = quantize_to_fp16(*runtime, queue.get(), target);
       }
 
       std::cout << "\n--- Case: " << t.name << " ---\n";
@@ -841,8 +841,8 @@ int main(int argc, char** argv) {
       LossGradResult cpu_l1 = compute_l1_cpu(pred, target, shape, scale);
       cpu_l1.total = sum_active(cpu_l1.loss, active);
       LossGradResult cuda_l1 = use_fp16
-        ? run_cuda_loss_fp16<tinygs::L1Loss>(runtime, queue, pred, target, shape, scale)
-        : run_cuda_loss_fp32<tinygs::L1Loss>(runtime, queue, pred, target, shape, scale);
+        ? run_cuda_loss_fp16<tinygs::L1Loss>(*runtime, queue.get(), pred, target, shape, scale)
+        : run_cuda_loss_fp32<tinygs::L1Loss>(*runtime, queue.get(), pred, target, shape, scale);
       cuda_l1.total = sum_active(cuda_l1.loss, active);
 
       const ScalarDiff l1_total_diff = scalar_diff(cpu_l1.total, cuda_l1.total);
@@ -856,8 +856,8 @@ int main(int argc, char** argv) {
       LossGradResult cpu_ssim = compute_ssim_cpu(pred, target, shape, scale);
       cpu_ssim.total = sum_active(cpu_ssim.loss, active);
       LossGradResult cuda_ssim = use_fp16
-        ? run_cuda_loss_fp16<tinygs::FusedSSIMLoss>(runtime, queue, pred, target, shape, scale)
-        : run_cuda_loss_fp32<tinygs::FusedSSIMLoss>(runtime, queue, pred, target, shape, scale);
+        ? run_cuda_loss_fp16<tinygs::FusedSSIMLoss>(*runtime, queue.get(), pred, target, shape, scale)
+        : run_cuda_loss_fp32<tinygs::FusedSSIMLoss>(*runtime, queue.get(), pred, target, shape, scale);
       cuda_ssim.total = sum_active(cuda_ssim.loss, active);
 
       const ScalarDiff ssim_total_diff = scalar_diff(cpu_ssim.total, cuda_ssim.total);
@@ -885,8 +885,8 @@ int main(int argc, char** argv) {
 
       const double cpu_psnr = compute_psnr_cpu(pred, target, shape);
       const double cuda_psnr = use_fp16
-        ? run_cuda_psnr_fp16(runtime, queue, pred, target, shape)
-        : run_cuda_psnr_fp32(runtime, queue, pred, target, shape);
+        ? run_cuda_psnr_fp16(*runtime, queue.get(), pred, target, shape)
+        : run_cuda_psnr_fp32(*runtime, queue.get(), pred, target, shape);
       const ScalarDiff psnr_diff = scalar_diff(cpu_psnr, cuda_psnr);
       print_scalar_report("psnr", psnr_diff);
     }

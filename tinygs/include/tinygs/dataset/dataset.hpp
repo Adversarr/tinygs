@@ -36,14 +36,14 @@ struct Data {
 /// Implementations: "image" (ImageDataset).
 class DatasetBase {
 public:
-  explicit DatasetBase(std::shared_ptr<BackendRuntime> runtime);
+  explicit DatasetBase(BackendRuntime& runtime);
   DatasetBase(const DatasetBase&) = delete;
   DatasetBase& operator=(const DatasetBase&) = delete;
   DatasetBase(DatasetBase&&) = default;
   DatasetBase& operator=(DatasetBase&&) = default;
 
   /// @brief Get the backend runtime
-  std::shared_ptr<BackendRuntime> runtime() const { return m_runtime; }
+  BackendRuntime& runtime() const { return *m_runtime; }
 
   /// @brief Load all images and camera data from disk.
   /// @pre `set_params()` must have been called with a valid configuration.
@@ -77,7 +77,7 @@ public:
   const SingleCameraLoader& get_camera_loader() const { return m_camera_loader; }
 
 protected:
-  std::shared_ptr<BackendRuntime> m_runtime;
+  BackendRuntime* m_runtime;
   SingleCameraLoader m_camera_loader;
 };
 
@@ -85,6 +85,6 @@ protected:
 /// @param dataset_type One of: "image".
 /// @param runtime Backend runtime for memory operations.
 std::unique_ptr<DatasetBase> create_dataset(const std::string& dataset_type,
-                                             std::shared_ptr<BackendRuntime> runtime);
+                                             BackendRuntime& runtime);
 
 } // namespace tinygs

@@ -45,12 +45,12 @@ struct DataLoaderParams {
 /// Implementations: "simple" (synchronous), "async" (double-buffered pre-fetch).
 class DataLoaderBase {
 public:
-  explicit DataLoaderBase(std::shared_ptr<BackendRuntime> runtime, std::shared_ptr<DatasetBase> dataset);
+  explicit DataLoaderBase(BackendRuntime& runtime, std::shared_ptr<DatasetBase> dataset);
 
   virtual ~DataLoaderBase() = default;
 
   /// @brief Get the backend runtime
-  std::shared_ptr<BackendRuntime> runtime() const { return m_runtime; }
+  BackendRuntime& runtime() const { return *m_runtime; }
 
   /// @brief Return the next sample with its image already in GPU memory.
   ///        Cycles back to the beginning when the dataset is exhausted.
@@ -99,7 +99,7 @@ public:
   virtual json get_params() const;
 
 protected:
-  std::shared_ptr<BackendRuntime> m_runtime;
+  BackendRuntime* m_runtime;
   std::shared_ptr<DatasetBase> m_dataset;
   ImageShape m_output_shape;
   DataLoaderParams m_params;
@@ -115,7 +115,7 @@ private:
 /// @param runtime Backend runtime for GPU operations
 /// @param dataset Dataset to use with the dataloader
 std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_type,
-                                                   std::shared_ptr<BackendRuntime> runtime,
+                                                   BackendRuntime& runtime,
                                                    std::shared_ptr<DatasetBase> dataset);
 
 }  // namespace tinygs

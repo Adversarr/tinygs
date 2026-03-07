@@ -21,7 +21,7 @@
 
 namespace tinygs {
 
-CPUReferenceRasterizer::CPUReferenceRasterizer(std::shared_ptr<BackendRuntime> runtime)
+CPUReferenceRasterizer::CPUReferenceRasterizer(BackendRuntime& runtime)
   : RasterizerBase(runtime) {
 }
 

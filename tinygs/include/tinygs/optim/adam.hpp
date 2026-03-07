@@ -32,33 +32,33 @@ struct AdamParameters {
 class Adam final : public OptimizerBase {
 public:
   /// @brief Construct Adam optimizer
-  Adam(std::shared_ptr<BackendRuntime> runtime,
+  Adam(BackendRuntime& runtime,
        std::shared_ptr<GPUGaussian3d> gaussians,
        std::shared_ptr<GPUGaussian3d> gaussians_grad);
 
   ~Adam() override;
 
   /// @brief Reset all optimizer state
-  void reset(const std::shared_ptr<BackendQueue>& queue) override;
+  void reset(BackendQueue* queue) override;
   
   /// @brief Perform one optimization step
   void step(float scale, const BackendQueue* queue) override;
   void step(const GroupStepConfig& step_config, const BackendQueue* queue) override;
   
   /// @brief Remove optimizer state for flagged gaussians
-  void remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) override;
+  void remove(char* kept_flag, int num_kept, BackendQueue* queue) override;
   
   /// @brief Duplicate optimizer state for new gaussians
-  void duplicate(int* indices, int* new_indices, int num_duplicate, const std::shared_ptr<BackendQueue>& queue) override;
+  void duplicate(int* indices, int* new_indices, int num_duplicate, BackendQueue* queue) override;
   
   /// @brief Reset optimizer state for specific gaussians
   void reset(int* indices, int num_reset) override;
   
   /// @brief Reset opacity-related optimizer state
-  void reset_opacity(const std::shared_ptr<BackendQueue>& queue) override;
+  void reset_opacity(BackendQueue* queue) override;
   
   /// @brief Reorder Gaussians based on provided indices
-  void reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) override;
+  void reorder(uint* indices, BackendQueue* queue) override;
   
   /// @brief Set optimizer parameters from JSON
   void set_params(const json& config) override;

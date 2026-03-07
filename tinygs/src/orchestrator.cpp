@@ -498,7 +498,7 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
 
   // Export PLY at eval end
   Gaussian3d gs_host;
-  m_gaussians->copy_to_host_async(gs_host, m_major_queue);
+  m_gaussians->copy_to_host_async(gs_host, m_major_queue.get());
   backend_check_throw(m_backend_runtime->synchronize_queue(*m_major_queue), "eval export points");
   save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features || m_state.should_stop);
 
@@ -585,9 +585,9 @@ void Orchestrator::initialize() {
   m_major_queue = queue_result.value();
   CHECK_THROW(m_major_queue != nullptr);
 
-  m_loss_ctx.queue = m_major_queue;
-  m_rasterize_ctx.queue = m_major_queue;
-  m_rasterize_ctx.runtime = m_backend_runtime;
+  m_loss_ctx.queue = m_major_queue.get();
+  m_rasterize_ctx.queue = m_major_queue.get();
+  m_rasterize_ctx.runtime = m_backend_runtime.get();
 
   
   // Use dataset-owned image resolutions (train and optional test may differ).
@@ -636,8 +636,8 @@ void Orchestrator::initialize() {
 
   // Setup rasterization context
   m_rasterize_ctx.inference = false; // Training mode
-  m_rasterize_ctx.runtime = m_backend_runtime;
-  m_rasterize_ctx.queue = m_major_queue;
+  m_rasterize_ctx.runtime = m_backend_runtime.get();
+  m_rasterize_ctx.queue = m_major_queue.get();
   m_rasterize_ctx.fwd_input.width = width;
   m_rasterize_ctx.fwd_input.height = height;
   m_rasterize_ctx.fwd_input.near = m_config.near_plane;
@@ -948,14 +948,14 @@ void Orchestrator::reorder_gaussians() {
 
   m_gaussians->reorder(indices, m_major_queue.get());
   m_gradients->reorder(indices, m_major_queue.get());
-  m_optimizer->reorder(indices, m_major_queue);
+  m_optimizer->reorder(indices, m_major_queue.get());
 
   if (m_rasterize_ctx.densification_info) {
     m_rasterize_ctx.densification_info = reorder_densification_info(
         m_rasterize_ctx.densification_info,
         indices,
         n,
-        m_backend_runtime,
+        *m_backend_runtime,
         m_major_queue.get());
   }
 }

@@ -15,12 +15,12 @@ namespace {
 /// @brief Create or grow a shared BackendBuffer to at least the given size.
 ///        If the existing buffer is large enough, it is reused.
 inline void ensure_buffer_size(
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
     std::shared_ptr<BackendBuffer>& buf,
     size_t required_bytes,
     const std::string& debug_name) {
   if (!buf || buf->size_bytes() < required_bytes) {
-    buf = create_device_buffer(*runtime, required_bytes, debug_name);
+    buf = create_device_buffer(runtime, required_bytes, debug_name);
   }
 }
 
@@ -258,7 +258,7 @@ void DataLoaderBase::reset() {
     const size_t max_elements = static_cast<size_t>(m_dataset->image_shape().padded_size());
     const size_t max_bytes = max_elements * sizeof(float); // reserve enough for float-sized scratch
     if (!m_raw_data || m_raw_data->size_bytes() < max_bytes) {
-      ensure_buffer_size(m_runtime, m_raw_data, max_bytes, "DataLoaderBase::m_raw_data");
+      ensure_buffer_size(*m_runtime, m_raw_data, max_bytes, "DataLoaderBase::m_raw_data");
     }
   }
 }
@@ -269,7 +269,7 @@ void DataLoaderBase::reset() {
 /// @param dataset Dataset to load from
 /// @return Unique pointer to the created dataloader
 std::unique_ptr<DataLoaderBase> create_dataloader(const std::string& dataloader_type,
-                                                   std::shared_ptr<BackendRuntime> runtime,
+                                                   BackendRuntime& runtime,
                                                    std::shared_ptr<DatasetBase> dataset) {
   std::string lower_dataloader_type = to_lower(dataloader_type);
 
@@ -295,8 +295,8 @@ json DataLoaderBase::get_params() const {
 }
 
 /// @brief Constructor for DataLoaderBase
-DataLoaderBase::DataLoaderBase(std::shared_ptr<BackendRuntime> runtime, std::shared_ptr<DatasetBase> dataset) 
-  : m_runtime(runtime), m_dataset(dataset) {
+DataLoaderBase::DataLoaderBase(BackendRuntime& runtime, std::shared_ptr<DatasetBase> dataset) 
+  : m_runtime(&runtime), m_dataset(dataset) {
   m_output_shape = dataset->image_shape();
   // m_raw_data starts null; allocated lazily in set_output_shape()
 }

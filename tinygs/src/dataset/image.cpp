@@ -141,11 +141,11 @@ static ImageShape resolve_dataset_shape(uint32_t src_width,
 // Construction / Destruction
 // ---------------------------------------------------------------------------
 
-ImageDataset::ImageDataset(std::shared_ptr<BackendRuntime> runtime)
+ImageDataset::ImageDataset(BackendRuntime& runtime)
   : DatasetBase(runtime) {
 }
 
-ImageDataset::ImageDataset(std::shared_ptr<BackendRuntime> runtime, const std::string& root_path) 
+ImageDataset::ImageDataset(BackendRuntime& runtime, const std::string& root_path) 
   : DatasetBase(runtime), m_root_path(root_path) {
   ImageDataset::load();
 }

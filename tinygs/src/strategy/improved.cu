@@ -33,7 +33,7 @@ static void reset_opacity(const std::shared_ptr<GPUGaussian3d>& gaussians, float
 }
 
 ImprovedStrategy::ImprovedStrategy(
-    std::shared_ptr<BackendRuntime> runtime,
+    BackendRuntime& runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer)
@@ -189,7 +189,7 @@ void ImprovedStrategy::duplicate(const RasterizeContext& ctx, int budget) {
         num_gaussians,                                 // categories
         num_grows,                                     // samples to draw
         static_cast<int>(m_params.seed + this_step()), // seed varies with step
-      ctx.queue.get());
+      ctx.queue);
     d_grow_indices_src = buffer_data<int>(grow_indices_src_sampled_buf);
   }
 

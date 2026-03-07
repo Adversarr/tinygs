@@ -24,7 +24,7 @@ namespace tinygs {
 ///   - Backward pass with analytic gradients for all parameters
 class CPUReferenceRasterizer : public RasterizerBase {
 public:
-  explicit CPUReferenceRasterizer(std::shared_ptr<BackendRuntime> runtime);
+  explicit CPUReferenceRasterizer(BackendRuntime& runtime);
   ~CPUReferenceRasterizer() override = default;
 
   void forward(const RasterizeContext& ctx) override;

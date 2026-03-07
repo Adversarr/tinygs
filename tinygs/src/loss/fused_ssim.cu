@@ -758,7 +758,7 @@ __global__ void fused_ssim_fp16_backward(
 namespace tinygs {
 
 struct FusedSSIMLoss::Impl {
-  std::shared_ptr<BackendRuntime> runtime;
+  BackendRuntime* runtime;
   std::shared_ptr<BackendBuffer> dm_dmu1;
   std::shared_ptr<BackendBuffer> dm_dsigma1_sq;
   std::shared_ptr<BackendBuffer> dm_dsigma12;
@@ -778,10 +778,10 @@ struct FusedSSIMLoss::Impl {
 
 FusedSSIMLoss::~FusedSSIMLoss() = default;
 
-FusedSSIMLoss::FusedSSIMLoss(std::shared_ptr<BackendRuntime> runtime)
-    : LossBase(std::move(runtime)) {
+FusedSSIMLoss::FusedSSIMLoss(BackendRuntime& runtime)
+    : LossBase(runtime) {
   m_impl = std::make_unique<Impl>();
-  m_impl->runtime = this->runtime();
+  m_impl->runtime = &this->runtime();
 }
 
 struct m_domain { static constexpr char const* name{"fused_ssim"}; };

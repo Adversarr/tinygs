@@ -23,10 +23,10 @@ const char* to_string(OptimParamGroup group) {
   }
 }
 
-OptimizerBase::OptimizerBase(std::shared_ptr<BackendRuntime> runtime,
+OptimizerBase::OptimizerBase(BackendRuntime& runtime,
                              std::shared_ptr<GPUGaussian3d> gaussians,
                              std::shared_ptr<GPUGaussian3d> gaussians_grad)
-    : m_runtime(std::move(runtime)),
+    : m_runtime(&runtime),
       m_gaussians(gaussians),
       m_gaussians_grad(gaussians_grad) {
 }
@@ -106,7 +106,7 @@ void OptimizerBase::step(const GroupStepConfig& step_config, const BackendQueue*
   step(s, queue);
 }
 
-void OptimizerBase::reset(const std::shared_ptr<BackendQueue>& queue) {
+void OptimizerBase::reset(BackendQueue* queue) {
   // nothing to do
 }
 
@@ -177,7 +177,7 @@ void GaussianOptimizationParams::from_json(const json& config) {
 }
 
 std::unique_ptr<OptimizerBase> create_optimizer(const std::string& optimizer_type,
-                                                std::shared_ptr<BackendRuntime> runtime,
+                                                BackendRuntime& runtime,
                                                 std::shared_ptr<GPUGaussian3d> gaussians,
                                                 std::shared_ptr<GPUGaussian3d> gaussians_grad) {
   std::string lower_optimizer_type = to_lower(optimizer_type);

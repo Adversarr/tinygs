@@ -25,17 +25,17 @@ class BackendQueue;
 /// copy_from_host() / copy_to_host().
 class GPUGaussian3d {
 public:
-  explicit GPUGaussian3d(std::shared_ptr<BackendRuntime> runtime);
+  explicit GPUGaussian3d(BackendRuntime& runtime);
 
   ~GPUGaussian3d();
 
-  std::shared_ptr<BackendRuntime> runtime() const;
+  BackendRuntime& runtime() const;
 
-  void copy_from_host_async(const Gaussian3d &gaussians, const std::shared_ptr<BackendQueue>& queue);
-  void copy_from_host(const Gaussian3d &gaussians, const std::shared_ptr<BackendQueue>& queue);
+  void copy_from_host_async(const Gaussian3d &gaussians, BackendQueue* queue);
+  void copy_from_host(const Gaussian3d &gaussians, BackendQueue* queue);
 
-  void copy_to_host_async(Gaussian3d& gaussians, const std::shared_ptr<BackendQueue>& queue);
-  void copy_to_host(Gaussian3d& gaussians, const std::shared_ptr<BackendQueue>& queue);
+  void copy_to_host_async(Gaussian3d& gaussians, BackendQueue* queue);
+  void copy_to_host(Gaussian3d& gaussians, BackendQueue* queue);
 
   size_t size() const;
 
@@ -92,7 +92,7 @@ public:
 
   std::shared_ptr<BackendBuffer> compute_morton_order_indices(const BackendQueue* queue = nullptr);
 
-  void append(int num_dup, const std::shared_ptr<BackendQueue>& queue);
+  void append(int num_dup, BackendQueue* queue);
 
   float scene_scale() const { return m_scene_scale; }
 
@@ -114,7 +114,7 @@ std::shared_ptr<BackendBuffer> reorder_densification_info(
     const std::shared_ptr<BackendBuffer>& info,
     const uint* indices,
     size_t n,
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
   const BackendQueue* queue);
 
 }  // namespace tinygs

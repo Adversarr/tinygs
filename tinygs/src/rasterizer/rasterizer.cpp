@@ -5,8 +5,8 @@
 
 namespace tinygs {
 
-RasterizerBase::RasterizerBase(std::shared_ptr<BackendRuntime> runtime)
-  : m_runtime(runtime) {
+RasterizerBase::RasterizerBase(BackendRuntime& runtime)
+  : m_runtime(&runtime) {
 }
 
 RasterizerBase::RasterizerBase() {
@@ -45,7 +45,7 @@ void RasterizerBase::set_params(const json& j) {
 }
 
 std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type,
-                                                   std::shared_ptr<BackendRuntime> runtime) {
+                                                   BackendRuntime& runtime) {
   std::string lower_rasterizer_type = to_lower(rasterizer_type);
   if (lower_rasterizer_type == "fastgs") {
     return std::make_unique<FastGSRasterizer>(runtime);

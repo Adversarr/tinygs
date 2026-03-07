@@ -18,7 +18,7 @@
 namespace tinygs {
 
 AbsGSStrategy::AbsGSStrategy(
-    std::shared_ptr<BackendRuntime> runtime,
+    BackendRuntime& runtime,
     std::shared_ptr<GPUGaussian3d> gaussians,
     std::shared_ptr<GPUGaussian3d> gaussians_grad,
     std::shared_ptr<OptimizerBase> optimizer)

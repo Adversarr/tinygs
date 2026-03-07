@@ -6,7 +6,7 @@ namespace tinygs {
 class ImprovedStrategy : public StrategyBase {
 public:
   /// @brief Construct improved strategy with runtime, gaussians, gradients, and optimizer
-  explicit ImprovedStrategy(std::shared_ptr<BackendRuntime> runtime,
+  explicit ImprovedStrategy(BackendRuntime& runtime,
                            std::shared_ptr<GPUGaussian3d> gaussians,
                            std::shared_ptr<GPUGaussian3d> gaussians_grad,
                            std::shared_ptr<OptimizerBase> optimizer);

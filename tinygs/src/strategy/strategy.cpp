@@ -8,11 +8,11 @@
 
 namespace tinygs {
 
-StrategyBase::StrategyBase(std::shared_ptr<BackendRuntime> runtime,
+StrategyBase::StrategyBase(BackendRuntime& runtime,
                             std::shared_ptr<GPUGaussian3d> gaussians,
                             std::shared_ptr<GPUGaussian3d> gaussians_grad,
                             std::shared_ptr<OptimizerBase> optimizer)
-  : m_runtime(runtime), m_gaussians(gaussians), m_gaussians_grad(gaussians_grad), m_optimizer(optimizer) {
+  : m_runtime(&runtime), m_gaussians(gaussians), m_gaussians_grad(gaussians_grad), m_optimizer(optimizer) {
 }
 
 void StrategyBase::step(const RasterizeContext& ctx) {
@@ -20,21 +20,21 @@ void StrategyBase::step(const RasterizeContext& ctx) {
   ++m_step_count;
 }
 
-void StrategyBase::on_remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) {
+void StrategyBase::on_remove(char* kept_flag, int num_kept, BackendQueue* queue) {
   if (num_kept <= 0) return;
 
   if (m_gaussians) {
-    m_gaussians->remove(kept_flag, num_kept, queue.get());
+    m_gaussians->remove(kept_flag, num_kept, queue);
   }
   if (m_gaussians_grad) {
-    m_gaussians_grad->remove(kept_flag, num_kept, queue.get());
+    m_gaussians_grad->remove(kept_flag, num_kept, queue);
   }
   if (m_optimizer) {
     m_optimizer->remove(kept_flag, num_kept, queue);
   }
 }
 
-void StrategyBase::on_duplicate(int* indices, int* new_indices, int num_duplications, const std::shared_ptr<BackendQueue>& queue) {
+void StrategyBase::on_duplicate(int* indices, int* new_indices, int num_duplications, BackendQueue* queue) {
   if (num_duplications <= 0) return;
 
   if (m_gaussians) {
@@ -56,7 +56,7 @@ void StrategyBase::on_reset(int* indices, int num_reset) {
   }
 }
 
-void StrategyBase::on_reset_opacity(const std::shared_ptr<BackendQueue>& queue) {
+void StrategyBase::on_reset_opacity(BackendQueue* queue) {
   if (m_optimizer) {
     m_optimizer->reset_opacity(queue);
     if (m_params.reset_reset_optimizer) {
@@ -139,7 +139,7 @@ StrategyParams::StrategyParams(const json& config) {
 }
 
 std::unique_ptr<StrategyBase> create_strategy(const std::string& strategy_type,
-                                             std::shared_ptr<BackendRuntime> runtime,
+                                             BackendRuntime& runtime,
                                              std::shared_ptr<GPUGaussian3d> gaussians,
                                              std::shared_ptr<GPUGaussian3d> gaussians_grad,
                                              std::shared_ptr<OptimizerBase> optimizer) {

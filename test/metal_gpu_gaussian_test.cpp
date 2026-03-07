@@ -97,11 +97,11 @@ protected:
 
 TEST_F(MetalGPUGaussianTest, CopyRoundtripPreservesAllFields) {
   const Gaussian3d input = make_test_gaussians(4);
-  GPUGaussian3d gpu(runtime);
-  gpu.copy_from_host_async(input, queue);
+  GPUGaussian3d gpu(*runtime);
+  gpu.copy_from_host_async(input, queue.get());
 
   Gaussian3d output;
-  gpu.copy_to_host_async(output, queue);
+  gpu.copy_to_host_async(output, queue.get());
   auto sync_status = runtime->synchronize_queue(*queue);
   ASSERT_TRUE(sync_status.ok()) << sync_status.message;
 
@@ -110,8 +110,8 @@ TEST_F(MetalGPUGaussianTest, CopyRoundtripPreservesAllFields) {
 
 TEST_F(MetalGPUGaussianTest, CloneAndCloneAsyncProduceDeepCopies) {
   const Gaussian3d input = make_test_gaussians(3);
-  GPUGaussian3d gpu(runtime);
-  gpu.copy_from_host(input, queue);
+  GPUGaussian3d gpu(*runtime);
+  gpu.copy_from_host(input, queue.get());
 
   auto cloned_sync = gpu.clone();
   auto cloned_async = gpu.clone_async();
@@ -120,23 +120,23 @@ TEST_F(MetalGPUGaussianTest, CloneAndCloneAsyncProduceDeepCopies) {
 
   Gaussian3d out_sync;
   Gaussian3d out_async;
-  cloned_sync->copy_to_host(out_sync, queue);
-  cloned_async->copy_to_host(out_async, queue);
+  cloned_sync->copy_to_host(out_sync, queue.get());
+  cloned_async->copy_to_host(out_async, queue.get());
   expect_equal_gaussians(out_sync, input);
   expect_equal_gaussians(out_async, input);
 }
 
 TEST_F(MetalGPUGaussianTest, AppendRemoveAndReorderMaintainExpectedLayout) {
   const Gaussian3d input = make_test_gaussians(3);
-  GPUGaussian3d gpu(runtime);
-  gpu.copy_from_host(input, queue);
+  GPUGaussian3d gpu(*runtime);
+  gpu.copy_from_host(input, queue.get());
 
-  gpu.append(2, queue);
+  gpu.append(2, queue.get());
   auto sync_status = runtime->synchronize_queue(*queue);
   ASSERT_TRUE(sync_status.ok()) << sync_status.message;
 
   Gaussian3d after_append;
-  gpu.copy_to_host(after_append, queue);
+  gpu.copy_to_host(after_append, queue.get());
   ASSERT_EQ(after_append.means.size(), 5u);
   for (size_t i = 0; i < input.means.size(); ++i) {
     EXPECT_FLOAT_EQ(after_append.means[i].x, input.means[i].x);
@@ -162,7 +162,7 @@ TEST_F(MetalGPUGaussianTest, AppendRemoveAndReorderMaintainExpectedLayout) {
   gpu.reorder(buffer_data<uint>(reorder_idx));
 
   Gaussian3d output;
-  gpu.copy_to_host(output, queue);
+  gpu.copy_to_host(output, queue.get());
   ASSERT_EQ(output.means.size(), 3u);
   EXPECT_FLOAT_EQ(output.means[0].x, 0.0f);
   EXPECT_FLOAT_EQ(output.means[1].x, input.means[0].x);
@@ -174,8 +174,8 @@ TEST_F(MetalGPUGaussianTest, ComputeMortonIndicesAndDensificationReorderWork) {
   input.means[0] = vec3(0.0f, 0.0f, 0.0f);
   input.means[1] = vec3(0.5f, 0.5f, 0.5f);
   input.means[2] = vec3(1.0f, 1.0f, 1.0f);
-  GPUGaussian3d gpu(runtime);
-  gpu.copy_from_host(input, queue);
+  GPUGaussian3d gpu(*runtime);
+  gpu.copy_from_host(input, queue.get());
 
   auto morton = gpu.compute_morton_order_indices();
   ASSERT_NE(morton, nullptr);
@@ -191,7 +191,7 @@ TEST_F(MetalGPUGaussianTest, ComputeMortonIndicesAndDensificationReorderWork) {
   auto info = create_device_buffer_for<DensificationInfo>(*runtime, host_info.size(), "info");
   copy_from_host(*runtime, *queue, info, host_info.data(), host_info.size());
 
-  auto reordered = reorder_densification_info(info, idx.data(), idx.size(), runtime, nullptr);
+  auto reordered = reorder_densification_info(info, idx.data(), idx.size(), *runtime, nullptr);
   ASSERT_NE(reordered, nullptr);
   std::vector<DensificationInfo> reordered_host(idx.size());
   copy_to_host(*runtime, *queue, reordered, reordered_host.data(), reordered_host.size());
@@ -202,30 +202,30 @@ TEST_F(MetalGPUGaussianTest, ComputeMortonIndicesAndDensificationReorderWork) {
 }
 
 TEST_F(MetalGPUGaussianTest, RemoveRejectsKeepingFromEmptySet) {
-  GPUGaussian3d gpu(runtime);
+  GPUGaussian3d gpu(*runtime);
   EXPECT_ANY_THROW(gpu.remove(nullptr, 1, queue.get()));
 }
 
 TEST_F(MetalGPUGaussianTest, QueueParameterPathsProduceConsistentResults) {
   const Gaussian3d input = make_test_gaussians(3);
-  GPUGaussian3d gpu(runtime);
-  gpu.copy_from_host(input, queue);
+  GPUGaussian3d gpu(*runtime);
+  gpu.copy_from_host(input, queue.get());
 
   gpu.memset_async(0, queue.get());
   auto sync_status = runtime->synchronize_queue(*queue);
   ASSERT_TRUE(sync_status.ok()) << sync_status.message;
 
   Gaussian3d after_memset;
-  gpu.copy_to_host(after_memset, queue);
+  gpu.copy_to_host(after_memset, queue.get());
   for (size_t i = 0; i < after_memset.opacities.size(); ++i) {
     EXPECT_FLOAT_EQ(after_memset.opacities[i], 0.0f);
   }
 
-  gpu.copy_from_host(input, queue);
+  gpu.copy_from_host(input, queue.get());
   auto cloned = gpu.clone_async(queue.get());
   ASSERT_NE(cloned, nullptr);
   Gaussian3d cloned_host;
-  cloned->copy_to_host(cloned_host, queue);
+  cloned->copy_to_host(cloned_host, queue.get());
   expect_equal_gaussians(cloned_host, input);
 
   auto morton = gpu.compute_morton_order_indices(queue.get());
@@ -240,7 +240,7 @@ TEST_F(MetalGPUGaussianTest, QueueParameterPathsProduceConsistentResults) {
   infos[2].accum_counter = 11.0f;
   copy_from_host(*runtime, *queue, reordered_info_src, infos.data(), infos.size());
   auto reordered_info = reorder_densification_info(
-      reordered_info_src, idx.data(), idx.size(), runtime, queue.get());
+      reordered_info_src, idx.data(), idx.size(), *runtime, queue.get());
   ASSERT_NE(reordered_info, nullptr);
 }
 

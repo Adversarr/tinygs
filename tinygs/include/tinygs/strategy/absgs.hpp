@@ -15,7 +15,7 @@ namespace tinygs {
 /// Reference: ref_impl/AbsGS/scene/gaussian_model.py
 class AbsGSStrategy : public StrategyBase {
 public:
-  explicit AbsGSStrategy(std::shared_ptr<BackendRuntime> runtime,
+  explicit AbsGSStrategy(BackendRuntime& runtime,
                          std::shared_ptr<GPUGaussian3d> gaussians,
                          std::shared_ptr<GPUGaussian3d> gaussians_grad,
                          std::shared_ptr<OptimizerBase> optimizer);

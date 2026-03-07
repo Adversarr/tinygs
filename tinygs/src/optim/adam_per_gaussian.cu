@@ -539,10 +539,10 @@ void AdamPerGaussian::step_adamw(float scale, const BackendQueue* queue) {
   step(step_config, queue);
 }
 
-AdamPerGaussian::AdamPerGaussian(std::shared_ptr<BackendRuntime> runtime,
+AdamPerGaussian::AdamPerGaussian(BackendRuntime& runtime,
                                  std::shared_ptr<GPUGaussian3d> gaussians,
                                  std::shared_ptr<GPUGaussian3d> gaussians_grad)
-    : OptimizerBase(std::move(runtime), gaussians, gaussians_grad),
+    : OptimizerBase(runtime, gaussians, gaussians_grad),
       m_impl(std::make_unique<Impl>()) {
   QueueDesc queue_desc;
   queue_desc.debug_name = "adam_pg_init_queue";
@@ -550,7 +550,7 @@ AdamPerGaussian::AdamPerGaussian(std::shared_ptr<BackendRuntime> runtime,
   if (!queue_result.ok()) {
     throw std::runtime_error("AdamPerGaussian: failed to create init queue: " + to_string(queue_result.error()));
   }
-  AdamPerGaussian::reset(queue_result.value());
+  AdamPerGaussian::reset(queue_result.value().get());
   m_runtime->synchronize_queue(*queue_result.value());
 }
 
@@ -589,7 +589,7 @@ __global__ static void copy_optimizer_base_state_pg(const vec3* __restrict__ src
   dst_scales_second[idx] = src_scales_second[src_idx];
 }
 
-void AdamPerGaussian::remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) {
+void AdamPerGaussian::remove(char* kept_flag, int num_kept, BackendQueue* queue) {
   size_t original_size = m_size;
   auto mapping = create_device_buffer_for<uint>(*m_runtime, original_size, "remove_mapping");
 
@@ -679,7 +679,7 @@ void AdamPerGaussian::remove(char* kept_flag, int num_kept, const std::shared_pt
   m_size = num_kept;
 }
 
-void AdamPerGaussian::duplicate(int* indices, int* new_indices, int num_duplicate, const std::shared_ptr<BackendQueue>& queue) {
+void AdamPerGaussian::duplicate(int* indices, int* new_indices, int num_duplicate, BackendQueue* queue) {
   if (num_duplicate == 0) return;
   CHECK_THROW(indices != nullptr);
   CHECK_THROW(new_indices != nullptr);
@@ -750,7 +750,7 @@ void AdamPerGaussian::duplicate(int* indices, int* new_indices, int num_duplicat
   m_size = new_n;
 }
 
-void AdamPerGaussian::reset(const std::shared_ptr<BackendQueue>& queue) {
+void AdamPerGaussian::reset(BackendQueue* queue) {
   size_t num_gaussians = m_gaussians->size();
   m_size = num_gaussians;
 
@@ -842,7 +842,7 @@ void AdamPerGaussian::reset(int* indices, int num_reset) {
       });
 }
 
-void AdamPerGaussian::reset_opacity(const std::shared_ptr<BackendQueue>& queue) {
+void AdamPerGaussian::reset_opacity(BackendQueue* queue) {
   fill_buffer_zero_async(*m_runtime, *queue, m_opacities_first);
   fill_buffer_zero_async(*m_runtime, *queue, m_opacities_second);
   fill_buffer_zero_async(*m_runtime, *queue, m_steps);
@@ -863,7 +863,7 @@ json AdamPerGaussian::get_params() const {
   return params;
 }
 
-void AdamPerGaussian::reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) {
+void AdamPerGaussian::reorder(uint* indices, BackendQueue* queue) {
   int num_gaussians = static_cast<int>(m_size);
 
   auto new_means_first = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "means_first");

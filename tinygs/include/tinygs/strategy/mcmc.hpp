@@ -42,7 +42,7 @@ public:
   /// @param gaussians GPU gaussians data
   /// @param gaussians_grad GPU gaussians gradients
   /// @param optimizer Optimizer for updating gaussians
-  MCMCStrategy(std::shared_ptr<BackendRuntime> runtime,
+  MCMCStrategy(BackendRuntime& runtime,
                std::shared_ptr<GPUGaussian3d> gaussians,
                std::shared_ptr<GPUGaussian3d> gaussians_grad,
                std::shared_ptr<OptimizerBase> optimizer);

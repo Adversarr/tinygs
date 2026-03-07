@@ -24,10 +24,10 @@ struct RasterizeContext {
   bool inference = false;
 
   /// @brief Backend runtime for buffer allocation and memory operations.
-  std::shared_ptr<BackendRuntime> runtime;
+  BackendRuntime* runtime = nullptr;
 
   /// @brief Backend queue used for ordered buffer operations and kernel launches.
-  std::shared_ptr<BackendQueue> queue;
+  BackendQueue* queue = nullptr;
 
   /// @brief Global gradient scaler applied during backward pass to stabilize
   ///        mixed-precision training (typically 128 for FP16, 1 for FP32).
@@ -84,7 +84,7 @@ struct RasterizerParams {
 ///   - All backend work is enqueued on `ctx.queue`.
 class RasterizerBase {
 public:
-  explicit RasterizerBase(std::shared_ptr<BackendRuntime> runtime);
+  explicit RasterizerBase(BackendRuntime& runtime);
   
   /// @brief Constructor without runtime (for backward compatibility)
   RasterizerBase();
@@ -92,7 +92,7 @@ public:
   virtual ~RasterizerBase() = default;
 
   /// @brief Get the backend runtime
-  std::shared_ptr<BackendRuntime> runtime() const { return m_runtime; }
+  BackendRuntime& runtime() const { return *m_runtime; }
 
   /// @brief Render Gaussians into an image.
   /// @param params Fully-populated context (fwd_input must be set).
@@ -115,7 +115,7 @@ public:
   virtual void set_params(const json& j) = 0;
 
 protected:
-  std::shared_ptr<BackendRuntime> m_runtime;
+  BackendRuntime* m_runtime;
   std::shared_ptr<GPUGaussian3d> m_gaussians;
   RasterizerParams m_params;
 };
@@ -124,6 +124,6 @@ protected:
 /// @param rasterizer_type One of: "fastgs", "cpu".
 /// @param runtime Backend runtime for GPU operations.
 std::unique_ptr<RasterizerBase> create_rasterizer(const std::string& rasterizer_type,
-                                                   std::shared_ptr<BackendRuntime> runtime);
+                                                   BackendRuntime& runtime);
 
 }

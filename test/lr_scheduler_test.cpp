@@ -7,9 +7,62 @@ namespace {
 
 using namespace tinygs;
 
+class MockRuntime final : public BackendRuntime {
+public:
+    BackendType backend_type() const noexcept override { return BackendType::Cuda; }
+    int device() const noexcept override { return 0; }
+    CapabilityProfile capability_profile() const override { return CapabilityProfile{}; }
+
+protected:
+    Result<BackendQueue> do_create_queue(const QueueDesc&) override {
+        return Result<BackendQueue>::success(nullptr, backend_type(), "create_queue");
+    }
+    Result<BackendEvent> do_create_event(const EventDesc&) override {
+        return Result<BackendEvent>::success(nullptr, backend_type(), "create_event");
+    }
+    Result<BackendBuffer> do_create_buffer(const BufferDesc&) override {
+        return Result<BackendBuffer>::success(nullptr, backend_type(), "create_buffer");
+    }
+    BackendError do_record_event(BackendQueue&, BackendEvent&) override {
+        return backend_success(backend_type(), "record_event");
+    }
+    BackendError do_wait_event(BackendQueue&, BackendEvent&) override {
+        return backend_success(backend_type(), "wait_event");
+    }
+    BackendError do_synchronize_queue(BackendQueue&) override {
+        return backend_success(backend_type(), "synchronize_queue");
+    }
+    BackendError do_synchronize_event(BackendEvent&) override {
+        return backend_success(backend_type(), "synchronize_event");
+    }
+    BackendError do_synchronize_device() override {
+        return backend_success(backend_type(), "synchronize_device");
+    }
+    BackendError do_copy_buffer(BackendQueue&, BackendBuffer&, size_t, BackendBuffer&, size_t, size_t) override {
+        return backend_success(backend_type(), "copy_buffer_async");
+    }
+    BackendError do_copy_from_host(BackendQueue&, BackendBuffer&, size_t, const void*, size_t) override {
+        return backend_success(backend_type(), "copy_from_host_async");
+    }
+    BackendError do_copy_to_host(BackendQueue&, void*, BackendBuffer&, size_t, size_t) override {
+        return backend_success(backend_type(), "copy_to_host_async");
+    }
+    BackendError do_transfer_raw(BackendQueue&, void*, const void*, size_t, TransferDirection) override {
+        return backend_success(backend_type(), "transfer_raw");
+    }
+    BackendError do_fill_buffer(BackendQueue&, BackendBuffer&, size_t, uint8_t, size_t) override {
+        return backend_success(backend_type(), "fill_buffer_async");
+    }
+};
+
+BackendRuntime& mock_runtime() {
+    static MockRuntime runtime;
+    return runtime;
+}
+
 class MockOptimizer : public OptimizerBase {
 public:
-    MockOptimizer() : OptimizerBase(nullptr, nullptr, nullptr) {}
+    MockOptimizer() : OptimizerBase(mock_runtime(), nullptr, nullptr) {}
     
     void step(float scale, const BackendQueue* queue) override { 
         (void)scale; 
@@ -23,11 +76,11 @@ public:
         (void)indices;
         (void)num_reset;
     }
-    void reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) override { 
+    void reorder(uint* indices, BackendQueue* queue) override { 
         (void)indices; 
         (void)queue;
     }
-    void reset_opacity(const std::shared_ptr<BackendQueue>& queue) override { 
+    void reset_opacity(BackendQueue* queue) override { 
         (void)queue; 
     }
 };

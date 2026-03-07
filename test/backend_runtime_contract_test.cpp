@@ -303,12 +303,12 @@ TEST(BackendRuntimeContractTest, GPUGaussianAsyncCopiesDoNotSynchronizeImplicitl
   in.sh2.resize(2 * 5, vec3(0.4f, 0.5f, 0.6f));
   in.sh3.resize(2 * 7, vec3(0.7f, 0.8f, 0.9f));
 
-  GPUGaussian3d gpu(runtime);
-  gpu.copy_from_host_async(in, queue);
+  GPUGaussian3d gpu(*runtime);
+  gpu.copy_from_host_async(in, queue.get());
   EXPECT_EQ(runtime->sync_queue_calls, 0);
 
   Gaussian3d out;
-  gpu.copy_to_host_async(out, queue);
+  gpu.copy_to_host_async(out, queue.get());
   EXPECT_EQ(runtime->sync_queue_calls, 0);
 
   const BackendError sync_status = runtime->synchronize_queue(*queue);

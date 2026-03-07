@@ -6,7 +6,7 @@ namespace tinygs {
 /// @brief Fused SSIM loss implementation
 class FusedSSIMLoss final : public LossBase {
 public:
-  explicit FusedSSIMLoss(std::shared_ptr<BackendRuntime> runtime);
+  explicit FusedSSIMLoss(BackendRuntime& runtime);
   ~FusedSSIMLoss() override;
 
   /// @brief Evaluate Fused SSIM loss and gradient

@@ -520,10 +520,10 @@ void Adam::step_adamw(float scale, const BackendQueue* queue) {
 }
 
 
-Adam::Adam(std::shared_ptr<BackendRuntime> runtime,
+Adam::Adam(BackendRuntime& runtime,
            std::shared_ptr<GPUGaussian3d> gaussians,
            std::shared_ptr<GPUGaussian3d> gaussians_grad)
-    : OptimizerBase(std::move(runtime), gaussians, gaussians_grad),
+    : OptimizerBase(runtime, gaussians, gaussians_grad),
       m_impl(std::make_unique<Impl>()) {
   QueueDesc queue_desc;
   queue_desc.debug_name = "adam_init_queue";
@@ -531,7 +531,7 @@ Adam::Adam(std::shared_ptr<BackendRuntime> runtime,
   if (!queue_result.ok()) {
     throw std::runtime_error("Adam: failed to create init queue: " + to_string(queue_result.error()));
   }
-  Adam::reset(queue_result.value());
+  Adam::reset(queue_result.value().get());
   m_runtime->synchronize_queue(*queue_result.value());
 }
 
@@ -575,7 +575,7 @@ __global__ void copy_optimizer_base_state(
   dst_scales_second[idx] = src_scales_second[src_idx];
 }
 
-void Adam::remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) {
+void Adam::remove(char* kept_flag, int num_kept, BackendQueue* queue) {
   size_t original_size = m_size;
   cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
   auto mapping = create_device_buffer_for<uint>(*m_runtime, original_size, "remove_mapping");
@@ -643,7 +643,7 @@ void Adam::remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQu
   m_size = num_kept;
 }
 
-void Adam::duplicate(int* indices, int* new_indices, int num_duplicate, const std::shared_ptr<BackendQueue>& queue) {
+void Adam::duplicate(int* indices, int* new_indices, int num_duplicate, BackendQueue* queue) {
   if (num_duplicate == 0) return;
   CHECK_THROW(indices != nullptr);
   CHECK_THROW(new_indices != nullptr);
@@ -704,7 +704,7 @@ void Adam::duplicate(int* indices, int* new_indices, int num_duplicate, const st
   m_size = new_n;
 }
 
-void Adam::reset(const std::shared_ptr<BackendQueue>& queue) {
+void Adam::reset(BackendQueue* queue) {
   size_t num_gaussians = m_gaussians->size();
   m_size = num_gaussians;
   m_global_steps = 0;
@@ -789,7 +789,7 @@ void Adam::reset(int* indices, int num_reset) {
   );
 }
 
-void Adam::reset_opacity(const std::shared_ptr<BackendQueue>& queue) {
+void Adam::reset_opacity(BackendQueue* queue) {
   fill_buffer_zero_async(*m_runtime, *queue, m_opacities_first);
   fill_buffer_zero_async(*m_runtime, *queue, m_opacities_second);
 }
@@ -831,7 +831,7 @@ void AdamParameters::from_json(const json& config) {
   if (config.contains("copy_state_on_duplicate")) copy_state_on_duplicate = config.at("copy_state_on_duplicate").get<bool>();
 }
 
-void Adam::reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) {
+void Adam::reorder(uint* indices, BackendQueue* queue) {
   int num_gaussians = static_cast<int>(m_size);
 
   auto new_means_first = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "means_first");

@@ -19,7 +19,7 @@ struct LossContext {
   Image target;                  ///< Ground-truth image          [read-only]
   Image loss;                    ///< Per-pixel loss buffer       [read-write, accumulated]
   Image grad;                    ///< dL/d(pred) gradient buffer  [read-write, accumulated]
-  std::shared_ptr<BackendQueue> queue; ///< Execution queue for all kernels
+  BackendQueue* queue = nullptr; ///< Execution queue for all kernels
 };
 
 /// @brief Abstract base class for per-pixel loss functions.
@@ -28,10 +28,10 @@ struct LossContext {
 /// so that multiple loss components can be composed.
 class LossBase {
 public:
-  explicit LossBase(std::shared_ptr<BackendRuntime> runtime);
+  explicit LossBase(BackendRuntime& runtime);
   virtual ~LossBase();
 
-  std::shared_ptr<BackendRuntime> runtime() const;
+  BackendRuntime& runtime() const;
 
   /// @brief Compute loss and accumulate scaled gradients into `ctx.grad`.
   /// @param ctx Loss context (pred, target, loss buffer, grad buffer).
@@ -43,16 +43,16 @@ public:
   virtual std::string name() const = 0;
 
 private:
-  std::shared_ptr<BackendRuntime> m_runtime;
+  BackendRuntime* m_runtime;
 };
 
 /// @brief Abstract base class for evaluation metrics (no gradient).
 class MetricBase {
 public:
-  explicit MetricBase(std::shared_ptr<BackendRuntime> runtime);
+  explicit MetricBase(BackendRuntime& runtime);
   virtual ~MetricBase();
 
-  std::shared_ptr<BackendRuntime> runtime() const;
+  BackendRuntime& runtime() const;
 
   /// @brief Compute a scalar quality metric between predicted and target images.
   /// @param pred Predicted image (GPU memory).
@@ -64,17 +64,17 @@ public:
   virtual std::string name() const = 0;
 
 private:
-  std::shared_ptr<BackendRuntime> m_runtime;
+  BackendRuntime* m_runtime;
 };
 
 /// @brief Create loss object.
 /// @param runtime Backend runtime for buffer allocation.
 /// @param loss_type One of: "l1", "fused_ssim".
-std::unique_ptr<LossBase> create_loss(std::shared_ptr<BackendRuntime> runtime, const std::string& loss_type);
+std::unique_ptr<LossBase> create_loss(BackendRuntime& runtime, const std::string& loss_type);
 
 /// @brief Create metric object.
 /// @param runtime Backend runtime for buffer allocation.
 /// @param metric_type One of: "psnr".
-std::unique_ptr<MetricBase> create_metric(std::shared_ptr<BackendRuntime> runtime, const std::string& metric_type);
+std::unique_ptr<MetricBase> create_metric(BackendRuntime& runtime, const std::string& metric_type);
 
 } // namespace tinygs

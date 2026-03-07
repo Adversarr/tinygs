@@ -199,10 +199,10 @@ TEST(BufferUtilsTest, RawCopyHelpersRoundTripData) {
   std::vector<uint32_t> device(src.size(), 0);
   std::vector<uint32_t> dst(src.size(), 0);
 
-  copy_raw_host_to_device_async(runtime, queue, device.data(), src.data(), src.size() * sizeof(uint32_t));
+  copy_raw_host_to_device_async(*runtime, *queue, device.data(), src.data(), src.size() * sizeof(uint32_t));
   EXPECT_EQ(runtime->sync_queue_calls, 0);
 
-  copy_raw_device_to_host(runtime, queue, dst.data(), device.data(), dst.size() * sizeof(uint32_t));
+  copy_raw_device_to_host(*runtime, *queue, dst.data(), device.data(), dst.size() * sizeof(uint32_t));
 
   EXPECT_EQ(dst, src);
   EXPECT_EQ(runtime->sync_queue_calls, 1);

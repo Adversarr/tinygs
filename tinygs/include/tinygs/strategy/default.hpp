@@ -6,7 +6,7 @@ namespace tinygs {
 class DefaultStrategy : public StrategyBase {
 public:
   /// @brief Construct default strategy with runtime, gaussians, gradients, and optimizer
-  explicit DefaultStrategy(std::shared_ptr<BackendRuntime> runtime,
+  explicit DefaultStrategy(BackendRuntime& runtime,
                            std::shared_ptr<GPUGaussian3d> gaussians,
                            std::shared_ptr<GPUGaussian3d> gaussians_grad,
                            std::shared_ptr<OptimizerBase> optimizer);

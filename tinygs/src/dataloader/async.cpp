@@ -111,13 +111,13 @@ struct AsyncDataLoader::Impl {
   }
 
   /// @brief Start the prefetch thread
-  void start(std::shared_ptr<BackendRuntime> runtime, DataLoaderBase& loader, DatasetBase& dataset, DataType data_type) {
+  void start(BackendRuntime& runtime, DataLoaderBase& loader, DatasetBase& dataset, DataType data_type) {
     this->data_type = data_type;
     data_queue = std::make_unique<BoundedBlockingQueue<std::pair<GPUBatchInputOutput, uint32_t>>>(prefetch_factor);
     index_queue = std::make_unique<BoundedBlockingQueue<uint32_t>>(prefetch_factor);
     // Preallocate ring buffer to maximum dataset image stride to avoid future reallocations
     auto max_stride = dataset.image_shape().padded_size();
-    gpu_memory = create_device_buffer(*runtime, max_stride * prefetch_factor * sizeof(float), "AsyncDataLoader::gpu_memory");
+    gpu_memory = create_device_buffer(runtime, max_stride * prefetch_factor * sizeof(float), "AsyncDataLoader::gpu_memory");
     index_queue->clear();
     data_queue->clear();
     
@@ -125,13 +125,13 @@ struct AsyncDataLoader::Impl {
     QueueDesc queue_desc;
     queue_desc.non_blocking = true;
     queue_desc.debug_name = "AsyncDataLoader::prefetch_queue";
-    auto queue_result = runtime->create_queue(queue_desc);
+    auto queue_result = runtime.create_queue(queue_desc);
     if (!queue_result.ok()) {
       throw std::runtime_error("Failed to create prefetch queue: " + to_string(queue_result.error()));
     }
     prefetch_queue = queue_result.value();
     
-    prefetch_thread = std::jthread([&loader, &dataset, this, runtime](std::stop_token st) {
+    prefetch_thread = std::jthread([&loader, &dataset, this, &runtime](std::stop_token st) {
       try {
         size_t total_fetched = 0;
         while (!st.stop_requested()) {
@@ -285,7 +285,7 @@ struct AsyncDataLoader::Impl {
   ImageShape m_output_shape;
 };
 
-AsyncDataLoader::AsyncDataLoader(std::shared_ptr<BackendRuntime> runtime, std::shared_ptr<DatasetBase> dataset) 
+AsyncDataLoader::AsyncDataLoader(BackendRuntime& runtime, std::shared_ptr<DatasetBase> dataset) 
   : DataLoaderBase(runtime, dataset), m_impl(std::make_unique<Impl>()) {
   m_impl->generate_permutation(m_dataset->size());
 }
@@ -363,7 +363,7 @@ void AsyncDataLoader::reset() {
   m_impl->generate_permutation(m_dataset->size());
 
   // Relaunch prefetch thread and prime index queue
-  m_impl->start(m_runtime, *this, *m_dataset, m_params.data_type);
+  m_impl->start(*m_runtime, *this, *m_dataset, m_params.data_type);
 }
 
 } // namespace tinygs
