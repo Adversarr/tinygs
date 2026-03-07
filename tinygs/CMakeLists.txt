@@ -61,6 +61,7 @@ set(TINYGS_METAL_RUNTIME_SOURCES
 )
 
 set(TINYGS_BACKEND_METAL_SOURCES
+    "src/core/gpu_gaussian_metal.mm"
 )
 
 set(TINYGS_SOURCES ${TINYGS_COMMON_SOURCES})
@@ -165,6 +166,7 @@ if(TINYGS_BACKEND STREQUAL "CUDA")
 elseif(TINYGS_BACKEND STREQUAL "METAL")
     set_source_files_properties(
         ${TINYGS_METAL_RUNTIME_SOURCES}
+        ${TINYGS_BACKEND_METAL_SOURCES}
         PROPERTIES
             LANGUAGE OBJCXX
             COMPILE_FLAGS "-fobjc-arc"

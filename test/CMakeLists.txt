@@ -376,6 +376,23 @@ if(TINYGS_BACKEND STREQUAL "METAL")
     )
 
     add_test(NAME tinygs_metal_runtime_test COMMAND tinygs_metal_runtime_test)
+
+    add_executable(tinygs_metal_gpu_gaussian_test
+        metal_gpu_gaussian_test.cpp
+    )
+
+    target_link_libraries(tinygs_metal_gpu_gaussian_test
+        PRIVATE
+            tinygs::tinygs
+            GTest::gtest_main
+    )
+
+    set_target_properties(tinygs_metal_gpu_gaussian_test PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+
+    add_test(NAME tinygs_metal_gpu_gaussian_test COMMAND tinygs_metal_gpu_gaussian_test)
 endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
