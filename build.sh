@@ -11,12 +11,14 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
 Usage: ./build.sh
 
 Environment variables:
-  NVCC                          Path to nvcc binary if not in PATH
+  TINYGS_BACKEND                Backend to build (CUDA|METAL). Default: CUDA
+  NVCC                          Path to nvcc binary if not in PATH (CUDA only)
   BUILD_TYPE                    CMake build type (Release|Debug). Default: Release
   JOBS                          Parallel build jobs. Default: number of cores
-  TARGETS                       CMake targets to build. Default: "video_to_png config_train"
+  TARGETS                       CMake targets to build. Default: "config_train" for CUDA, empty for METAL
   TINYGS_CUDA_ARCHITECTURES     CUDA architectures (e.g., "86", "89"). Default: 86
   TINYGS_BUILD_APPS             Build application binaries (ON|OFF). Default: ON
+  TINYGS_BUILD_TESTS            Build tests (ON|OFF). Default: OFF
   TINYGS_ENABLE_PROFILE         Enable profiling with lineinfo (ON|OFF). Default: OFF
   TINYGS_ENABLE_NVTX_SYNC       Enable operation sync for accurate nvtx range (ON|OFF). Default: OFF
   TINYGS_ENABLE_NATIVE          Enable native optimizations (ON|OFF). Default: ON
@@ -31,38 +33,73 @@ if ! command -v cmake >/dev/null 2>&1; then
     exit 1
 fi
 
-# Resolve NVCC (env var takes precedence, then PATH)
-if [ -n "${NVCC:-}" ]; then
-    NVCC_BIN="${NVCC}"
-elif command -v nvcc >/dev/null 2>&1; then
-    NVCC_BIN="$(command -v nvcc)"
+# Backend selection (CUDA or METAL)
+TINYGS_BACKEND="${TINYGS_BACKEND:-CUDA}"
+if [ "${TINYGS_BACKEND}" != "CUDA" ] && [ "${TINYGS_BACKEND}" != "METAL" ]; then
+    echo -e "${RED}Error: TINYGS_BACKEND must be CUDA or METAL (got: ${TINYGS_BACKEND}).${NC}" >&2
+    exit 1
+fi
+
+# Resolve NVCC for CUDA backend (env var takes precedence, then PATH)
+if [ "${TINYGS_BACKEND}" = "CUDA" ]; then
+    if [ -n "${NVCC:-}" ]; then
+        NVCC_BIN="${NVCC}"
+    elif command -v nvcc >/dev/null 2>&1; then
+        NVCC_BIN="$(command -v nvcc)"
+    else
+        echo -e "${RED}Error: nvcc not found. Set NVCC=/path/to/nvcc or add nvcc to PATH.${NC}" >&2
+        exit 1
+    fi
+
+    if [ ! -x "${NVCC_BIN}" ]; then
+        echo -e "${RED}Error: NVCC points to a non-executable: ${NVCC_BIN}.${NC}" >&2
+        exit 1
+    fi
+fi
+
+# Get number of processors (portable across Linux and macOS)
+if command -v nproc >/dev/null 2>&1; then
+    NPROC=$(nproc)
 else
-    echo -e "${RED}Error: nvcc not found. Set NVCC=/path/to/nvcc or add nvcc to PATH.${NC}" >&2
-    exit 1
+    NPROC=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
 fi
 
-if [ ! -x "${NVCC_BIN}" ]; then
-    echo -e "${RED}Error: NVCC points to a non-executable: ${NVCC_BIN}.${NC}" >&2
-    exit 1
-fi
-
-NPROC=$(nproc)
 JOBS="${JOBS:-${NPROC}}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
-TARGETS="${TARGETS:-config_train}"
-BUILD_DIR="build/${BUILD_TYPE}"
+
+# Default TARGETS depends on backend (CUDA builds apps, METAL does not)
+if [ -z "${TARGETS:-}" ]; then
+    if [ "${TINYGS_BACKEND}" = "CUDA" ]; then
+        TARGETS="config_train"
+    else
+        TARGETS=""
+    fi
+fi
+
+# Convert to lowercase for build directory name
+BACKEND_LOWER=$(echo "${TINYGS_BACKEND}" | tr '[:upper:]' '[:lower:]')
+BUILD_TYPE_LOWER=$(echo "${BUILD_TYPE}" | tr '[:upper:]' '[:lower:]')
+BUILD_DIR="build/${BACKEND_LOWER}-${BUILD_TYPE_LOWER}"
 
 CMAKE_OPTS=(
   -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
-  -DCMAKE_CUDA_COMPILER="${NVCC_BIN}"
+  -DTINYGS_BACKEND="${TINYGS_BACKEND}"
 )
 
-if [ -n "${TINYGS_CUDA_ARCHITECTURES:-}" ]; then
+if [ "${TINYGS_BACKEND}" = "CUDA" ]; then
+  CMAKE_OPTS+=("-DCMAKE_CUDA_COMPILER=${NVCC_BIN}")
+fi
+
+if [ "${TINYGS_BACKEND}" = "CUDA" ] && [ -n "${TINYGS_CUDA_ARCHITECTURES:-}" ]; then
   CMAKE_OPTS+=("-DTINYGS_CUDA_ARCHITECTURES=${TINYGS_CUDA_ARCHITECTURES}")
 fi
 
 if [ -n "${TINYGS_BUILD_APPS:-}" ]; then
   CMAKE_OPTS+=("-DTINYGS_BUILD_APPS=${TINYGS_BUILD_APPS}")
+fi
+
+if [ -n "${TINYGS_BUILD_TESTS:-}" ]; then
+  CMAKE_OPTS+=("-DTINYGS_BUILD_TESTS=${TINYGS_BUILD_TESTS}")
 fi
 
 if [ -n "${TINYGS_ENABLE_PROFILE:-}" ]; then
@@ -81,7 +118,11 @@ if [ -n "${TINYGS_ENABLE_FAST_MATH:-}" ]; then
   CMAKE_OPTS+=("-DTINYGS_ENABLE_FAST_MATH=${TINYGS_ENABLE_FAST_MATH}")
 fi
 
-echo -e "${GREEN}nvcc found at: ${NVCC_BIN}, ${JOBS} cores available for build.${NC}"
+if [ "${TINYGS_BACKEND}" = "CUDA" ]; then
+    echo -e "${GREEN}nvcc found at: ${NVCC_BIN}, ${JOBS} cores available for build.${NC}"
+else
+    echo -e "${GREEN}Building with ${TINYGS_BACKEND} backend, ${JOBS} cores available for build.${NC}"
+fi
 
 # Ensure we are at repository root (CMakeLists.txt should be present)
 if [ ! -f CMakeLists.txt ]; then
@@ -96,24 +137,38 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-cmake --build "${BUILD_DIR}" --config "${BUILD_TYPE}" --target ${TARGETS} -j "${JOBS}"
+# Build all or specific targets
+if [ -n "${TARGETS:-}" ]; then
+    cmake --build "${BUILD_DIR}" --config "${BUILD_TYPE}" --target ${TARGETS} -j "${JOBS}"
+else
+    cmake --build "${BUILD_DIR}" --config "${BUILD_TYPE}" -j "${JOBS}"
+fi
 if [ $? -ne 0 ]; then
     echo -e "${RED}Error: CMake build failed.${NC}" >&2
     exit 1
 fi
 
-# Detect whether the built executables exist
-for t in ${TARGETS}; do
-    exe="${BUILD_DIR}/apps/${t}"
-    if [ ! -f "${exe}" ]; then
-        echo -e "${RED}Error: ${exe} not found.${NC}" >&2
-        exit 1
-    fi
-done
+# Detect whether the built executables exist (CUDA builds apps by default)
+if [ -n "${TARGETS:-}" ]; then
+    for t in ${TARGETS}; do
+        exe="${BUILD_DIR}/apps/${t}"
+        if [ ! -f "${exe}" ]; then
+            echo -e "${RED}Error: ${exe} not found.${NC}" >&2
+            exit 1
+        fi
+    done
 
-# Copy executables to repo root
-for t in ${TARGETS}; do
-    cp "${BUILD_DIR}/apps/${t}" .
-done
-cp "${BUILD_DIR}/compile_commands.json" .
-echo -e "${BLUE}Essential binaries built: ${TARGETS}.${NC}"
+    # Copy executables to repo root
+    for t in ${TARGETS}; do
+        cp "${BUILD_DIR}/apps/${t}" .
+    done
+fi
+if [ -f "${BUILD_DIR}/compile_commands.json" ]; then
+    cp "${BUILD_DIR}/compile_commands.json" .
+fi
+if [ -n "${TARGETS:-}" ]; then
+    echo -e "${BLUE}Essential binaries built: ${TARGETS}.${NC}"
+else
+    echo -e "${BLUE}Build completed for ${TINYGS_BACKEND} backend.${NC}"
+fi
+echo -e "${BLUE}Build completed for ${TINYGS_BACKEND} backend, build dir: ${BUILD_DIR}.${NC}"

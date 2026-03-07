@@ -30,16 +30,14 @@
 
 ## Build and Test
 ```bash
-./build.sh # it only build the apps by default for quick iteration, review its content to see how to change the behavior
-timeout 40 ./config_train -c configs/garden.json # Test, the data is already prepared
-# Test changes: build and run affected tests; smoke-test training path if affected.
-cmake -S . -B build/Release -DTINYGS_BUILD_TESTS=ON
-cmake --build build/Release --target tinygs_<xxx>_test -j "$(nproc)"
-ctest --test-dir build/Release --output-on-failure
-./config_train -c configs/garden.json
+./build.sh                                          # CUDA backend (default)
+TINYGS_BACKEND=METAL ./build.sh                     # Metal backend
+TINYGS_BUILD_TESTS=ON ./build.sh                    # Build with tests
+TINYGS_BACKEND=METAL TINYGS_BUILD_TESTS=ON ./build.sh  # Metal + tests
 ```
-- After C++/CUDA changes: run `./build.sh`; run tests when affected; smoke-test training-path changes.
-- `docs/CLI.md` may drift; treat `build.sh` and `apps/CMakeLists.txt` as source of truth for targets.
+- After changes: run `./build.sh` (CUDA) or `TINYGS_BACKEND=METAL ./build.sh` (Metal); run tests when affected; smoke-test training-path changes.
+- Metal backend: builds library only (no apps yet); tests available via `TINYGS_BUILD_TESTS=ON`.
+- `docs/CLI.md` may drift; treat `build.sh` as source of truth for build options.
 
 ## Project Conventions
 - Keep patches surgical and module-local; if adding files, update explicit CMake target lists.

@@ -24,7 +24,7 @@
 #import <Metal/Metal.h>
 #import <Foundation/Foundation.h>
 
-#include "tinygs/platform/runtime_contract.hpp"
+#include "tinygs/platform/runtime.hpp"
 #include "tinygs/common.hpp"
 
 #include <cstddef>
