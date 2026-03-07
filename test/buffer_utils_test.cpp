@@ -48,130 +48,80 @@ public:
   int device() const noexcept override { return 0; }
   CapabilityProfile capability_profile() const override { return CapabilityProfile{}; }
 
-  Result<BackendQueue> create_queue(const QueueDesc&) override {
+protected:
+  Result<BackendQueue> do_create_queue(const QueueDesc&) override {
     return Result<BackendQueue>::success(std::make_shared<FakeQueue>(), backend_type(), "create_queue");
   }
-
-  Result<BackendEvent> create_event(const EventDesc&) override {
+  Result<BackendEvent> do_create_event(const EventDesc&) override {
     return Result<BackendEvent>::success(std::make_shared<FakeEvent>(), backend_type(), "create_event");
   }
-
-  Result<BackendBuffer> create_buffer(const BufferDesc& desc) override {
-    if (desc.size_bytes == 0) {
-      return Result<BackendBuffer>::failure(
-          backend_error(backend_type(), BackendErrorCode::InvalidArgument, "create_buffer", "size must be > 0"));
-    }
+  Result<BackendBuffer> do_create_buffer(const BufferDesc& desc) override {
     return Result<BackendBuffer>::success(
         std::make_shared<FakeBuffer>(desc), backend_type(), "create_buffer");
   }
 
-  BackendError record_event(const std::shared_ptr<BackendQueue>&,
-                            const std::shared_ptr<BackendEvent>&) override {
+  BackendError do_record_event(BackendQueue&, BackendEvent&) override {
     return backend_success(backend_type(), "record_event");
   }
-
-  BackendError wait_event(const std::shared_ptr<BackendQueue>&,
-                          const std::shared_ptr<BackendEvent>&) override {
+  BackendError do_wait_event(BackendQueue&, BackendEvent&) override {
     return backend_success(backend_type(), "wait_event");
   }
-
-  BackendError synchronize_queue(const std::shared_ptr<BackendQueue>&) override {
+  BackendError do_synchronize_queue(BackendQueue&) override {
     sync_queue_calls += 1;
     return backend_success(backend_type(), "synchronize_queue");
   }
-
-  BackendError synchronize_event(const std::shared_ptr<BackendEvent>&) override {
+  BackendError do_synchronize_event(BackendEvent&) override {
     return backend_success(backend_type(), "synchronize_event");
   }
-
-  BackendError synchronize_device() override {
+  BackendError do_synchronize_device() override {
     return backend_success(backend_type(), "synchronize_device");
   }
 
-  BackendError copy_buffer_async(const std::shared_ptr<BackendQueue>&,
-                                 const std::shared_ptr<BackendBuffer>& dst,
-                                 const std::shared_ptr<BackendBuffer>& src,
-                                 const CopyRegion& region) override {
-    auto dst_buf = std::dynamic_pointer_cast<FakeBuffer>(dst);
-    auto src_buf = std::dynamic_pointer_cast<FakeBuffer>(src);
-    if (!dst_buf || !src_buf) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument, "copy_buffer_async", "bad buffer");
-    }
+  BackendError do_copy_buffer(
+      BackendQueue&,
+      BackendBuffer& dst, size_t dst_offset,
+      BackendBuffer& src, size_t src_offset,
+      size_t size_bytes) override {
     std::memmove(
-        static_cast<uint8_t*>(dst_buf->data()) + region.dst_offset,
-        static_cast<const uint8_t*>(src_buf->data()) + region.src_offset,
-        region.size_bytes);
+        static_cast<uint8_t*>(dst.data()) + dst_offset,
+        static_cast<const uint8_t*>(src.data()) + src_offset,
+        size_bytes);
     return backend_success(backend_type(), "copy_buffer_async");
   }
-
-  BackendError copy_from_host_async(const std::shared_ptr<BackendQueue>&,
-                                    const std::shared_ptr<BackendBuffer>& dst,
-                                    const void* src,
-                                    const BufferTransferRegion& region) override {
-    auto dst_buf = std::dynamic_pointer_cast<FakeBuffer>(dst);
-    if (!dst_buf) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument, "copy_from_host_async", "bad buffer");
-    }
-    if (region.size_bytes > 0 && src == nullptr) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument, "copy_from_host_async", "null src");
-    }
+  BackendError do_copy_from_host(
+      BackendQueue&,
+      BackendBuffer& dst, size_t dst_offset,
+      const void* src, size_t size_bytes) override {
     std::memmove(
-        static_cast<uint8_t*>(dst_buf->data()) + region.buffer_offset,
+        static_cast<uint8_t*>(dst.data()) + dst_offset,
         src,
-        region.size_bytes);
+        size_bytes);
     return backend_success(backend_type(), "copy_from_host_async");
   }
-
-  BackendError copy_to_host_async(const std::shared_ptr<BackendQueue>&,
-                                  void* dst,
-                                  const std::shared_ptr<BackendBuffer>& src,
-                                  const BufferTransferRegion& region) override {
-    auto src_buf = std::dynamic_pointer_cast<FakeBuffer>(src);
-    if (!src_buf) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument, "copy_to_host_async", "bad buffer");
-    }
-    if (region.size_bytes > 0 && dst == nullptr) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument, "copy_to_host_async", "null dst");
-    }
+  BackendError do_copy_to_host(
+      BackendQueue&,
+      void* dst,
+      BackendBuffer& src, size_t src_offset,
+      size_t size_bytes) override {
     std::memmove(
         dst,
-        static_cast<const uint8_t*>(src_buf->data()) + region.buffer_offset,
-        region.size_bytes);
+        static_cast<const uint8_t*>(src.data()) + src_offset,
+        size_bytes);
     return backend_success(backend_type(), "copy_to_host_async");
   }
-
-  BackendError copy_device_to_host_async(const std::shared_ptr<BackendQueue>&,
-                                         void* dst,
-                                         const void* src,
-                                         size_t size_bytes) override {
-    if (size_bytes > 0 && (dst == nullptr || src == nullptr)) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument, "copy_device_to_host_async", "null ptr");
-    }
+  BackendError do_transfer_raw(
+      BackendQueue&,
+      void* dst, const void* src,
+      size_t size_bytes,
+      TransferDirection) override {
     std::memmove(dst, src, size_bytes);
-    return backend_success(backend_type(), "copy_device_to_host_async");
+    return backend_success(backend_type(), "transfer_raw");
   }
-
-  BackendError copy_host_to_device_async(const std::shared_ptr<BackendQueue>&,
-                                         void* dst,
-                                         const void* src,
-                                         size_t size_bytes) override {
-    if (size_bytes > 0 && (dst == nullptr || src == nullptr)) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument, "copy_host_to_device_async", "null ptr");
-    }
-    std::memmove(dst, src, size_bytes);
-    return backend_success(backend_type(), "copy_host_to_device_async");
-  }
-
-  BackendError fill_buffer_async(const std::shared_ptr<BackendQueue>&,
-                                 const std::shared_ptr<BackendBuffer>& buffer,
-                                 uint8_t value,
-                                 size_t offset,
-                                 size_t size_bytes) override {
-    auto typed = std::dynamic_pointer_cast<FakeBuffer>(buffer);
-    if (!typed) {
-      return backend_error(backend_type(), BackendErrorCode::InvalidArgument, "fill_buffer_async", "bad buffer");
-    }
-    std::memset(static_cast<uint8_t*>(typed->data()) + offset, static_cast<int>(value), size_bytes);
+  BackendError do_fill_buffer(
+      BackendQueue&,
+      BackendBuffer& buffer,
+      size_t offset, uint8_t value, size_t size_bytes) override {
+    std::memset(static_cast<uint8_t*>(buffer.data()) + offset, static_cast<int>(value), size_bytes);
     return backend_success(backend_type(), "fill_buffer_async");
   }
 };

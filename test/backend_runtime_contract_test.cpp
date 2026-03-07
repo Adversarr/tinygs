@@ -29,6 +29,9 @@ BackendConfig make_cuda_config() {
   return config;
 }
 
+// Decorator that counts sync calls and delegates to an inner runtime.
+// Under NVI, do_* receives references; we wrap them in non-owning shared_ptrs
+// to delegate through the inner runtime's public API.
 class CountingRuntime final : public BackendRuntime {
 public:
   explicit CountingRuntime(std::shared_ptr<BackendRuntime> inner) : m_inner(std::move(inner)) {}
@@ -40,91 +43,87 @@ public:
   int device() const noexcept override { return m_inner->device(); }
   CapabilityProfile capability_profile() const override { return m_inner->capability_profile(); }
 
-  Result<BackendQueue> create_queue(const QueueDesc& desc) override {
+protected:
+  Result<BackendQueue> do_create_queue(const QueueDesc& desc) override {
     return m_inner->create_queue(desc);
   }
-
-  Result<BackendEvent> create_event(const EventDesc& desc) override {
+  Result<BackendEvent> do_create_event(const EventDesc& desc) override {
     return m_inner->create_event(desc);
   }
-
-  Result<BackendBuffer> create_buffer(const BufferDesc& desc) override {
+  Result<BackendBuffer> do_create_buffer(const BufferDesc& desc) override {
     return m_inner->create_buffer(desc);
   }
 
-  BackendError record_event(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendEvent>& event) override {
-    return m_inner->record_event(queue, event);
+  BackendError do_record_event(BackendQueue& queue, BackendEvent& event) override {
+    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
+    auto e = std::shared_ptr<BackendEvent>(&event, [](BackendEvent*){});
+    return m_inner->record_event(q, e);
+  }
+  BackendError do_wait_event(BackendQueue& queue, BackendEvent& event) override {
+    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
+    auto e = std::shared_ptr<BackendEvent>(&event, [](BackendEvent*){});
+    return m_inner->wait_event(q, e);
   }
 
-  BackendError wait_event(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendEvent>& event) override {
-    return m_inner->wait_event(queue, event);
-  }
-
-  BackendError synchronize_queue(const std::shared_ptr<BackendQueue>& queue) override {
+  BackendError do_synchronize_queue(BackendQueue& queue) override {
     sync_queue_calls += 1;
-    return m_inner->synchronize_queue(queue);
+    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
+    return m_inner->synchronize_queue(q);
   }
-
-  BackendError synchronize_event(const std::shared_ptr<BackendEvent>& event) override {
-    return m_inner->synchronize_event(event);
+  BackendError do_synchronize_event(BackendEvent& event) override {
+    auto e = std::shared_ptr<BackendEvent>(&event, [](BackendEvent*){});
+    return m_inner->synchronize_event(e);
   }
-
-  BackendError synchronize_device() override {
+  BackendError do_synchronize_device() override {
     sync_device_calls += 1;
     return m_inner->synchronize_device();
   }
 
-  BackendError copy_buffer_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendBuffer>& dst,
-      const std::shared_ptr<BackendBuffer>& src,
-      const CopyRegion& region) override {
-    return m_inner->copy_buffer_async(queue, dst, src, region);
-  }
-
-  BackendError copy_from_host_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendBuffer>& dst,
-      const void* src,
-      const BufferTransferRegion& region) override {
-    return m_inner->copy_from_host_async(queue, dst, src, region);
-  }
-
-  BackendError copy_to_host_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      void* dst,
-      const std::shared_ptr<BackendBuffer>& src,
-      const BufferTransferRegion& region) override {
-    return m_inner->copy_to_host_async(queue, dst, src, region);
-  }
-
-  BackendError copy_device_to_host_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      void* dst,
-      const void* src,
+  BackendError do_copy_buffer(
+      BackendQueue& queue,
+      BackendBuffer& dst, size_t dst_offset,
+      BackendBuffer& src, size_t src_offset,
       size_t size_bytes) override {
-    return m_inner->copy_device_to_host_async(queue, dst, src, size_bytes);
+    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
+    auto d = std::shared_ptr<BackendBuffer>(&dst, [](BackendBuffer*){});
+    auto s = std::shared_ptr<BackendBuffer>(&src, [](BackendBuffer*){});
+    return m_inner->copy_buffer_async(q, d, s, CopyRegion{size_bytes, src_offset, dst_offset});
   }
-
-  BackendError copy_host_to_device_async(
-      const std::shared_ptr<BackendQueue>& queue,
+  BackendError do_copy_from_host(
+      BackendQueue& queue,
+      BackendBuffer& dst, size_t dst_offset,
+      const void* src, size_t size_bytes) override {
+    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
+    auto d = std::shared_ptr<BackendBuffer>(&dst, [](BackendBuffer*){});
+    return m_inner->copy_from_host_async(q, d, src, BufferTransferRegion{size_bytes, dst_offset});
+  }
+  BackendError do_copy_to_host(
+      BackendQueue& queue,
       void* dst,
-      const void* src,
+      BackendBuffer& src, size_t src_offset,
       size_t size_bytes) override {
-    return m_inner->copy_host_to_device_async(queue, dst, src, size_bytes);
+    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
+    auto s = std::shared_ptr<BackendBuffer>(&src, [](BackendBuffer*){});
+    return m_inner->copy_to_host_async(q, dst, s, BufferTransferRegion{size_bytes, src_offset});
   }
-
-  BackendError fill_buffer_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendBuffer>& buffer,
-      uint8_t value,
-      size_t offset,
-      size_t size_bytes) override {
-    return m_inner->fill_buffer_async(queue, buffer, value, offset, size_bytes);
+  BackendError do_transfer_raw(
+      BackendQueue& queue,
+      void* dst, const void* src,
+      size_t size_bytes,
+      TransferDirection direction) override {
+    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
+    if (direction == TransferDirection::DeviceToHost) {
+      return m_inner->copy_device_to_host_async(q, dst, src, size_bytes);
+    }
+    return m_inner->copy_host_to_device_async(q, dst, src, size_bytes);
+  }
+  BackendError do_fill_buffer(
+      BackendQueue& queue,
+      BackendBuffer& buffer,
+      size_t offset, uint8_t value, size_t size_bytes) override {
+    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
+    auto b = std::shared_ptr<BackendBuffer>(&buffer, [](BackendBuffer*){});
+    return m_inner->fill_buffer_async(q, b, value, offset, size_bytes);
   }
 
 private:
