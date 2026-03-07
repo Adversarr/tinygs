@@ -807,4 +807,58 @@ TEST_F(MetalRuntimeTest, CapabilityProfileMetalSpecific) {
   EXPECT_FALSE(caps.supports_graph_capture);
 }
 
+TEST_F(MetalRuntimeTest, CopyToHostRespectsQueuedWrites) {
+  BufferDesc desc;
+  desc.size_bytes = 1 << 20;
+  auto bufferResult = runtime->create_buffer(desc);
+  ASSERT_TRUE(bufferResult.ok()) << bufferResult.error().message;
+  auto buffer = bufferResult.value();
+
+  auto queueResult = runtime->create_queue(QueueDesc{});
+  ASSERT_TRUE(queueResult.ok()) << queueResult.error().message;
+  auto queue = queueResult.value();
+
+  std::memset(buffer->data(), 0x00, desc.size_bytes);
+  auto fillResult = runtime->fill_buffer_async(queue, buffer, 0x7B);
+  ASSERT_TRUE(fillResult.ok()) << fillResult.message;
+
+  std::vector<uint8_t> host(desc.size_bytes, 0x00);
+  auto copyResult = runtime->copy_to_host_async(
+      queue, host.data(), buffer, BufferTransferRegion{desc.size_bytes, 0});
+  ASSERT_TRUE(copyResult.ok()) << copyResult.message;
+
+  for (size_t i = 0; i < host.size(); ++i) {
+    EXPECT_EQ(host[i], 0x7B) << "Mismatch at index " << i;
+  }
+}
+
+TEST_F(MetalRuntimeTest, CopyFromHostRespectsQueuedWrites) {
+  BufferDesc desc;
+  desc.size_bytes = 1 << 20;
+  auto bufferResult = runtime->create_buffer(desc);
+  ASSERT_TRUE(bufferResult.ok()) << bufferResult.error().message;
+  auto buffer = bufferResult.value();
+
+  auto queueResult = runtime->create_queue(QueueDesc{});
+  ASSERT_TRUE(queueResult.ok()) << queueResult.error().message;
+  auto queue = queueResult.value();
+
+  std::memset(buffer->data(), 0x00, desc.size_bytes);
+  auto fillResult = runtime->fill_buffer_async(queue, buffer, 0xAA);
+  ASSERT_TRUE(fillResult.ok()) << fillResult.message;
+
+  std::vector<uint8_t> host(desc.size_bytes, 0x11);
+  auto copyResult = runtime->copy_from_host_async(
+      queue, buffer, host.data(), BufferTransferRegion{desc.size_bytes, 0});
+  ASSERT_TRUE(copyResult.ok()) << copyResult.message;
+
+  auto syncResult = runtime->synchronize_queue(queue);
+  ASSERT_TRUE(syncResult.ok()) << syncResult.message;
+
+  uint8_t* data = static_cast<uint8_t*>(buffer->data());
+  for (size_t i = 0; i < desc.size_bytes; ++i) {
+    EXPECT_EQ(data[i], 0x11) << "Mismatch at index " << i;
+  }
+}
+
 }  // namespace tinygs

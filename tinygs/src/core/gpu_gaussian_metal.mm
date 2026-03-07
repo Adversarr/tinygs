@@ -39,6 +39,15 @@ std::shared_ptr<BackendQueue> create_internal_queue(const std::shared_ptr<Backen
   return queue_result.value();
 }
 
+std::shared_ptr<BackendQueue> make_effective_queue(
+    const std::shared_ptr<BackendRuntime>& runtime,
+    const BackendQueue* queue) {
+  if (queue != nullptr) {
+    return std::shared_ptr<BackendQueue>(const_cast<BackendQueue*>(queue), [](BackendQueue*) {});
+  }
+  return create_internal_queue(runtime);
+}
+
 std::shared_ptr<BackendBuffer> clone_buffer_direct(
     const std::shared_ptr<BackendRuntime>& runtime,
     const std::shared_ptr<BackendBuffer>& src,
@@ -339,17 +348,16 @@ void GPUGaussian3d::copy_to_host(
 }
 
 void GPUGaussian3d::memset_async(char value, const BackendQueue* queue) {
-  (void)queue;  // queue is ignored; Metal requires a dedicated command buffer per operation
-  const auto internal_queue = create_internal_queue(m_impl->m_runtime);
+  const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
   const uint8_t byte_value = static_cast<uint8_t>(value);
-  if (m_impl->m_means && m_impl->m_means->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, internal_queue, m_impl->m_means, byte_value);
-  if (m_impl->m_opacities && m_impl->m_opacities->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, internal_queue, m_impl->m_opacities, byte_value);
-  if (m_impl->m_rotations && m_impl->m_rotations->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, internal_queue, m_impl->m_rotations, byte_value);
-  if (m_impl->m_scales && m_impl->m_scales->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, internal_queue, m_impl->m_scales, byte_value);
-  if (m_impl->m_sh0 && m_impl->m_sh0->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, internal_queue, m_impl->m_sh0, byte_value);
-  if (m_impl->m_sh1 && m_impl->m_sh1->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, internal_queue, m_impl->m_sh1, byte_value);
-  if (m_impl->m_sh2 && m_impl->m_sh2->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, internal_queue, m_impl->m_sh2, byte_value);
-  if (m_impl->m_sh3 && m_impl->m_sh3->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, internal_queue, m_impl->m_sh3, byte_value);
+  if (m_impl->m_means && m_impl->m_means->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, effective_queue, m_impl->m_means, byte_value);
+  if (m_impl->m_opacities && m_impl->m_opacities->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, effective_queue, m_impl->m_opacities, byte_value);
+  if (m_impl->m_rotations && m_impl->m_rotations->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, effective_queue, m_impl->m_rotations, byte_value);
+  if (m_impl->m_scales && m_impl->m_scales->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, effective_queue, m_impl->m_scales, byte_value);
+  if (m_impl->m_sh0 && m_impl->m_sh0->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, effective_queue, m_impl->m_sh0, byte_value);
+  if (m_impl->m_sh1 && m_impl->m_sh1->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, effective_queue, m_impl->m_sh1, byte_value);
+  if (m_impl->m_sh2 && m_impl->m_sh2->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, effective_queue, m_impl->m_sh2, byte_value);
+  if (m_impl->m_sh3 && m_impl->m_sh3->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, effective_queue, m_impl->m_sh3, byte_value);
 }
 
 void GPUGaussian3d::memset(char value) {
@@ -367,11 +375,15 @@ void GPUGaussian3d::memset(char value) {
 }
 
 void GPUGaussian3d::remove(char* kept_flag, int num_kept, const BackendQueue* queue) {
-  (void)queue;
   CHECK_THROW(num_kept >= 0);
+  const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
+  detail::throw_if_status_error(
+      m_impl->m_runtime->synchronize_queue(effective_queue),
+      "GPUGaussian3d::remove sync");
   const size_t old_size = m_impl->m_size;
   if (old_size == 0) {
-    m_impl->m_size = static_cast<size_t>(num_kept);
+    CHECK_THROW(num_kept == 0);
+    m_impl->m_size = 0;
     m_impl->m_means.reset();
     m_impl->m_opacities.reset();
     m_impl->m_rotations.reset();
@@ -478,7 +490,10 @@ void GPUGaussian3d::append(int num_dup, const std::shared_ptr<BackendQueue>& que
 }
 
 std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(const BackendQueue* queue) {
-  (void)queue;
+  const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
+  detail::throw_if_status_error(
+      m_impl->m_runtime->synchronize_queue(effective_queue),
+      "GPUGaussian3d::clone_async sync");
   auto gaussians = std::make_unique<GPUGaussian3d>(m_impl->m_runtime);
   gaussians->m_current_sh_degree = m_current_sh_degree;
   gaussians->m_scene_scale = m_scene_scale;
@@ -511,7 +526,10 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
 }
 
 std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(const BackendQueue* queue) {
-  (void)queue;
+  const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
+  detail::throw_if_status_error(
+      m_impl->m_runtime->synchronize_queue(effective_queue),
+      "GPUGaussian3d::compute_morton_order_indices sync");
   const uint32_t n = static_cast<uint32_t>(m_impl->m_size);
   if (n == 0) {
     return nullptr;
@@ -559,13 +577,15 @@ std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(const
   });
 
   auto idx_out = create_device_buffer_for<uint>(m_impl->m_runtime, static_cast<size_t>(n), "morton_idx_out");
-  const auto internal_queue = create_internal_queue(m_impl->m_runtime);
-  tinygs::copy_from_host_async(m_impl->m_runtime, internal_queue, idx_out, indices.data(), indices.size());
+  tinygs::copy_from_host_async(m_impl->m_runtime, effective_queue, idx_out, indices.data(), indices.size());
   return idx_out;
 }
 
 void GPUGaussian3d::reorder(uint* indices, const BackendQueue* queue) {
-  (void)queue;
+  const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
+  detail::throw_if_status_error(
+      m_impl->m_runtime->synchronize_queue(effective_queue),
+      "GPUGaussian3d::reorder sync");
   const int n = static_cast<int>(m_impl->m_size);
   if (n == 0) {
     return;
@@ -612,7 +632,10 @@ std::shared_ptr<BackendBuffer> reorder_densification_info(
     size_t n,
     const std::shared_ptr<BackendRuntime>& runtime,
     const BackendQueue* queue) {
-  (void)queue;
+  const auto effective_queue = make_effective_queue(runtime, queue);
+  detail::throw_if_status_error(
+      runtime->synchronize_queue(effective_queue),
+      "reorder_densification_info sync");
   if (!info || n == 0) {
     return nullptr;
   }

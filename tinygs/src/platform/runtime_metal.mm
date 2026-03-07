@@ -155,6 +155,17 @@ public:
   CapabilityProfile capability_profile() const override { return m_capability_profile; }
 
 protected:
+  BackendError wait_for_queue_completion(MetalQueue& queue, const char* op) {
+    id<MTLCommandBuffer> sync_cmd = [queue.queue() commandBuffer];
+    if (!sync_cmd) {
+      return backend_error(BackendType::Metal, BackendErrorCode::RuntimeFailure,
+                           op, "Failed to create command buffer for queue synchronization");
+    }
+    [sync_cmd commit];
+    [sync_cmd waitUntilCompleted];
+    return backend_success(BackendType::Metal, op);
+  }
+
   // ---- Resource creation ----
 
   Result<BackendQueue> do_create_queue(const QueueDesc& /*desc*/) override {
@@ -306,32 +317,44 @@ protected:
   }
 
   BackendError do_copy_from_host(
-      BackendQueue& /*queue*/,
+      BackendQueue& queue,
       BackendBuffer& dst, size_t dst_offset,
       const void* src, size_t size_bytes) override {
-    // Unified memory: direct memcpy into buffer.contents.
+    auto& mq = static_cast<MetalQueue&>(queue);
+    auto sync_status = wait_for_queue_completion(mq, "copy_from_host_async");
+    if (!sync_status.ok()) {
+      return sync_status;
+    }
     void* dst_ptr = static_cast<char*>(dst.data()) + dst_offset;
     std::memcpy(dst_ptr, src, size_bytes);
     return backend_success(BackendType::Metal, "copy_from_host_async");
   }
 
   BackendError do_copy_to_host(
-      BackendQueue& /*queue*/,
+      BackendQueue& queue,
       void* dst,
       BackendBuffer& src, size_t src_offset,
       size_t size_bytes) override {
-    // Unified memory: direct memcpy from buffer.contents.
+    auto& mq = static_cast<MetalQueue&>(queue);
+    auto sync_status = wait_for_queue_completion(mq, "copy_to_host_async");
+    if (!sync_status.ok()) {
+      return sync_status;
+    }
     const void* src_ptr = static_cast<const char*>(src.data()) + src_offset;
     std::memcpy(dst, src_ptr, size_bytes);
     return backend_success(BackendType::Metal, "copy_to_host_async");
   }
 
   BackendError do_transfer_raw(
-      BackendQueue& /*queue*/,
+      BackendQueue& queue,
       void* dst, const void* src,
       size_t size_bytes,
       TransferDirection /*direction*/) override {
-    // Unified memory: both pointers in the same address space.
+    auto& mq = static_cast<MetalQueue&>(queue);
+    auto sync_status = wait_for_queue_completion(mq, "transfer_raw");
+    if (!sync_status.ok()) {
+      return sync_status;
+    }
     std::memcpy(dst, src, size_bytes);
     return backend_success(BackendType::Metal, "transfer_raw");
   }

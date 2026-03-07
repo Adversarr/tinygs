@@ -201,5 +201,48 @@ TEST_F(MetalGPUGaussianTest, ComputeMortonIndicesAndDensificationReorderWork) {
   EXPECT_FLOAT_EQ(reordered_host[2].accum_counter, 30.0f);
 }
 
+TEST_F(MetalGPUGaussianTest, RemoveRejectsKeepingFromEmptySet) {
+  GPUGaussian3d gpu(runtime);
+  EXPECT_ANY_THROW(gpu.remove(nullptr, 1, queue.get()));
+}
+
+TEST_F(MetalGPUGaussianTest, QueueParameterPathsProduceConsistentResults) {
+  const Gaussian3d input = make_test_gaussians(3);
+  GPUGaussian3d gpu(runtime);
+  gpu.copy_from_host(input, queue);
+
+  gpu.memset_async(0, queue.get());
+  auto sync_status = runtime->synchronize_queue(queue);
+  ASSERT_TRUE(sync_status.ok()) << sync_status.message;
+
+  Gaussian3d after_memset;
+  gpu.copy_to_host(after_memset, queue);
+  for (size_t i = 0; i < after_memset.opacities.size(); ++i) {
+    EXPECT_FLOAT_EQ(after_memset.opacities[i], 0.0f);
+  }
+
+  gpu.copy_from_host(input, queue);
+  auto cloned = gpu.clone_async(queue.get());
+  ASSERT_NE(cloned, nullptr);
+  Gaussian3d cloned_host;
+  cloned->copy_to_host(cloned_host, queue);
+  expect_equal_gaussians(cloned_host, input);
+
+  auto morton = gpu.compute_morton_order_indices(queue.get());
+  ASSERT_NE(morton, nullptr);
+  std::array<uint, 3> idx{};
+  copy_to_host(runtime, queue, morton, idx.data(), idx.size());
+
+  auto reordered_info_src = create_device_buffer_for<DensificationInfo>(runtime, idx.size(), "info");
+  std::array<DensificationInfo, 3> infos{};
+  infos[0].accum_counter = 3.0f;
+  infos[1].accum_counter = 7.0f;
+  infos[2].accum_counter = 11.0f;
+  copy_from_host(runtime, queue, reordered_info_src, infos.data(), infos.size());
+  auto reordered_info = reorder_densification_info(
+      reordered_info_src, idx.data(), idx.size(), runtime, queue.get());
+  ASSERT_NE(reordered_info, nullptr);
+}
+
 }  // namespace
 }  // namespace tinygs
