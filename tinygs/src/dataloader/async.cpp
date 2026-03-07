@@ -117,7 +117,7 @@ struct AsyncDataLoader::Impl {
     index_queue = std::make_unique<BoundedBlockingQueue<uint32_t>>(prefetch_factor);
     // Preallocate ring buffer to maximum dataset image stride to avoid future reallocations
     auto max_stride = dataset.image_shape().padded_size();
-    gpu_memory = create_device_buffer(runtime, max_stride * prefetch_factor * sizeof(float), "AsyncDataLoader::gpu_memory");
+    gpu_memory = create_device_buffer(*runtime, max_stride * prefetch_factor * sizeof(float), "AsyncDataLoader::gpu_memory");
     index_queue->clear();
     data_queue->clear();
     

@@ -25,7 +25,7 @@ inline size_t checked_multiply_size_t(size_t a, size_t b, const char* op_name) {
 }
 
 inline BufferView whole_buffer_view(const std::shared_ptr<BackendBuffer>& buffer) {
-  return BufferView(buffer, 0, buffer ? buffer->size_bytes() : 0);
+  return BufferView(buffer.get(), 0, buffer ? buffer->size_bytes() : 0);
 }
 
 inline void throw_if_status_error(const BackendError& status, const char* op_name) {
@@ -36,10 +36,10 @@ inline void throw_if_status_error(const BackendError& status, const char* op_nam
 }
 
 inline void synchronize_queue_or_throw(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const char* op_name) {
-  throw_if_status_error(runtime->synchronize_queue(queue), op_name);
+  throw_if_status_error(runtime.synchronize_queue(queue), op_name);
 }
 
 inline BufferTransferRegion make_transfer_region(
@@ -132,9 +132,9 @@ size_t buffer_count(const std::shared_ptr<BackendBuffer>& buf) {
 
 /// Create a BackendBuffer using the provided descriptor
 inline std::shared_ptr<BackendBuffer> create_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
     const BufferDesc& desc) {
-  auto result = runtime->create_buffer(desc);
+  auto result = runtime.create_buffer(desc);
   if (!result.ok()) {
     throw std::runtime_error(
         "create_buffer failed (" + desc.debug_name + "): " + to_string(result.error()));
@@ -144,7 +144,7 @@ inline std::shared_ptr<BackendBuffer> create_buffer(
 
 /// Create a device-memory BackendBuffer of the given byte size
 inline std::shared_ptr<BackendBuffer> create_device_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
     size_t size_bytes,
     const std::string& debug_name = {}) {
   BufferDesc desc;
@@ -156,7 +156,7 @@ inline std::shared_ptr<BackendBuffer> create_device_buffer(
 
 /// Create a unified-memory BackendBuffer of the given byte size
 inline std::shared_ptr<BackendBuffer> create_unified_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
     size_t size_bytes,
     const std::string& debug_name = {},
     BufferHostAccess host_access = BufferHostAccess::ReadWrite) {
@@ -170,7 +170,7 @@ inline std::shared_ptr<BackendBuffer> create_unified_buffer(
 
 /// Create a host-pinned BackendBuffer of the given byte size
 inline std::shared_ptr<BackendBuffer> create_host_pinned_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
     size_t size_bytes,
     const std::string& debug_name = {},
     BufferHostAccess host_access = BufferHostAccess::ReadWrite) {
@@ -185,7 +185,7 @@ inline std::shared_ptr<BackendBuffer> create_host_pinned_buffer(
 /// Create a device-memory BackendBuffer sized for `count` elements of type T.
 template <typename T>
 std::shared_ptr<BackendBuffer> create_device_buffer_for(
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
     size_t count,
     const std::string& debug_name = {}) {
   return create_device_buffer(
@@ -197,7 +197,7 @@ std::shared_ptr<BackendBuffer> create_device_buffer_for(
 /// Create a unified-memory BackendBuffer sized for `count` elements of type T.
 template <typename T>
 std::shared_ptr<BackendBuffer> create_unified_buffer_for(
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
     size_t count,
     const std::string& debug_name = {},
     BufferHostAccess host_access = BufferHostAccess::ReadWrite) {
@@ -211,7 +211,7 @@ std::shared_ptr<BackendBuffer> create_unified_buffer_for(
 /// Create a host-pinned BackendBuffer sized for `count` elements of type T.
 template <typename T>
 std::shared_ptr<BackendBuffer> create_host_pinned_buffer_for(
-    const std::shared_ptr<BackendRuntime>& runtime,
+    BackendRuntime& runtime,
     size_t count,
     const std::string& debug_name = {},
     BufferHostAccess host_access = BufferHostAccess::ReadWrite) {
@@ -224,30 +224,30 @@ std::shared_ptr<BackendBuffer> create_host_pinned_buffer_for(
 
 /// Fill a buffer asynchronously via the runtime
 inline void fill_buffer_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     uint8_t value) {
   if (!buffer) return;
-  detail::throw_if_status_error(runtime->fill_buffer_async(queue, buffer, value), "fill_buffer_async");
+  detail::throw_if_status_error(runtime.fill_buffer_async(queue, *buffer, value), "fill_buffer_async");
 }
 
 /// Fill a buffer view asynchronously via the runtime
 inline void fill_buffer_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& view,
     uint8_t value) {
   if (view.empty()) return;
   detail::throw_if_status_error(
-      runtime->fill_buffer_async(queue, view.buffer(), value, view.offset_bytes(), view.size_bytes()),
+      runtime.fill_buffer_async(queue, *view.buffer(), value, view.offset_bytes(), view.size_bytes()),
       "fill_buffer_async");
 }
 
 /// Fill a buffer synchronously via the runtime
 inline void fill_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     uint8_t value) {
   fill_buffer_async(runtime, queue, buffer, value);
@@ -256,8 +256,8 @@ inline void fill_buffer(
 
 /// Fill a buffer view synchronously via the runtime
 inline void fill_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& view,
     uint8_t value) {
   fill_buffer_async(runtime, queue, view, value);
@@ -266,32 +266,32 @@ inline void fill_buffer(
 
 /// Alias for zero-filling a buffer asynchronously.
 inline void fill_buffer_zero_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer) {
   fill_buffer_async(runtime, queue, buffer, 0);
 }
 
 /// Alias for zero-filling a buffer view asynchronously.
 inline void fill_buffer_zero_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& view) {
   fill_buffer_async(runtime, queue, view, 0);
 }
 
 /// Alias for zero-filling a buffer synchronously.
 inline void fill_buffer_zero(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer) {
   fill_buffer(runtime, queue, buffer, 0);
 }
 
 /// Alias for zero-filling a buffer view synchronously.
 inline void fill_buffer_zero(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& view) {
   fill_buffer(runtime, queue, view, 0);
 }
@@ -299,8 +299,8 @@ inline void fill_buffer_zero(
 /// Copy data from host to device buffer view asynchronously
 template <typename T>
 void copy_from_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& dst,
     const T* src,
     size_t count) {
@@ -309,14 +309,14 @@ void copy_from_host_async(
     throw std::runtime_error("copy_from_host_async failed: src must not be null");
   }
   const auto region = detail::make_transfer_region(dst, size_bytes, "copy_from_host_async");
-  detail::throw_if_status_error(runtime->copy_from_host_async(queue, dst.buffer(), src, region), "copy_from_host_async");
+  detail::throw_if_status_error(runtime.copy_from_host_async(queue, *dst.buffer(), src, region), "copy_from_host_async");
 }
 
 /// Copy data from host to device buffer view synchronously
 template <typename T>
 void copy_from_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& dst,
     const T* src,
     size_t count) {
@@ -327,8 +327,8 @@ void copy_from_host(
 /// Copy data from host vector to device buffer view synchronously
 template <typename T>
 void copy_from_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& dst,
     const std::vector<T>& src) {
   copy_from_host(runtime, queue, dst, src.data(), src.size());
@@ -337,8 +337,8 @@ void copy_from_host(
 /// Copy data from host vector to device buffer view asynchronously
 template <typename T>
 void copy_from_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& dst,
     const std::vector<T>& src) {
   copy_from_host_async(runtime, queue, dst, src.data(), src.size());
@@ -347,8 +347,8 @@ void copy_from_host_async(
 /// Copy data from host to device buffer asynchronously
 template <typename T>
 void copy_from_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     const T* src,
     size_t count) {
@@ -358,8 +358,8 @@ void copy_from_host_async(
 /// Copy data from host to device buffer synchronously
 template <typename T>
 void copy_from_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     const T* src,
     size_t count) {
@@ -369,8 +369,8 @@ void copy_from_host(
 /// Copy data from host vector to device buffer asynchronously
 template <typename T>
 void copy_from_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     const std::vector<T>& src) {
   copy_from_host_async(runtime, queue, buffer, src.data(), src.size());
@@ -379,8 +379,8 @@ void copy_from_host_async(
 /// Copy data from host vector to device buffer synchronously
 template <typename T>
 void copy_from_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     const std::vector<T>& src) {
   copy_from_host(runtime, queue, buffer, src.data(), src.size());
@@ -389,35 +389,35 @@ void copy_from_host(
 /// Copy data from host to device buffer synchronously with an element offset.
 template <typename T>
 void copy_from_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     const T* src,
     size_t count,
     size_t buffer_offset_elems) {
   const size_t offset_bytes = detail::checked_multiply_size_t(buffer_offset_elems, sizeof(T), "copy_from_host");
   const size_t size_bytes = detail::checked_multiply_size_t(count, sizeof(T), "copy_from_host");
-  copy_from_host(runtime, queue, BufferView(buffer, offset_bytes, size_bytes), src, count);
+  copy_from_host(runtime, queue, BufferView(buffer.get(), offset_bytes, size_bytes), src, count);
 }
 
 /// Copy data from host to device buffer asynchronously with an element offset.
 template <typename T>
 void copy_from_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     const T* src,
     size_t count,
     size_t buffer_offset_elems) {
   const size_t offset_bytes = detail::checked_multiply_size_t(buffer_offset_elems, sizeof(T), "copy_from_host_async");
   const size_t size_bytes = detail::checked_multiply_size_t(count, sizeof(T), "copy_from_host_async");
-  copy_from_host_async(runtime, queue, BufferView(buffer, offset_bytes, size_bytes), src, count);
+  copy_from_host_async(runtime, queue, BufferView(buffer.get(), offset_bytes, size_bytes), src, count);
 }
 
 template <typename T>
 void copy_from_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     const std::vector<T>& src,
     size_t buffer_offset_elems) {
@@ -426,8 +426,8 @@ void copy_from_host(
 
 template <typename T>
 void copy_from_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     const std::vector<T>& src,
     size_t buffer_offset_elems) {
@@ -437,8 +437,8 @@ void copy_from_host_async(
 /// Copy data from device buffer view to host asynchronously
 template <typename T>
 void copy_to_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& src,
     T* dst,
     size_t count) {
@@ -447,14 +447,14 @@ void copy_to_host_async(
     throw std::runtime_error("copy_to_host_async failed: dst must not be null");
   }
   const auto region = detail::make_transfer_region(src, size_bytes, "copy_to_host_async");
-  detail::throw_if_status_error(runtime->copy_to_host_async(queue, dst, src.buffer(), region), "copy_to_host_async");
+  detail::throw_if_status_error(runtime.copy_to_host_async(queue, dst, *src.buffer(), region), "copy_to_host_async");
 }
 
 /// Copy data from device buffer view to host synchronously
 template <typename T>
 void copy_to_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& src,
     T* dst,
     size_t count) {
@@ -465,8 +465,8 @@ void copy_to_host(
 /// Copy data from device buffer to host synchronously
 template <typename T>
 void copy_to_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     T* dst,
     size_t count) {
@@ -476,8 +476,8 @@ void copy_to_host(
 /// Copy data from device buffer to host asynchronously
 template <typename T>
 void copy_to_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     T* dst,
     size_t count) {
@@ -487,8 +487,8 @@ void copy_to_host_async(
 /// Copy data from device buffer view to host vector. Resizes dst if needed.
 template <typename T>
 void copy_to_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& src,
     std::vector<T>& dst) {
   const size_t count = src.size_bytes() / sizeof(T);
@@ -501,8 +501,8 @@ void copy_to_host(
 /// Copy data from device buffer view to host vector asynchronously. Resizes dst if needed.
 template <typename T>
 void copy_to_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& src,
     std::vector<T>& dst) {
   const size_t count = src.size_bytes() / sizeof(T);
@@ -515,8 +515,8 @@ void copy_to_host_async(
 /// Copy data from device buffer to host vector asynchronously. Resizes dst if needed.
 template <typename T>
 void copy_to_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     std::vector<T>& dst) {
   const size_t count = buffer_count<T>(buffer);
@@ -529,8 +529,8 @@ void copy_to_host_async(
 /// Copy data from device buffer to host vector. Resizes dst if needed.
 template <typename T>
 void copy_to_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buffer,
     std::vector<T>& dst) {
   const size_t count = buffer_count<T>(buffer);
@@ -542,22 +542,22 @@ void copy_to_host(
 
 /// Copy data from host memory to a raw device pointer asynchronously
 inline void copy_raw_host_to_device_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const void* src,
     size_t size_bytes) {
   detail::validate_raw_copy_args(dst, size_bytes, "dst", "copy_raw_host_to_device_async");
   detail::validate_raw_copy_args(src, size_bytes, "src", "copy_raw_host_to_device_async");
   detail::throw_if_status_error(
-      runtime->copy_host_to_device_async(queue, dst, src, size_bytes),
+      runtime.copy_host_to_device_async(queue, dst, src, size_bytes),
       "copy_raw_host_to_device_async");
 }
 
 /// Copy data from host memory to a raw device pointer synchronously
 inline void copy_raw_host_to_device(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const void* src,
     size_t size_bytes) {
@@ -567,22 +567,22 @@ inline void copy_raw_host_to_device(
 
 /// Copy data from raw device memory to host asynchronously
 inline void copy_raw_device_to_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const void* src,
     size_t size_bytes) {
   detail::validate_raw_copy_args(dst, size_bytes, "dst", "copy_raw_device_to_host_async");
   detail::validate_raw_copy_args(src, size_bytes, "src", "copy_raw_device_to_host_async");
   detail::throw_if_status_error(
-      runtime->copy_device_to_host_async(queue, dst, src, size_bytes),
+      runtime.copy_device_to_host_async(queue, dst, src, size_bytes),
       "copy_raw_device_to_host_async");
 }
 
 /// Copy data from raw device memory to host synchronously
 inline void copy_raw_device_to_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const void* src,
     size_t size_bytes) {
@@ -592,8 +592,8 @@ inline void copy_raw_device_to_host(
 
 /// Copy data from a buffer view to host asynchronously using raw host memory.
 inline void copy_raw_device_to_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const BufferView& src) {
   copy_raw_device_to_host_async(runtime, queue, dst, src.data(), src.size_bytes());
@@ -601,8 +601,8 @@ inline void copy_raw_device_to_host_async(
 
 /// Copy data from a buffer view to host synchronously using raw host memory.
 inline void copy_raw_device_to_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const BufferView& src) {
   copy_raw_device_to_host(runtime, queue, dst, src.data(), src.size_bytes());
@@ -610,8 +610,8 @@ inline void copy_raw_device_to_host(
 
 /// Alias for raw host-to-device copies.
 inline void copy_host_to_device_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const void* src,
     size_t size_bytes) {
@@ -620,8 +620,8 @@ inline void copy_host_to_device_async(
 
 /// Alias for raw host-to-device copies.
 inline void copy_host_to_device(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const void* src,
     size_t size_bytes) {
@@ -630,8 +630,8 @@ inline void copy_host_to_device(
 
 /// Alias for raw device-to-host copies.
 inline void copy_device_to_host_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const BufferView& src) {
   copy_raw_device_to_host_async(runtime, queue, dst, src);
@@ -639,8 +639,8 @@ inline void copy_device_to_host_async(
 
 /// Alias for raw device-to-host copies.
 inline void copy_device_to_host(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     void* dst,
     const BufferView& src) {
   copy_raw_device_to_host(runtime, queue, dst, src);
@@ -648,19 +648,19 @@ inline void copy_device_to_host(
 
 /// Copy data between device buffer views asynchronously
 inline void copy_buffer_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& dst,
     const BufferView& src,
     size_t size_bytes) {
   const auto region = detail::make_copy_region(dst, src, size_bytes, "copy_buffer_async");
-  detail::throw_if_status_error(runtime->copy_buffer_async(queue, dst.buffer(), src.buffer(), region), "copy_buffer_async");
+  detail::throw_if_status_error(runtime.copy_buffer_async(queue, *dst.buffer(), *src.buffer(), region), "copy_buffer_async");
 }
 
 /// Copy full source view to destination view asynchronously
 inline void copy_buffer_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& dst,
     const BufferView& src) {
   copy_buffer_async(runtime, queue, dst, src, src.size_bytes());
@@ -668,8 +668,8 @@ inline void copy_buffer_async(
 
 /// Copy data between device buffer views synchronously
 inline void copy_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& dst,
     const BufferView& src,
     size_t size_bytes) {
@@ -679,8 +679,8 @@ inline void copy_buffer(
 
 /// Copy full source view to destination view synchronously
 inline void copy_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const BufferView& dst,
     const BufferView& src) {
   copy_buffer(runtime, queue, dst, src, src.size_bytes());
@@ -688,8 +688,8 @@ inline void copy_buffer(
 
 /// Copy data between device buffers asynchronously
 inline void copy_buffer_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& dst,
     const std::shared_ptr<BackendBuffer>& src,
     size_t size_bytes,
@@ -698,15 +698,15 @@ inline void copy_buffer_async(
   copy_buffer_async(
       runtime,
       queue,
-      BufferView(dst, dst_offset, size_bytes),
-      BufferView(src, src_offset, size_bytes),
+      BufferView(dst.get(), dst_offset, size_bytes),
+      BufferView(src.get(), src_offset, size_bytes),
       size_bytes);
 }
 
 /// Copy data between device buffers synchronously
 inline void copy_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& dst,
     const std::shared_ptr<BackendBuffer>& src,
     size_t size_bytes,
@@ -718,8 +718,8 @@ inline void copy_buffer(
 
 /// Clone a device buffer (create a copy with same contents)
 inline std::shared_ptr<BackendBuffer> clone_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& src,
     const std::string& debug_name = {}) {
   if (!src) return nullptr;
@@ -732,8 +732,8 @@ inline std::shared_ptr<BackendBuffer> clone_buffer(
 
 /// Clone a device buffer asynchronously
 inline std::shared_ptr<BackendBuffer> clone_buffer_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& src,
     const std::string& debug_name = {}) {
   if (!src) return nullptr;
@@ -747,8 +747,8 @@ inline std::shared_ptr<BackendBuffer> clone_buffer_async(
 /// Resize a buffer: create new buffer, copy old data, fill new region.
 template <typename T>
 std::shared_ptr<BackendBuffer> resize_buffer(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& old_buf,
     size_t new_count,
     const std::string& debug_name = {}) {
@@ -769,8 +769,8 @@ std::shared_ptr<BackendBuffer> resize_buffer(
 /// Resize a buffer asynchronously.
 template <typename T>
 std::shared_ptr<BackendBuffer> resize_buffer_async(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& old_buf,
     size_t new_count,
     const std::string& debug_name = {}) {

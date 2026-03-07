@@ -43,8 +43,8 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
   CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue))); // make sure the operations on training stream are done.
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
-    fill_buffer_zero_async(ctx.runtime, ctx.queue, ctx.densification_info);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(*ctx.runtime, num_gaussians);
+    fill_buffer_zero_async(*ctx.runtime, *ctx.queue, ctx.densification_info);
   }
 
   auto step = this_step();
@@ -58,8 +58,8 @@ void DefaultStrategy::step_impl(const RasterizeContext& ctx) {
     prune(ctx);
     // after pruning, we need to reset the densification info since the indices have changed.
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
-    fill_buffer_zero_async(ctx.runtime, ctx.queue, ctx.densification_info);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(*ctx.runtime, num_gaussians);
+    fill_buffer_zero_async(*ctx.runtime, *ctx.queue, ctx.densification_info);
   }
 
   if (m_params.reset_every > 0 && step % m_params.reset_every == 0 &&

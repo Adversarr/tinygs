@@ -199,7 +199,7 @@ std::shared_ptr<Orchestrator> build(const std::string& config_path) {
   std::shared_ptr<GPUGaussian3d> grads =
       gs3d->clone_async(major_queue.get());
   grads->memset_async(0, major_queue.get());
-  auto init_sync_status = backend_runtime->synchronize_queue(major_queue);
+  auto init_sync_status = backend_runtime->synchronize_queue(*major_queue);
   if (!init_sync_status.ok()) {
     throw std::runtime_error(
         "Failed to finish gaussian initialization: " + to_string(init_sync_status));

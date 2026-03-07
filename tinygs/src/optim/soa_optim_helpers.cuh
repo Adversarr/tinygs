@@ -58,8 +58,8 @@ __global__ static void duplicate_soa_optim_kernel(
 }
 
 inline void gather_soa_optim_buffers(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& src_first,
     const std::shared_ptr<BackendBuffer>& src_second,
     std::shared_ptr<BackendBuffer>& dst_first,
@@ -77,7 +77,7 @@ inline void gather_soa_optim_buffers(
   if (total == 0) {
     return;
   }
-  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
+  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue.native_handle());
   const int grid = (total + block_size - 1) / block_size;
   gather_soa_optim_kernel<unsigned int><<<grid, block_size, 0, stream>>>(
       buffer_data<float>(src_first),
@@ -96,8 +96,8 @@ inline void gather_soa_optim_buffers(
 }
 
 inline void relayout_soa_optim(
-    const std::shared_ptr<BackendRuntime>& runtime,
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendRuntime& runtime,
+    BackendQueue& queue,
     std::shared_ptr<BackendBuffer>& buf,
     int old_n,
     int new_n,
@@ -109,7 +109,7 @@ inline void relayout_soa_optim(
     return;
   }
 
-  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
+  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue.native_handle());
   auto identity = create_device_buffer_for<unsigned int>(runtime, old_n, "identity_mapping");
   thrust::sequence(thrust::cuda::par.on(stream),
                    buffer_data<unsigned int>(identity),
@@ -132,7 +132,7 @@ inline void relayout_soa_optim(
 
 template <typename T>
 inline void duplicate_optim_buffer(
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buf,
     const int* src_indices,
     const int* dst_indices,
@@ -141,7 +141,7 @@ inline void duplicate_optim_buffer(
   if (num_items == 0) {
     return;
   }
-  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
+  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue.native_handle());
   const int grid = (num_items + block_size - 1) / block_size;
   duplicate_optim_buffer_kernel<T><<<grid, block_size, 0, stream>>>(
       buffer_data<T>(buf),
@@ -152,7 +152,7 @@ inline void duplicate_optim_buffer(
 }
 
 inline void duplicate_soa_optim_buffer(
-    const std::shared_ptr<BackendQueue>& queue,
+    BackendQueue& queue,
     const std::shared_ptr<BackendBuffer>& buf,
     const int* src_indices,
     const int* dst_indices,
@@ -164,7 +164,7 @@ inline void duplicate_soa_optim_buffer(
   if (total == 0) {
     return;
   }
-  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
+  cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue.native_handle());
   const int grid = (total + block_size - 1) / block_size;
   duplicate_soa_optim_kernel<<<grid, block_size, 0, stream>>>(
       buffer_data<float>(buf),

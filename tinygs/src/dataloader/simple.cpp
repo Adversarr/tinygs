@@ -21,7 +21,7 @@ SimpleDataLoader::SimpleDataLoader(std::shared_ptr<BackendRuntime> runtime, std:
   m_transfer_queue = queue_result.value();
   // Preallocate maximum GPU buffer once to avoid future reallocations
   size_t max_stride = m_dataset->image_shape().padded_size();
-  m_gpu_memory = create_device_buffer(m_runtime, max_stride * sizeof(float), "SimpleDataLoader::m_gpu_memory");
+  m_gpu_memory = create_device_buffer(*m_runtime, max_stride * sizeof(float), "SimpleDataLoader::m_gpu_memory");
 }
 
 void SimpleDataLoader::generate_permutation() {
@@ -90,7 +90,7 @@ GPUBatchInputOutput SimpleDataLoader::next() {
 
   CHECK_THROW(m_transfer_queue != nullptr);
   auto r = next(m_transfer_queue.get());
-  auto status = m_runtime->synchronize_queue(m_transfer_queue);
+  auto status = m_runtime->synchronize_queue(*m_transfer_queue);
   if (!status.ok()) {
     throw std::runtime_error("SimpleDataLoader::next() queue sync failed: " + to_string(status));
   }

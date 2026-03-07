@@ -55,7 +55,7 @@ std::shared_ptr<BackendBuffer> clone_buffer_direct(
   if (!src || src->size_bytes() == 0) {
     return nullptr;
   }
-  auto dst = create_device_buffer(runtime, src->size_bytes(), debug_name);
+  auto dst = create_device_buffer(*runtime, src->size_bytes(), debug_name);
   std::memcpy(buffer_data<void>(dst), buffer_data_const<void>(src), src->size_bytes());
   return dst;
 }
@@ -68,7 +68,7 @@ std::shared_ptr<BackendBuffer> create_buffer_or_reset(
   if (count == 0) {
     return nullptr;
   }
-  return create_device_buffer_for<T>(runtime, count, debug_name);
+  return create_device_buffer_for<T>(*runtime, count, debug_name);
 }
 
 template <typename T>
@@ -130,8 +130,8 @@ void upload_sh_aos_to_soa(
       host_soa[(static_cast<size_t>(k) * 3ull + 2ull) * static_cast<size_t>(n) + static_cast<size_t>(i)] = val.z;
     }
   }
-  gpu_soa = create_device_buffer_for<float>(runtime, host_soa.size(), "sh_soa");
-  tinygs::copy_from_host_async(runtime, queue, gpu_soa, host_soa.data(), host_soa.size());
+  gpu_soa = create_device_buffer_for<float>(*runtime, host_soa.size(), "sh_soa");
+  tinygs::copy_from_host_async(*runtime, *queue, gpu_soa, host_soa.data(), host_soa.size());
 }
 
 void download_sh_soa_to_aos(
@@ -147,7 +147,7 @@ void download_sh_soa_to_aos(
   }
   CHECK_THROW(queue != nullptr);
   std::vector<float> host_soa(static_cast<size_t>(n) * static_cast<size_t>(num_coeffs) * 3ull);
-  tinygs::copy_to_host_async(runtime, queue, gpu_soa, host_soa.data(), host_soa.size());
+  tinygs::copy_to_host_async(*runtime, *queue, gpu_soa, host_soa.data(), host_soa.size());
   host_aos.resize(static_cast<size_t>(n) * static_cast<size_t>(num_coeffs));
   for (int i = 0; i < n; ++i) {
     for (int k = 0; k < num_coeffs; ++k) {
@@ -193,67 +193,67 @@ size_t GPUGaussian3d::size() const {
 }
 
 DeviceSpan<const vec3> GPUGaussian3d::means() const {
-  return DeviceSpan<const vec3>{m_impl->m_means, 0, m_impl->m_size};
+  return DeviceSpan<const vec3>{m_impl->m_means.get(), 0, m_impl->m_size};
 }
 
 DeviceSpan<const float> GPUGaussian3d::opacities() const {
-  return DeviceSpan<const float>{m_impl->m_opacities, 0, m_impl->m_size};
+  return DeviceSpan<const float>{m_impl->m_opacities.get(), 0, m_impl->m_size};
 }
 
 DeviceSpan<const vec4> GPUGaussian3d::rotations() const {
-  return DeviceSpan<const vec4>{m_impl->m_rotations, 0, m_impl->m_size};
+  return DeviceSpan<const vec4>{m_impl->m_rotations.get(), 0, m_impl->m_size};
 }
 
 DeviceSpan<const vec3> GPUGaussian3d::scales() const {
-  return DeviceSpan<const vec3>{m_impl->m_scales, 0, m_impl->m_size};
+  return DeviceSpan<const vec3>{m_impl->m_scales.get(), 0, m_impl->m_size};
 }
 
 DeviceSpan<vec3> GPUGaussian3d::means() {
-  return DeviceSpan<vec3>{m_impl->m_means, 0, m_impl->m_size};
+  return DeviceSpan<vec3>{m_impl->m_means.get(), 0, m_impl->m_size};
 }
 
 DeviceSpan<float> GPUGaussian3d::opacities() {
-  return DeviceSpan<float>{m_impl->m_opacities, 0, m_impl->m_size};
+  return DeviceSpan<float>{m_impl->m_opacities.get(), 0, m_impl->m_size};
 }
 
 DeviceSpan<vec4> GPUGaussian3d::rotations() {
-  return DeviceSpan<vec4>{m_impl->m_rotations, 0, m_impl->m_size};
+  return DeviceSpan<vec4>{m_impl->m_rotations.get(), 0, m_impl->m_size};
 }
 
 DeviceSpan<vec3> GPUGaussian3d::scales() {
-  return DeviceSpan<vec3>{m_impl->m_scales, 0, m_impl->m_size};
+  return DeviceSpan<vec3>{m_impl->m_scales.get(), 0, m_impl->m_size};
 }
 
 DeviceSpan<const float> GPUGaussian3d::sh0() const {
-  return DeviceSpan<const float>{m_impl->m_sh0};
+  return DeviceSpan<const float>{m_impl->m_sh0.get()};
 }
 
 DeviceSpan<const float> GPUGaussian3d::sh1() const {
-  return DeviceSpan<const float>{m_impl->m_sh1};
+  return DeviceSpan<const float>{m_impl->m_sh1.get()};
 }
 
 DeviceSpan<const float> GPUGaussian3d::sh2() const {
-  return DeviceSpan<const float>{m_impl->m_sh2};
+  return DeviceSpan<const float>{m_impl->m_sh2.get()};
 }
 
 DeviceSpan<const float> GPUGaussian3d::sh3() const {
-  return DeviceSpan<const float>{m_impl->m_sh3};
+  return DeviceSpan<const float>{m_impl->m_sh3.get()};
 }
 
 DeviceSpan<float> GPUGaussian3d::sh0() {
-  return DeviceSpan<float>{m_impl->m_sh0};
+  return DeviceSpan<float>{m_impl->m_sh0.get()};
 }
 
 DeviceSpan<float> GPUGaussian3d::sh1() {
-  return DeviceSpan<float>{m_impl->m_sh1};
+  return DeviceSpan<float>{m_impl->m_sh1.get()};
 }
 
 DeviceSpan<float> GPUGaussian3d::sh2() {
-  return DeviceSpan<float>{m_impl->m_sh2};
+  return DeviceSpan<float>{m_impl->m_sh2.get()};
 }
 
 DeviceSpan<float> GPUGaussian3d::sh3() {
-  return DeviceSpan<float>{m_impl->m_sh3};
+  return DeviceSpan<float>{m_impl->m_sh3.get()};
 }
 
 float* GPUGaussian3d::sh_degree_data(int degree) {
@@ -296,12 +296,12 @@ void GPUGaussian3d::copy_from_host_async(
   m_impl->m_scales = create_buffer_or_reset<vec3>(m_impl->m_runtime, m_impl->m_size, "scales");
 
   if (m_impl->m_size > 0) {
-    tinygs::copy_from_host_async(m_impl->m_runtime, queue, m_impl->m_means, gaussians.means.data(), m_impl->m_size);
+    tinygs::copy_from_host_async(*m_impl->m_runtime, *queue, m_impl->m_means, gaussians.means.data(), m_impl->m_size);
     tinygs::copy_from_host_async(
         m_impl->m_runtime, queue, m_impl->m_opacities, gaussians.opacities.data(), m_impl->m_size);
     tinygs::copy_from_host_async(
         m_impl->m_runtime, queue, m_impl->m_rotations, gaussians.rotations.data(), m_impl->m_size);
-    tinygs::copy_from_host_async(m_impl->m_runtime, queue, m_impl->m_scales, gaussians.scales.data(), m_impl->m_size);
+    tinygs::copy_from_host_async(*m_impl->m_runtime, *queue, m_impl->m_scales, gaussians.scales.data(), m_impl->m_size);
   }
 
   upload_sh_aos_to_soa(m_impl->m_runtime, queue, gaussians.sh0, m_impl->m_sh0, n, 1);
@@ -314,7 +314,7 @@ void GPUGaussian3d::copy_from_host(
     const Gaussian3d& gaussians,
     const std::shared_ptr<BackendQueue>& queue) {
   copy_from_host_async(gaussians, queue);
-  detail::throw_if_status_error(m_impl->m_runtime->synchronize_queue(queue), "GPUGaussian3d::copy_from_host sync");
+  detail::throw_if_status_error(m_impl->m_runtime->synchronize_queue(*queue), "GPUGaussian3d::copy_from_host sync");
 }
 
 void GPUGaussian3d::copy_to_host_async(
@@ -327,12 +327,12 @@ void GPUGaussian3d::copy_to_host_async(
   gaussians.rotations.resize(m_impl->m_size);
   gaussians.scales.resize(m_impl->m_size);
   if (m_impl->m_size > 0) {
-    tinygs::copy_to_host_async(m_impl->m_runtime, queue, m_impl->m_means, gaussians.means.data(), m_impl->m_size);
+    tinygs::copy_to_host_async(*m_impl->m_runtime, *queue, m_impl->m_means, gaussians.means.data(), m_impl->m_size);
     tinygs::copy_to_host_async(
         m_impl->m_runtime, queue, m_impl->m_opacities, gaussians.opacities.data(), m_impl->m_size);
     tinygs::copy_to_host_async(
         m_impl->m_runtime, queue, m_impl->m_rotations, gaussians.rotations.data(), m_impl->m_size);
-    tinygs::copy_to_host_async(m_impl->m_runtime, queue, m_impl->m_scales, gaussians.scales.data(), m_impl->m_size);
+    tinygs::copy_to_host_async(*m_impl->m_runtime, *queue, m_impl->m_scales, gaussians.scales.data(), m_impl->m_size);
   }
   download_sh_soa_to_aos(m_impl->m_runtime, queue, m_impl->m_sh0, gaussians.sh0, n, 1);
   download_sh_soa_to_aos(m_impl->m_runtime, queue, m_impl->m_sh1, gaussians.sh1, n, 3);
@@ -344,7 +344,7 @@ void GPUGaussian3d::copy_to_host(
     Gaussian3d& gaussians,
     const std::shared_ptr<BackendQueue>& queue) {
   copy_to_host_async(gaussians, queue);
-  detail::throw_if_status_error(m_impl->m_runtime->synchronize_queue(queue), "GPUGaussian3d::copy_to_host sync");
+  detail::throw_if_status_error(m_impl->m_runtime->synchronize_queue(*queue), "GPUGaussian3d::copy_to_host sync");
 }
 
 void GPUGaussian3d::memset_async(char value, const BackendQueue* queue) {
@@ -371,14 +371,14 @@ void GPUGaussian3d::memset(char value) {
   if (m_impl->m_sh1 && m_impl->m_sh1->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, queue, m_impl->m_sh1, byte_value);
   if (m_impl->m_sh2 && m_impl->m_sh2->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, queue, m_impl->m_sh2, byte_value);
   if (m_impl->m_sh3 && m_impl->m_sh3->size_bytes() > 0) fill_buffer_async(m_impl->m_runtime, queue, m_impl->m_sh3, byte_value);
-  detail::throw_if_status_error(m_impl->m_runtime->synchronize_queue(queue), "GPUGaussian3d::memset sync");
+  detail::throw_if_status_error(m_impl->m_runtime->synchronize_queue(*queue), "GPUGaussian3d::memset sync");
 }
 
 void GPUGaussian3d::remove(char* kept_flag, int num_kept, const BackendQueue* queue) {
   CHECK_THROW(num_kept >= 0);
   const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
   detail::throw_if_status_error(
-      m_impl->m_runtime->synchronize_queue(effective_queue),
+      m_impl->m_runtime->synchronize_queue(*effective_queue),
       "GPUGaussian3d::remove sync");
   const size_t old_size = m_impl->m_size;
   if (old_size == 0) {
@@ -446,23 +446,23 @@ void GPUGaussian3d::append(int num_dup, const std::shared_ptr<BackendQueue>& que
   auto new_rotations = create_buffer_or_reset<vec4>(m_impl->m_runtime, target_size, "rotations");
   auto new_scales = create_buffer_or_reset<vec3>(m_impl->m_runtime, target_size, "scales");
   if (target_size > 0) {
-    fill_buffer_zero_async(m_impl->m_runtime, queue, new_means);
-    fill_buffer_zero_async(m_impl->m_runtime, queue, new_opacities);
-    fill_buffer_zero_async(m_impl->m_runtime, queue, new_rotations);
-    fill_buffer_zero_async(m_impl->m_runtime, queue, new_scales);
+    fill_buffer_zero_async(*m_impl->m_runtime, *queue, new_means);
+    fill_buffer_zero_async(*m_impl->m_runtime, *queue, new_opacities);
+    fill_buffer_zero_async(*m_impl->m_runtime, *queue, new_rotations);
+    fill_buffer_zero_async(*m_impl->m_runtime, *queue, new_scales);
   }
   if (old_size > 0) {
-    copy_buffer_async(m_impl->m_runtime, queue, new_means, m_impl->m_means, old_size * sizeof(vec3));
-    copy_buffer_async(m_impl->m_runtime, queue, new_opacities, m_impl->m_opacities, old_size * sizeof(float));
-    copy_buffer_async(m_impl->m_runtime, queue, new_rotations, m_impl->m_rotations, old_size * sizeof(vec4));
-    copy_buffer_async(m_impl->m_runtime, queue, new_scales, m_impl->m_scales, old_size * sizeof(vec3));
+    copy_buffer_async(*m_impl->m_runtime, *queue, new_means, m_impl->m_means, old_size * sizeof(vec3));
+    copy_buffer_async(*m_impl->m_runtime, *queue, new_opacities, m_impl->m_opacities, old_size * sizeof(float));
+    copy_buffer_async(*m_impl->m_runtime, *queue, new_rotations, m_impl->m_rotations, old_size * sizeof(vec4));
+    copy_buffer_async(*m_impl->m_runtime, *queue, new_scales, m_impl->m_scales, old_size * sizeof(vec3));
   }
 
   auto resize_soa_sh = [&](std::shared_ptr<BackendBuffer>& buf, int num_coeffs) {
     const int new_total = num_coeffs * 3 * static_cast<int>(target_size);
     auto new_buf = create_buffer_or_reset<float>(m_impl->m_runtime, static_cast<size_t>(new_total), "sh_resize");
     if (new_total > 0) {
-      fill_buffer_zero_async(m_impl->m_runtime, queue, new_buf);
+      fill_buffer_zero_async(*m_impl->m_runtime, *queue, new_buf);
     }
     if (old_size > 0 && buf && buf->size_bytes() > 0) {
       const float* src_ptr = buffer_data_const<float>(buf);
@@ -492,7 +492,7 @@ void GPUGaussian3d::append(int num_dup, const std::shared_ptr<BackendQueue>& que
 std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone_async(const BackendQueue* queue) {
   const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
   detail::throw_if_status_error(
-      m_impl->m_runtime->synchronize_queue(effective_queue),
+      m_impl->m_runtime->synchronize_queue(*effective_queue),
       "GPUGaussian3d::clone_async sync");
   auto gaussians = std::make_unique<GPUGaussian3d>(m_impl->m_runtime);
   gaussians->m_current_sh_degree = m_current_sh_degree;
@@ -528,7 +528,7 @@ std::unique_ptr<GPUGaussian3d> GPUGaussian3d::clone() {
 std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(const BackendQueue* queue) {
   const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
   detail::throw_if_status_error(
-      m_impl->m_runtime->synchronize_queue(effective_queue),
+      m_impl->m_runtime->synchronize_queue(*effective_queue),
       "GPUGaussian3d::compute_morton_order_indices sync");
   const uint32_t n = static_cast<uint32_t>(m_impl->m_size);
   if (n == 0) {
@@ -576,7 +576,7 @@ std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(const
     return lhs < rhs;
   });
 
-  auto idx_out = create_device_buffer_for<uint>(m_impl->m_runtime, static_cast<size_t>(n), "morton_idx_out");
+  auto idx_out = create_device_buffer_for<uint>(*m_impl->m_runtime, static_cast<size_t>(n), "morton_idx_out");
   tinygs::copy_from_host_async(m_impl->m_runtime, effective_queue, idx_out, indices.data(), indices.size());
   return idx_out;
 }
@@ -584,7 +584,7 @@ std::shared_ptr<BackendBuffer> GPUGaussian3d::compute_morton_order_indices(const
 void GPUGaussian3d::reorder(uint* indices, const BackendQueue* queue) {
   const auto effective_queue = make_effective_queue(m_impl->m_runtime, queue);
   detail::throw_if_status_error(
-      m_impl->m_runtime->synchronize_queue(effective_queue),
+      m_impl->m_runtime->synchronize_queue(*effective_queue),
       "GPUGaussian3d::reorder sync");
   const int n = static_cast<int>(m_impl->m_size);
   if (n == 0) {
@@ -598,10 +598,10 @@ void GPUGaussian3d::reorder(uint* indices, const BackendQueue* queue) {
     CHECK_THROW(mapping[static_cast<size_t>(i)] < static_cast<size_t>(n));
   }
 
-  auto new_means = create_device_buffer_for<vec3>(m_impl->m_runtime, static_cast<size_t>(n), "means");
-  auto new_opacities = create_device_buffer_for<float>(m_impl->m_runtime, static_cast<size_t>(n), "opacities");
-  auto new_rotations = create_device_buffer_for<vec4>(m_impl->m_runtime, static_cast<size_t>(n), "rotations");
-  auto new_scales = create_device_buffer_for<vec3>(m_impl->m_runtime, static_cast<size_t>(n), "scales");
+  auto new_means = create_device_buffer_for<vec3>(*m_impl->m_runtime, static_cast<size_t>(n), "means");
+  auto new_opacities = create_device_buffer_for<float>(*m_impl->m_runtime, static_cast<size_t>(n), "opacities");
+  auto new_rotations = create_device_buffer_for<vec4>(*m_impl->m_runtime, static_cast<size_t>(n), "rotations");
+  auto new_scales = create_device_buffer_for<vec3>(*m_impl->m_runtime, static_cast<size_t>(n), "scales");
   copy_buffer_range<vec3>(m_impl->m_means, new_means, static_cast<size_t>(n), mapping);
   copy_buffer_range<float>(m_impl->m_opacities, new_opacities, static_cast<size_t>(n), mapping);
   copy_buffer_range<vec4>(m_impl->m_rotations, new_rotations, static_cast<size_t>(n), mapping);
@@ -634,13 +634,13 @@ std::shared_ptr<BackendBuffer> reorder_densification_info(
     const BackendQueue* queue) {
   const auto effective_queue = make_effective_queue(runtime, queue);
   detail::throw_if_status_error(
-      runtime->synchronize_queue(effective_queue),
+      runtime->synchronize_queue(*effective_queue),
       "reorder_densification_info sync");
   if (!info || n == 0) {
     return nullptr;
   }
   CHECK_THROW(indices != nullptr);
-  auto new_info = create_device_buffer_for<DensificationInfo>(runtime, n, "densification_reorder");
+  auto new_info = create_device_buffer_for<DensificationInfo>(*runtime, n, "densification_reorder");
   const DensificationInfo* old_info_ptr = buffer_data_const<DensificationInfo>(info);
   DensificationInfo* new_info_ptr = buffer_data<DensificationInfo>(new_info);
   for (size_t i = 0; i < n; ++i) {

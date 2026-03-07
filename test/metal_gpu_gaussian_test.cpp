@@ -102,7 +102,7 @@ TEST_F(MetalGPUGaussianTest, CopyRoundtripPreservesAllFields) {
 
   Gaussian3d output;
   gpu.copy_to_host_async(output, queue);
-  auto sync_status = runtime->synchronize_queue(queue);
+  auto sync_status = runtime->synchronize_queue(*queue);
   ASSERT_TRUE(sync_status.ok()) << sync_status.message;
 
   expect_equal_gaussians(output, input);
@@ -132,7 +132,7 @@ TEST_F(MetalGPUGaussianTest, AppendRemoveAndReorderMaintainExpectedLayout) {
   gpu.copy_from_host(input, queue);
 
   gpu.append(2, queue);
-  auto sync_status = runtime->synchronize_queue(queue);
+  auto sync_status = runtime->synchronize_queue(*queue);
   ASSERT_TRUE(sync_status.ok()) << sync_status.message;
 
   Gaussian3d after_append;
@@ -151,14 +151,14 @@ TEST_F(MetalGPUGaussianTest, AppendRemoveAndReorderMaintainExpectedLayout) {
     EXPECT_FLOAT_EQ(after_append.opacities[i], 0.0f);
   }
 
-  auto kept_flag = create_device_buffer_for<char>(runtime, 5, "kept_flag");
+  auto kept_flag = create_device_buffer_for<char>(*runtime, 5, "kept_flag");
   std::array<char, 5> keep = {1, 0, 1, 0, 1};
-  copy_from_host(runtime, queue, kept_flag, keep.data(), keep.size());
+  copy_from_host(*runtime, *queue, kept_flag, keep.data(), keep.size());
   gpu.remove(buffer_data<char>(kept_flag), 3);
 
-  auto reorder_idx = create_device_buffer_for<uint>(runtime, 3, "reorder_idx");
+  auto reorder_idx = create_device_buffer_for<uint>(*runtime, 3, "reorder_idx");
   std::array<uint, 3> reorder = {2u, 0u, 1u};
-  copy_from_host(runtime, queue, reorder_idx, reorder.data(), reorder.size());
+  copy_from_host(*runtime, *queue, reorder_idx, reorder.data(), reorder.size());
   gpu.reorder(buffer_data<uint>(reorder_idx));
 
   Gaussian3d output;
@@ -180,7 +180,7 @@ TEST_F(MetalGPUGaussianTest, ComputeMortonIndicesAndDensificationReorderWork) {
   auto morton = gpu.compute_morton_order_indices();
   ASSERT_NE(morton, nullptr);
   std::array<uint, 3> idx{};
-  copy_to_host(runtime, queue, morton, idx.data(), idx.size());
+  copy_to_host(*runtime, *queue, morton, idx.data(), idx.size());
   std::array<uint, 3> expected_idx = {0u, 1u, 2u};
   EXPECT_EQ(idx, expected_idx);
 
@@ -188,13 +188,13 @@ TEST_F(MetalGPUGaussianTest, ComputeMortonIndicesAndDensificationReorderWork) {
   host_info[0].accum_counter = 10.0f;
   host_info[1].accum_counter = 20.0f;
   host_info[2].accum_counter = 30.0f;
-  auto info = create_device_buffer_for<DensificationInfo>(runtime, host_info.size(), "info");
-  copy_from_host(runtime, queue, info, host_info.data(), host_info.size());
+  auto info = create_device_buffer_for<DensificationInfo>(*runtime, host_info.size(), "info");
+  copy_from_host(*runtime, *queue, info, host_info.data(), host_info.size());
 
   auto reordered = reorder_densification_info(info, idx.data(), idx.size(), runtime, nullptr);
   ASSERT_NE(reordered, nullptr);
   std::vector<DensificationInfo> reordered_host(idx.size());
-  copy_to_host(runtime, queue, reordered, reordered_host.data(), reordered_host.size());
+  copy_to_host(*runtime, *queue, reordered, reordered_host.data(), reordered_host.size());
   ASSERT_EQ(reordered_host.size(), host_info.size());
   EXPECT_FLOAT_EQ(reordered_host[0].accum_counter, 10.0f);
   EXPECT_FLOAT_EQ(reordered_host[1].accum_counter, 20.0f);
@@ -212,7 +212,7 @@ TEST_F(MetalGPUGaussianTest, QueueParameterPathsProduceConsistentResults) {
   gpu.copy_from_host(input, queue);
 
   gpu.memset_async(0, queue.get());
-  auto sync_status = runtime->synchronize_queue(queue);
+  auto sync_status = runtime->synchronize_queue(*queue);
   ASSERT_TRUE(sync_status.ok()) << sync_status.message;
 
   Gaussian3d after_memset;
@@ -231,14 +231,14 @@ TEST_F(MetalGPUGaussianTest, QueueParameterPathsProduceConsistentResults) {
   auto morton = gpu.compute_morton_order_indices(queue.get());
   ASSERT_NE(morton, nullptr);
   std::array<uint, 3> idx{};
-  copy_to_host(runtime, queue, morton, idx.data(), idx.size());
+  copy_to_host(*runtime, *queue, morton, idx.data(), idx.size());
 
-  auto reordered_info_src = create_device_buffer_for<DensificationInfo>(runtime, idx.size(), "info");
+  auto reordered_info_src = create_device_buffer_for<DensificationInfo>(*runtime, idx.size(), "info");
   std::array<DensificationInfo, 3> infos{};
   infos[0].accum_counter = 3.0f;
   infos[1].accum_counter = 7.0f;
   infos[2].accum_counter = 11.0f;
-  copy_from_host(runtime, queue, reordered_info_src, infos.data(), infos.size());
+  copy_from_host(*runtime, *queue, reordered_info_src, infos.data(), infos.size());
   auto reordered_info = reorder_densification_info(
       reordered_info_src, idx.data(), idx.size(), runtime, queue.get());
   ASSERT_NE(reordered_info, nullptr);

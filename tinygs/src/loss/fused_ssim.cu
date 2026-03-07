@@ -765,13 +765,13 @@ struct FusedSSIMLoss::Impl {
 
   void ensure(size_t total) {
     if (!dm_dmu1 || buffer_count<float>(dm_dmu1) < total) {
-      dm_dmu1 = create_device_buffer_for<float>(runtime, total, "fused_ssim_dm_dmu1");
+      dm_dmu1 = create_device_buffer_for<float>(*runtime, total, "fused_ssim_dm_dmu1");
     }
     if (!dm_dsigma1_sq || buffer_count<float>(dm_dsigma1_sq) < total) {
-      dm_dsigma1_sq = create_device_buffer_for<float>(runtime, total, "fused_ssim_dm_dsigma1_sq");
+      dm_dsigma1_sq = create_device_buffer_for<float>(*runtime, total, "fused_ssim_dm_dsigma1_sq");
     }
     if (!dm_dsigma12 || buffer_count<float>(dm_dsigma12) < total) {
-      dm_dsigma12 = create_device_buffer_for<float>(runtime, total, "fused_ssim_dm_dsigma12");
+      dm_dsigma12 = create_device_buffer_for<float>(*runtime, total, "fused_ssim_dm_dsigma12");
     }
   }
 };

@@ -30,8 +30,6 @@ BackendConfig make_cuda_config() {
 }
 
 // Decorator that counts sync calls and delegates to an inner runtime.
-// Under NVI, do_* receives references; we wrap them in non-owning shared_ptrs
-// to delegate through the inner runtime's public API.
 class CountingRuntime final : public BackendRuntime {
 public:
   explicit CountingRuntime(std::shared_ptr<BackendRuntime> inner) : m_inner(std::move(inner)) {}
@@ -55,24 +53,18 @@ protected:
   }
 
   BackendError do_record_event(BackendQueue& queue, BackendEvent& event) override {
-    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
-    auto e = std::shared_ptr<BackendEvent>(&event, [](BackendEvent*){});
-    return m_inner->record_event(q, e);
+    return m_inner->record_event(queue, event);
   }
   BackendError do_wait_event(BackendQueue& queue, BackendEvent& event) override {
-    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
-    auto e = std::shared_ptr<BackendEvent>(&event, [](BackendEvent*){});
-    return m_inner->wait_event(q, e);
+    return m_inner->wait_event(queue, event);
   }
 
   BackendError do_synchronize_queue(BackendQueue& queue) override {
     sync_queue_calls += 1;
-    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
-    return m_inner->synchronize_queue(q);
+    return m_inner->synchronize_queue(queue);
   }
   BackendError do_synchronize_event(BackendEvent& event) override {
-    auto e = std::shared_ptr<BackendEvent>(&event, [](BackendEvent*){});
-    return m_inner->synchronize_event(e);
+    return m_inner->synchronize_event(event);
   }
   BackendError do_synchronize_device() override {
     sync_device_calls += 1;
@@ -84,46 +76,36 @@ protected:
       BackendBuffer& dst, size_t dst_offset,
       BackendBuffer& src, size_t src_offset,
       size_t size_bytes) override {
-    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
-    auto d = std::shared_ptr<BackendBuffer>(&dst, [](BackendBuffer*){});
-    auto s = std::shared_ptr<BackendBuffer>(&src, [](BackendBuffer*){});
-    return m_inner->copy_buffer_async(q, d, s, CopyRegion{size_bytes, src_offset, dst_offset});
+    return m_inner->copy_buffer_async(queue, dst, src, CopyRegion{size_bytes, src_offset, dst_offset});
   }
   BackendError do_copy_from_host(
       BackendQueue& queue,
       BackendBuffer& dst, size_t dst_offset,
       const void* src, size_t size_bytes) override {
-    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
-    auto d = std::shared_ptr<BackendBuffer>(&dst, [](BackendBuffer*){});
-    return m_inner->copy_from_host_async(q, d, src, BufferTransferRegion{size_bytes, dst_offset});
+    return m_inner->copy_from_host_async(queue, dst, src, BufferTransferRegion{size_bytes, dst_offset});
   }
   BackendError do_copy_to_host(
       BackendQueue& queue,
       void* dst,
       BackendBuffer& src, size_t src_offset,
       size_t size_bytes) override {
-    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
-    auto s = std::shared_ptr<BackendBuffer>(&src, [](BackendBuffer*){});
-    return m_inner->copy_to_host_async(q, dst, s, BufferTransferRegion{size_bytes, src_offset});
+    return m_inner->copy_to_host_async(queue, dst, src, BufferTransferRegion{size_bytes, src_offset});
   }
   BackendError do_transfer_raw(
       BackendQueue& queue,
       void* dst, const void* src,
       size_t size_bytes,
       TransferDirection direction) override {
-    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
     if (direction == TransferDirection::DeviceToHost) {
-      return m_inner->copy_device_to_host_async(q, dst, src, size_bytes);
+      return m_inner->copy_device_to_host_async(queue, dst, src, size_bytes);
     }
-    return m_inner->copy_host_to_device_async(q, dst, src, size_bytes);
+    return m_inner->copy_host_to_device_async(queue, dst, src, size_bytes);
   }
   BackendError do_fill_buffer(
       BackendQueue& queue,
       BackendBuffer& buffer,
       size_t offset, uint8_t value, size_t size_bytes) override {
-    auto q = std::shared_ptr<BackendQueue>(&queue, [](BackendQueue*){});
-    auto b = std::shared_ptr<BackendBuffer>(&buffer, [](BackendBuffer*){});
-    return m_inner->fill_buffer_async(q, b, value, offset, size_bytes);
+    return m_inner->fill_buffer_async(queue, buffer, value, offset, size_bytes);
   }
 
 private:
@@ -217,56 +199,30 @@ TEST(BackendRuntimeContractTest, QueueEventAndBufferCopyFlow) {
   BufferTransferRegion host_to_device_region;
   host_to_device_region.size_bytes = buffer_desc.size_bytes;
   BackendError status = runtime->copy_from_host_async(
-      produce_queue, src_buffer, in_values.data(), host_to_device_region);
+      *produce_queue, *src_buffer, in_values.data(), host_to_device_region);
   ASSERT_TRUE(status.ok()) << to_string(status);
 
-  status = runtime->record_event(produce_queue, ready_event);
+  status = runtime->record_event(*produce_queue, *ready_event);
   ASSERT_TRUE(status.ok()) << to_string(status);
-  status = runtime->wait_event(consume_queue, ready_event);
+  status = runtime->wait_event(*consume_queue, *ready_event);
   ASSERT_TRUE(status.ok()) << to_string(status);
 
   CopyRegion device_to_device_region;
   device_to_device_region.size_bytes = buffer_desc.size_bytes;
   status = runtime->copy_buffer_async(
-      consume_queue, dst_buffer, src_buffer, device_to_device_region);
+      *consume_queue, *dst_buffer, *src_buffer, device_to_device_region);
   ASSERT_TRUE(status.ok()) << to_string(status);
 
   std::vector<int> out_values(32, -1);
   BufferTransferRegion device_to_host_region;
   device_to_host_region.size_bytes = buffer_desc.size_bytes;
   status = runtime->copy_to_host_async(
-      consume_queue, out_values.data(), dst_buffer, device_to_host_region);
+      *consume_queue, out_values.data(), *dst_buffer, device_to_host_region);
   ASSERT_TRUE(status.ok()) << to_string(status);
-  status = runtime->synchronize_queue(consume_queue);
+  status = runtime->synchronize_queue(*consume_queue);
   ASSERT_TRUE(status.ok()) << to_string(status);
 
   EXPECT_EQ(out_values, in_values);
-}
-
-TEST(BackendRuntimeContractTest, NullQueueIsInvalidArgument) {
-  if (!has_cuda_device()) {
-    GTEST_SKIP() << "No CUDA device available.";
-  }
-
-  const auto runtime_result = create_backend_runtime(make_cuda_config());
-  ASSERT_TRUE(runtime_result.ok()) << to_string(runtime_result.error());
-  auto runtime = runtime_result.value();
-  ASSERT_NE(runtime, nullptr);
-
-  BufferDesc buffer_desc;
-  buffer_desc.size_bytes = sizeof(float) * 8;
-  buffer_desc.memory_class = BufferMemoryClass::Device;
-  const auto buffer_result = runtime->create_buffer(buffer_desc);
-  ASSERT_TRUE(buffer_result.ok()) << to_string(buffer_result.error());
-  const std::shared_ptr<BackendBuffer> buffer = buffer_result.value();
-
-  const std::vector<float> values(8, 1.0f);
-  BufferTransferRegion region;
-  region.size_bytes = buffer_desc.size_bytes;
-  BackendError status = runtime->copy_from_host_async(
-      std::shared_ptr<BackendQueue>{}, buffer, values.data(), region);
-  EXPECT_EQ(status.code, BackendErrorCode::InvalidArgument);
-  EXPECT_FALSE(status.operation.empty());
 }
 
 TEST(BackendRuntimeContractTest, DeviceBufferHostAccessIsUnsupported) {
@@ -317,7 +273,7 @@ TEST(BackendRuntimeContractTest, CopyRegionOverflowIsInvalidArgument) {
   region.dst_offset = std::numeric_limits<size_t>::max() - 8;
   region.src_offset = 0;
   const BackendError status = runtime->copy_buffer_async(
-      queue, dst_result.value(), src_result.value(), region);
+      *queue, *dst_result.value(), *src_result.value(), region);
   EXPECT_EQ(status.code, BackendErrorCode::InvalidArgument);
 }
 
@@ -355,7 +311,7 @@ TEST(BackendRuntimeContractTest, GPUGaussianAsyncCopiesDoNotSynchronizeImplicitl
   gpu.copy_to_host_async(out, queue);
   EXPECT_EQ(runtime->sync_queue_calls, 0);
 
-  const BackendError sync_status = runtime->synchronize_queue(queue);
+  const BackendError sync_status = runtime->synchronize_queue(*queue);
   ASSERT_TRUE(sync_status.ok()) << to_string(sync_status);
   EXPECT_EQ(runtime->sync_queue_calls, 1);
   EXPECT_EQ(runtime->sync_device_calls, 0);

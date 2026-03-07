@@ -470,8 +470,8 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
   thrust::device_vector<float> l1_loss_buf(rgb_padded_size);
   thrust::device_vector<float> ssim_loss_buf(rgb_padded_size);
   thrust::device_vector<float> l1_map(n_pixels);
-  auto metric_map = create_device_buffer_for<int>(ctx.runtime, n_pixels);
-  auto metric_counts = create_device_buffer_for<int>(ctx.runtime, num_gaussians);
+  auto metric_map = create_device_buffer_for<int>(*ctx.runtime, n_pixels);
+  auto metric_counts = create_device_buffer_for<int>(*ctx.runtime, num_gaussians);
   Image gt_image(rgb_shape, DataType::Float32, thrust::raw_pointer_cast(gt_gpu.data()));
 
   // Shared loss contexts reused for every camera.
@@ -650,7 +650,7 @@ void FastGSStrategy::compute_gaussian_score(const RasterizeContext& ctx, bool de
     // Set metric_map and metric_counts
     metric_ctx.metric_map = metric_map;
     metric_ctx.metric_counts = metric_counts;
-    fill_buffer_zero_async(ctx.runtime, ctx.queue, metric_ctx.metric_counts);
+    fill_buffer_zero_async(*ctx.runtime, *ctx.queue, metric_ctx.metric_counts);
 
     m_rasterizer->forward_metric(metric_ctx);
     CUDA_CHECK_THROW(cudaStreamSynchronize(to_cuda_stream(ctx.queue)));
@@ -871,8 +871,8 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
 
   if (!ctx.densification_info) {
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
-    fill_buffer_zero_async(ctx.runtime, ctx.queue, ctx.densification_info);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(*ctx.runtime, num_gaussians);
+    fill_buffer_zero_async(*ctx.runtime, *ctx.queue, ctx.densification_info);
   }
 
   const int step = this_step();
@@ -912,8 +912,8 @@ void FastGSStrategy::step_impl(const RasterizeContext& ctx) {
 
     // Reset densification info since indices have changed
     size_t num_gaussians = m_gaussians->size();
-    ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, num_gaussians);
-    fill_buffer_zero_async(ctx.runtime, ctx.queue, ctx.densification_info);
+    ctx.densification_info = create_device_buffer_for<DensificationInfo>(*ctx.runtime, num_gaussians);
+    fill_buffer_zero_async(*ctx.runtime, *ctx.queue, ctx.densification_info);
     m_importance_score.clear();
     m_pruning_score.clear();
   }
@@ -1770,8 +1770,8 @@ void FastGSStrategy::final_prune(const RasterizeContext& ctx) {
   this->on_remove(thrust::raw_pointer_cast(is_alive.data()), nums_kept, ctx.queue);
 
   // Reset densification info
-  ctx.densification_info = create_device_buffer_for<DensificationInfo>(ctx.runtime, nums_kept);
-  fill_buffer_zero_async(ctx.runtime, ctx.queue, ctx.densification_info);
+  ctx.densification_info = create_device_buffer_for<DensificationInfo>(*ctx.runtime, nums_kept);
+  fill_buffer_zero_async(*ctx.runtime, *ctx.queue, ctx.densification_info);
   m_importance_score.clear();
   m_pruning_score.clear();
 }

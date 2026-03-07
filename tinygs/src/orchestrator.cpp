@@ -257,22 +257,22 @@ void Orchestrator::train_step() {
   auto clear_group_gradients = [this](OptimParamGroup group) {
     switch (group) {
       case OptimParamGroup::Means:
-        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->means().view());
+        fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_gradients->means().view());
         break;
       case OptimParamGroup::Shs:
-        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->sh0().view());
-        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->sh1().view());
-        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->sh2().view());
-        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->sh3().view());
+        fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_gradients->sh0().view());
+        fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_gradients->sh1().view());
+        fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_gradients->sh2().view());
+        fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_gradients->sh3().view());
         break;
       case OptimParamGroup::Opacities:
-        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->opacities().view());
+        fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_gradients->opacities().view());
         break;
       case OptimParamGroup::Scales:
-        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->scales().view());
+        fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_gradients->scales().view());
         break;
       case OptimParamGroup::Rotations:
-        fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_gradients->rotations().view());
+        fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_gradients->rotations().view());
         break;
     }
   };
@@ -281,8 +281,8 @@ void Orchestrator::train_step() {
   if (opacities_cycle_start) clear_group_gradients(OptimParamGroup::Opacities);
   if (scales_cycle_start) clear_group_gradients(OptimParamGroup::Scales);
   if (rotations_cycle_start) clear_group_gradients(OptimParamGroup::Rotations);
-  fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_loss_buffer);
-  fill_buffer_zero_async(m_backend_runtime, m_major_queue, m_image_grad_buffer);
+  fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_loss_buffer);
+  fill_buffer_zero_async(*m_backend_runtime, *m_major_queue, m_image_grad_buffer);
 
   auto data = m_dataloader->next();
 
@@ -410,7 +410,7 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
     m_rasterizer->forward(m_rasterize_ctx);
 
     // Wait for the rasterization to finish
-    backend_check_throw(m_backend_runtime->synchronize_queue(m_major_queue), "eval synchronize");
+    backend_check_throw(m_backend_runtime->synchronize_queue(*m_major_queue), "eval synchronize");
 
     // Export the rasterized image if enabled
     if (m_config.export_rasterized) {
@@ -499,7 +499,7 @@ std::unordered_map<std::string, float> Orchestrator::eval(DataLoaderBase* loader
   // Export PLY at eval end
   Gaussian3d gs_host;
   m_gaussians->copy_to_host_async(gs_host, m_major_queue);
-  backend_check_throw(m_backend_runtime->synchronize_queue(m_major_queue), "eval export points");
+  backend_check_throw(m_backend_runtime->synchronize_queue(*m_major_queue), "eval export points");
   save_ply(out_dir + "/points.ply", gs_host, m_config.export_full_features || m_state.should_stop);
 
   // Return mean metrics
@@ -518,7 +518,7 @@ float Orchestrator::accumulate_loss() {
     return 0.0f;
   }
   backend_check_throw(
-      m_backend_runtime->synchronize_queue(m_major_queue), "accumulate_loss synchronize");
+      m_backend_runtime->synchronize_queue(*m_major_queue), "accumulate_loss synchronize");
   ImageShape shape = m_rasterize_ctx.fwd_output.image.shape;
   //? the unused pixels in the padded area are set to zero during loss computation
   //! fix the shape is not compatible with the tile-based design.
@@ -607,9 +607,9 @@ void Orchestrator::initialize() {
   
   // Initialize GPU memory buffers with full resolution size
   const size_t full_buffer_bytes = full_buffer_size * sizeof(float);
-  m_loss_buffer = create_device_buffer(m_backend_runtime, full_buffer_bytes, "loss_buffer");
-  m_render_buffer = create_device_buffer(m_backend_runtime, full_buffer_bytes, "render_buffer");
-  m_image_grad_buffer = create_device_buffer(m_backend_runtime, full_buffer_bytes, "image_grad_buffer");
+  m_loss_buffer = create_device_buffer(*m_backend_runtime, full_buffer_bytes, "loss_buffer");
+  m_render_buffer = create_device_buffer(*m_backend_runtime, full_buffer_bytes, "render_buffer");
+  m_image_grad_buffer = create_device_buffer(*m_backend_runtime, full_buffer_bytes, "image_grad_buffer");
 
   const double mb = static_cast<double>(full_buffer_size) * sizeof(float) / (1024.0 * 1024.0);
   log_info("Allocated GPU buffers for full resolution {}x{} (size: {:.2f} MB)", 
@@ -871,7 +871,7 @@ cv::Mat Orchestrator::to_opencv() const {
   std::shared_ptr<BackendBuffer> fp32_tmp;
   if (m_rasterize_ctx.fwd_output.image.data_type == DataType::Float16) {
     // Convert FP16 buffer to FP32 on GPU before host copy
-    fp32_tmp = create_device_buffer_for<float>(m_backend_runtime, shape.padded_size(), "fp32_tmp");
+    fp32_tmp = create_device_buffer_for<float>(*m_backend_runtime, shape.padded_size(), "fp32_tmp");
     half_to_float_gpu(buffer_data<float>(fp32_tmp),
                       reinterpret_cast<const float16_t*>(m_rasterize_ctx.fwd_output.image.data),
                       shape.padded_size(),
@@ -884,13 +884,13 @@ cv::Mat Orchestrator::to_opencv() const {
   }
   backend_check_throw(
       m_backend_runtime->copy_device_to_host_async(
-          m_major_queue,
+          *m_major_queue,
           cpu_image.data(),
           src_ptr,
           shape.padded_size() * sizeof(float)),
       "to_opencv copy_device_to_host_async");
   backend_check_throw(
-      m_backend_runtime->synchronize_queue(m_major_queue),
+      m_backend_runtime->synchronize_queue(*m_major_queue),
       "to_opencv synchronize_queue");
 
   // Convert float RGB to 8-bit BGR for OpenCV

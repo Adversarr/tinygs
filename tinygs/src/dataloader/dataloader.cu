@@ -20,7 +20,7 @@ inline void ensure_buffer_size(
     size_t required_bytes,
     const std::string& debug_name) {
   if (!buf || buf->size_bytes() < required_bytes) {
-    buf = create_device_buffer(runtime, required_bytes, debug_name);
+    buf = create_device_buffer(*runtime, required_bytes, debug_name);
   }
 }
 

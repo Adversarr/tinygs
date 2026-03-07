@@ -108,15 +108,15 @@ TEST_F(MetalRuntimeTest, HostToDeviceRoundtrip) {
   }
 
   auto copyResult = runtime->copy_from_host_async(
-      queue, buffer, src.data(), BufferTransferRegion{256, 0});
+      *queue, *buffer, src.data(), BufferTransferRegion{256, 0});
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
   std::vector<uint8_t> dst(256);
   copyResult = runtime->copy_to_host_async(
-      queue, dst.data(), buffer, BufferTransferRegion{256, 0});
+      *queue, dst.data(), *buffer, BufferTransferRegion{256, 0});
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
   EXPECT_EQ(src, dst);
@@ -134,10 +134,10 @@ TEST_F(MetalRuntimeTest, BufferFill) {
   ASSERT_TRUE(queueResult.ok()) << queueResult.error().message;
   auto queue = queueResult.value();
 
-  auto fillResult = runtime->fill_buffer_async(queue, buffer, 0x42);
+  auto fillResult = runtime->fill_buffer_async(*queue, *buffer, 0x42);
   EXPECT_TRUE(fillResult.ok()) << fillResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
   uint8_t* data = static_cast<uint8_t*>(buffer->data());
@@ -158,13 +158,13 @@ TEST_F(MetalRuntimeTest, BufferFillWithOffset) {
   ASSERT_TRUE(queueResult.ok()) << queueResult.error().message;
   auto queue = queueResult.value();
 
-  auto fillResult = runtime->fill_buffer_async(queue, buffer, 0, 0, 256);
+  auto fillResult = runtime->fill_buffer_async(*queue, *buffer, 0, 0, 256);
   EXPECT_TRUE(fillResult.ok()) << fillResult.message;
 
-  fillResult = runtime->fill_buffer_async(queue, buffer, 0xAB, 100, 50);
+  fillResult = runtime->fill_buffer_async(*queue, *buffer, 0xAB, 100, 50);
   EXPECT_TRUE(fillResult.ok()) << fillResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
   uint8_t* data = static_cast<uint8_t*>(buffer->data());
@@ -188,13 +188,13 @@ TEST_F(MetalRuntimeTest, EventSynchronization) {
   ASSERT_TRUE(queueResult.ok()) << queueResult.error().message;
   auto queue = queueResult.value();
 
-  auto recordResult = runtime->record_event(queue, event);
+  auto recordResult = runtime->record_event(*queue, *event);
   EXPECT_TRUE(recordResult.ok()) << recordResult.message;
 
-  auto waitResult = runtime->wait_event(queue, event);
+  auto waitResult = runtime->wait_event(*queue, *event);
   EXPECT_TRUE(waitResult.ok()) << waitResult.message;
 
-  auto syncResult = runtime->synchronize_event(event);
+  auto syncResult = runtime->synchronize_event(*event);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 }
 
@@ -220,14 +220,14 @@ TEST_F(MetalRuntimeTest, CopyBufferAsync) {
   }
 
   auto copyResult = runtime->copy_from_host_async(
-      queue, srcBuffer, srcData.data(), BufferTransferRegion{256, 0});
+      *queue, *srcBuffer, srcData.data(), BufferTransferRegion{256, 0});
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
   copyResult = runtime->copy_buffer_async(
-      queue, dstBuffer, srcBuffer, CopyRegion{256, 0, 0});
+      *queue, *dstBuffer, *srcBuffer, CopyRegion{256, 0, 0});
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
   uint8_t* dstData = static_cast<uint8_t*>(dstBuffer->data());
@@ -254,14 +254,14 @@ TEST_F(MetalRuntimeTest, CopyBufferWithOffsets) {
 
   std::vector<uint8_t> srcData(512, 0xCD);
   auto copyResult = runtime->copy_from_host_async(
-      queue, srcBuffer, srcData.data(), BufferTransferRegion{512, 0});
+      *queue, *srcBuffer, srcData.data(), BufferTransferRegion{512, 0});
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
   copyResult = runtime->copy_buffer_async(
-      queue, dstBuffer, srcBuffer, CopyRegion{128, 64, 128});
+      *queue, *dstBuffer, *srcBuffer, CopyRegion{128, 64, 128});
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
   uint8_t* dstData = static_cast<uint8_t*>(dstBuffer->data());
@@ -289,10 +289,10 @@ TEST_F(MetalRuntimeTest, CopyDeviceToHostAsync) {
 
   std::vector<uint8_t> hostData(128);
   auto copyResult = runtime->copy_device_to_host_async(
-      queue, hostData.data(), devicePtr, 128);
+      *queue, hostData.data(), devicePtr, 128);
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
   for (size_t i = 0; i < 128; ++i) {
@@ -319,10 +319,10 @@ TEST_F(MetalRuntimeTest, CopyHostToDeviceAsync) {
 
   uint8_t* devicePtr = static_cast<uint8_t*>(buffer->data());
   auto copyResult = runtime->copy_host_to_device_async(
-      queue, devicePtr, hostData.data(), 128);
+      *queue, devicePtr, hostData.data(), 128);
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
   for (size_t i = 0; i < 128; ++i) {
@@ -348,14 +348,14 @@ TEST_F(MetalRuntimeTest, MultipleQueues) {
   auto buffer2Result = runtime->create_buffer(desc);
   auto buffer2 = buffer2Result.value();
 
-  auto fill1 = runtime->fill_buffer_async(queue1, buffer1, 0x11);
-  auto fill2 = runtime->fill_buffer_async(queue2, buffer2, 0x22);
+  auto fill1 = runtime->fill_buffer_async(*queue1, *buffer1, 0x11);
+  auto fill2 = runtime->fill_buffer_async(*queue2, *buffer2, 0x22);
 
   EXPECT_TRUE(fill1.ok());
   EXPECT_TRUE(fill2.ok());
 
-  runtime->synchronize_queue(queue1);
-  runtime->synchronize_queue(queue2);
+  runtime->synchronize_queue(*queue1);
+  runtime->synchronize_queue(*queue2);
 
   uint8_t* data1 = static_cast<uint8_t*>(buffer1->data());
   uint8_t* data2 = static_cast<uint8_t*>(buffer2->data());
@@ -379,26 +379,6 @@ TEST_F(MetalRuntimeTest, InteropBufferUnsupported) {
   auto result = runtime->create_buffer(desc);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.error().code, BackendErrorCode::Unsupported);
-}
-
-TEST_F(MetalRuntimeTest, NullQueueHandling) {
-  BufferDesc desc;
-  desc.size_bytes = 64;
-  auto bufferResult = runtime->create_buffer(desc);
-  auto buffer = bufferResult.value();
-
-  auto result = runtime->fill_buffer_async(nullptr, buffer, 0x00);
-  EXPECT_FALSE(result.ok());
-  EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
-}
-
-TEST_F(MetalRuntimeTest, NullBufferHandling) {
-  auto queueResult = runtime->create_queue(QueueDesc{});
-  auto queue = queueResult.value();
-
-  auto result = runtime->fill_buffer_async(queue, nullptr, 0x00);
-  EXPECT_FALSE(result.ok());
-  EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 }
 
 TEST_F(MetalRuntimeTest, CapabilityProfile) {
@@ -438,7 +418,7 @@ TEST_F(MetalRuntimeTest, CopyRegionOverflow) {
   region.dst_offset = std::numeric_limits<size_t>::max() - 8;
   region.src_offset = 0;
 
-  auto result = runtime->copy_buffer_async(queue, dstBuffer, srcBuffer, region);
+  auto result = runtime->copy_buffer_async(*queue, *dstBuffer, *srcBuffer, region);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 }
@@ -464,13 +444,13 @@ TEST_F(MetalRuntimeTest, CopyRegionExceedsBufferSize) {
   region.dst_offset = 100;
   region.src_offset = 0;
 
-  auto result = runtime->copy_buffer_async(queue, dstBuffer, srcBuffer, region);
+  auto result = runtime->copy_buffer_async(*queue, *dstBuffer, *srcBuffer, region);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 
   region.dst_offset = 0;
   region.src_offset = 100;
-  result = runtime->copy_buffer_async(queue, dstBuffer, srcBuffer, region);
+  result = runtime->copy_buffer_async(*queue, *dstBuffer, *srcBuffer, region);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 }
@@ -493,11 +473,11 @@ TEST_F(MetalRuntimeTest, BufferTransferRegionOverflow) {
   region.size_bytes = 64;
   region.buffer_offset = std::numeric_limits<size_t>::max() - 32;
 
-  auto result = runtime->copy_from_host_async(queue, buffer, hostData.data(), region);
+  auto result = runtime->copy_from_host_async(*queue, *buffer, hostData.data(), region);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 
-  result = runtime->copy_to_host_async(queue, hostData.data(), buffer, region);
+  result = runtime->copy_to_host_async(*queue, hostData.data(), *buffer, region);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 }
@@ -518,11 +498,11 @@ TEST_F(MetalRuntimeTest, NullHostPointer) {
   region.size_bytes = 64;
   region.buffer_offset = 0;
 
-  auto result = runtime->copy_from_host_async(queue, buffer, nullptr, region);
+  auto result = runtime->copy_from_host_async(*queue, *buffer, nullptr, region);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 
-  result = runtime->copy_to_host_async(queue, nullptr, buffer, region);
+  result = runtime->copy_to_host_async(*queue, nullptr, *buffer, region);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 }
@@ -543,26 +523,26 @@ TEST_F(MetalRuntimeTest, ZeroSizeOperationsReturnSuccess) {
   ASSERT_TRUE(queueResult.ok()) << queueResult.error().message;
   auto queue = queueResult.value();
 
-  auto result = runtime->fill_buffer_async(queue, dstBuffer, 0x42, 0, 0);
+  auto result = runtime->fill_buffer_async(*queue, *dstBuffer, 0x42, 0, 0);
   EXPECT_TRUE(result.ok());
 
   auto copyResult = runtime->copy_buffer_async(
-      queue, dstBuffer, srcBuffer, CopyRegion{0, 0, 0});
+      *queue, *dstBuffer, *srcBuffer, CopyRegion{0, 0, 0});
   EXPECT_TRUE(copyResult.ok());
 
   std::vector<uint8_t> hostData(1);
   auto hostCopyResult = runtime->copy_from_host_async(
-      queue, dstBuffer, hostData.data(), BufferTransferRegion{0, 0});
+      *queue, *dstBuffer, hostData.data(), BufferTransferRegion{0, 0});
   EXPECT_TRUE(hostCopyResult.ok());
 
   hostCopyResult = runtime->copy_to_host_async(
-      queue, hostData.data(), dstBuffer, BufferTransferRegion{0, 0});
+      *queue, hostData.data(), *dstBuffer, BufferTransferRegion{0, 0});
   EXPECT_TRUE(hostCopyResult.ok());
 
-  auto rawResult = runtime->copy_device_to_host_async(queue, nullptr, nullptr, 0);
+  auto rawResult = runtime->copy_device_to_host_async(*queue, nullptr, nullptr, 0);
   EXPECT_TRUE(rawResult.ok());
 
-  rawResult = runtime->copy_host_to_device_async(queue, nullptr, nullptr, 0);
+  rawResult = runtime->copy_host_to_device_async(*queue, nullptr, nullptr, 0);
   EXPECT_TRUE(rawResult.ok());
 }
 
@@ -578,11 +558,11 @@ TEST_F(MetalRuntimeTest, FillRangeOverflow) {
   ASSERT_TRUE(queueResult.ok()) << queueResult.error().message;
   auto queue = queueResult.value();
 
-  auto result = runtime->fill_buffer_async(queue, buffer, 0x42, 100, 50);
+  auto result = runtime->fill_buffer_async(*queue, *buffer, 0x42, 100, 50);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 
-  result = runtime->fill_buffer_async(queue, buffer, 0x42, 0, 200);
+  result = runtime->fill_buffer_async(*queue, *buffer, 0x42, 0, 200);
   EXPECT_FALSE(result.ok());
   EXPECT_EQ(result.code, BackendErrorCode::InvalidArgument);
 }
@@ -612,13 +592,13 @@ TEST_F(MetalRuntimeTest, EventReuseMultipleCycles) {
   auto queue = queueResult.value();
 
   for (int i = 0; i < 5; ++i) {
-    auto recordResult = runtime->record_event(queue, event);
+    auto recordResult = runtime->record_event(*queue, *event);
     EXPECT_TRUE(recordResult.ok()) << recordResult.message;
 
-    auto syncResult = runtime->synchronize_event(event);
+    auto syncResult = runtime->synchronize_event(*event);
     EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
-    auto waitResult = runtime->wait_event(queue, event);
+    auto waitResult = runtime->wait_event(*queue, *event);
     EXPECT_TRUE(waitResult.ok()) << waitResult.message;
   }
 }
@@ -651,20 +631,20 @@ TEST_F(MetalRuntimeTest, CrossQueueEventSync) {
   }
 
   auto copyResult = runtime->copy_from_host_async(
-      queue1, srcBuffer, srcData.data(), BufferTransferRegion{128, 0});
+      *queue1, *srcBuffer, srcData.data(), BufferTransferRegion{128, 0});
   ASSERT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto recordResult = runtime->record_event(queue1, event);
+  auto recordResult = runtime->record_event(*queue1, *event);
   ASSERT_TRUE(recordResult.ok()) << recordResult.message;
 
-  auto waitResult = runtime->wait_event(queue2, event);
+  auto waitResult = runtime->wait_event(*queue2, *event);
   ASSERT_TRUE(waitResult.ok()) << waitResult.message;
 
   copyResult = runtime->copy_buffer_async(
-      queue2, dstBuffer, srcBuffer, CopyRegion{128, 0, 0});
+      *queue2, *dstBuffer, *srcBuffer, CopyRegion{128, 0, 0});
   ASSERT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue2);
+  auto syncResult = runtime->synchronize_queue(*queue2);
   ASSERT_TRUE(syncResult.ok()) << syncResult.message;
 
   uint8_t* dstData = static_cast<uint8_t*>(dstBuffer->data());
@@ -682,13 +662,13 @@ TEST_F(MetalRuntimeTest, SynchronizeEventAlreadySignaled) {
   ASSERT_TRUE(queueResult.ok()) << queueResult.error().message;
   auto queue = queueResult.value();
 
-  auto recordResult = runtime->record_event(queue, event);
+  auto recordResult = runtime->record_event(*queue, *event);
   ASSERT_TRUE(recordResult.ok()) << recordResult.message;
 
-  auto syncResult = runtime->synchronize_event(event);
+  auto syncResult = runtime->synchronize_event(*event);
   ASSERT_TRUE(syncResult.ok()) << syncResult.message;
 
-  syncResult = runtime->synchronize_event(event);
+  syncResult = runtime->synchronize_event(*event);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 }
 
@@ -744,15 +724,15 @@ TEST_F(MetalRuntimeTest, BufferMemoryClassHostPinned) {
   }
 
   auto copyResult = runtime->copy_from_host_async(
-      queue, buffer, srcData.data(), BufferTransferRegion{256, 0});
+      *queue, *buffer, srcData.data(), BufferTransferRegion{256, 0});
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
   std::vector<uint8_t> dstData(256);
   copyResult = runtime->copy_to_host_async(
-      queue, dstData.data(), buffer, BufferTransferRegion{256, 0});
+      *queue, dstData.data(), *buffer, BufferTransferRegion{256, 0});
   EXPECT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   EXPECT_TRUE(syncResult.ok()) << syncResult.message;
 
   EXPECT_EQ(srcData, dstData);
@@ -819,12 +799,12 @@ TEST_F(MetalRuntimeTest, CopyToHostRespectsQueuedWrites) {
   auto queue = queueResult.value();
 
   std::memset(buffer->data(), 0x00, desc.size_bytes);
-  auto fillResult = runtime->fill_buffer_async(queue, buffer, 0x7B);
+  auto fillResult = runtime->fill_buffer_async(*queue, *buffer, 0x7B);
   ASSERT_TRUE(fillResult.ok()) << fillResult.message;
 
   std::vector<uint8_t> host(desc.size_bytes, 0x00);
   auto copyResult = runtime->copy_to_host_async(
-      queue, host.data(), buffer, BufferTransferRegion{desc.size_bytes, 0});
+      *queue, host.data(), *buffer, BufferTransferRegion{desc.size_bytes, 0});
   ASSERT_TRUE(copyResult.ok()) << copyResult.message;
 
   for (size_t i = 0; i < host.size(); ++i) {
@@ -844,15 +824,15 @@ TEST_F(MetalRuntimeTest, CopyFromHostRespectsQueuedWrites) {
   auto queue = queueResult.value();
 
   std::memset(buffer->data(), 0x00, desc.size_bytes);
-  auto fillResult = runtime->fill_buffer_async(queue, buffer, 0xAA);
+  auto fillResult = runtime->fill_buffer_async(*queue, *buffer, 0xAA);
   ASSERT_TRUE(fillResult.ok()) << fillResult.message;
 
   std::vector<uint8_t> host(desc.size_bytes, 0x11);
   auto copyResult = runtime->copy_from_host_async(
-      queue, buffer, host.data(), BufferTransferRegion{desc.size_bytes, 0});
+      *queue, *buffer, host.data(), BufferTransferRegion{desc.size_bytes, 0});
   ASSERT_TRUE(copyResult.ok()) << copyResult.message;
 
-  auto syncResult = runtime->synchronize_queue(queue);
+  auto syncResult = runtime->synchronize_queue(*queue);
   ASSERT_TRUE(syncResult.ok()) << syncResult.message;
 
   uint8_t* data = static_cast<uint8_t*>(buffer->data());

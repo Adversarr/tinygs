@@ -288,7 +288,7 @@ void CPUReferenceRasterizer::forward(const RasterizeContext& ctx) {
   // Copy gaussian data from GPU to host
   Gaussian3d gs;
   m_gaussians->copy_to_host_async(gs, ctx.queue);
-  auto sync_gaussians = ctx.runtime->synchronize_queue(ctx.queue);
+  auto sync_gaussians = ctx.runtime->synchronize_queue(*ctx.queue);
   if (!sync_gaussians.ok()) {
     throw std::runtime_error(
         "CPU rasterizer forward: synchronize_queue failed: " + to_string(sync_gaussians));
@@ -445,17 +445,17 @@ void CPUReferenceRasterizer::forward(const RasterizeContext& ctx) {
   CHECK_THROW(ctx.queue != nullptr);
   
   copy_raw_host_to_device_async(
-      ctx.runtime, ctx.queue, ctx.fwd_output.image.data, image.data(), total_size * sizeof(float));
+      *ctx.runtime, *ctx.queue, ctx.fwd_output.image.data, image.data(), total_size * sizeof(float));
 
   // Copy densification info to GPU if present
   if (ctx.densification_info) {
     copy_raw_host_to_device_async(
-        ctx.runtime, ctx.queue, ctx.densification_info->data(), dinfo.data(),
+        *ctx.runtime, *ctx.queue, ctx.densification_info->data(), dinfo.data(),
         N * sizeof(DensificationInfo));
   }
 
   // Synchronize to ensure async copies complete before returning
-  auto sync_status = ctx.runtime->synchronize_queue(ctx.queue);
+  auto sync_status = ctx.runtime->synchronize_queue(*ctx.queue);
   if (!sync_status.ok()) {
     throw std::runtime_error("CPU rasterizer forward: synchronize_queue failed: " + to_string(sync_status));
   }
@@ -505,17 +505,17 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
   CHECK_THROW(ctx.queue != nullptr);
   
   copy_raw_device_to_host_async(
-      ctx.runtime, ctx.queue, grad_image.data(), ctx.grad_output.image.data,
+      *ctx.runtime, *ctx.queue, grad_image.data(), ctx.grad_output.image.data,
       total_size * sizeof(float));
 
   // Densification info: copy existing from GPU (preserves max_radii_screen from forward)
   std::vector<DensificationInfo> dinfo(N);
   if (ctx.densification_info) {
     copy_raw_device_to_host_async(
-        ctx.runtime, ctx.queue, dinfo.data(), buffer_data<DensificationInfo>(ctx.densification_info),
+        *ctx.runtime, *ctx.queue, dinfo.data(), buffer_data<DensificationInfo>(ctx.densification_info),
         N * sizeof(DensificationInfo));
   }
-  auto sync_inputs = ctx.runtime->synchronize_queue(ctx.queue);
+  auto sync_inputs = ctx.runtime->synchronize_queue(*ctx.queue);
   if (!sync_inputs.ok()) {
     throw std::runtime_error("CPU rasterizer backward: synchronize_queue failed: " + to_string(sync_inputs));
   }
@@ -1141,12 +1141,12 @@ void CPUReferenceRasterizer::backward(RasterizeContext& ctx) {
   // Copy densification info to GPU if present
   if (ctx.densification_info) {
     copy_raw_host_to_device_async(
-        ctx.runtime, ctx.queue, ctx.densification_info->data(), dinfo.data(),
+        *ctx.runtime, *ctx.queue, ctx.densification_info->data(), dinfo.data(),
         N * sizeof(DensificationInfo));
   }
 
   // Synchronize to ensure async copies complete before returning
-  auto sync_status = ctx.runtime->synchronize_queue(ctx.queue);
+  auto sync_status = ctx.runtime->synchronize_queue(*ctx.queue);
   if (!sync_status.ok()) {
     throw std::runtime_error("CPU rasterizer backward: synchronize_queue failed: " + to_string(sync_status));
   }

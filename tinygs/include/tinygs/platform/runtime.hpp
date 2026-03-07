@@ -206,36 +206,32 @@ public:
 
   // ---- Event operations (NVI wrappers) ----
 
-  BackendError record_event(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendEvent>& event) {
+  BackendError record_event(BackendQueue& queue, BackendEvent& event) {
     constexpr const char* op = "record_event";
     if (auto err = require_queue(queue, op); !err.ok()) return err;
     if (auto err = require_event(event, op); !err.ok()) return err;
-    return do_record_event(*queue, *event);
+    return do_record_event(queue, event);
   }
 
-  BackendError wait_event(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendEvent>& event) {
+  BackendError wait_event(BackendQueue& queue, BackendEvent& event) {
     constexpr const char* op = "wait_event";
     if (auto err = require_queue(queue, op); !err.ok()) return err;
     if (auto err = require_event(event, op); !err.ok()) return err;
-    return do_wait_event(*queue, *event);
+    return do_wait_event(queue, event);
   }
 
   // ---- Synchronization (NVI wrappers) ----
 
-  BackendError synchronize_queue(const std::shared_ptr<BackendQueue>& queue) {
+  BackendError synchronize_queue(BackendQueue& queue) {
     constexpr const char* op = "synchronize_queue";
     if (auto err = require_queue(queue, op); !err.ok()) return err;
-    return do_synchronize_queue(*queue);
+    return do_synchronize_queue(queue);
   }
 
-  BackendError synchronize_event(const std::shared_ptr<BackendEvent>& event) {
+  BackendError synchronize_event(BackendEvent& event) {
     constexpr const char* op = "synchronize_event";
     if (auto err = require_event(event, op); !err.ok()) return err;
-    return do_synchronize_event(*event);
+    return do_synchronize_event(event);
   }
 
   BackendError synchronize_device() {
@@ -246,23 +242,23 @@ public:
 
   /// Enqueue a device-to-device copy.
   BackendError copy_buffer_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendBuffer>& dst,
-      const std::shared_ptr<BackendBuffer>& src,
+      BackendQueue& queue,
+      BackendBuffer& dst,
+      BackendBuffer& src,
       const CopyRegion& region) {
     constexpr const char* op = "copy_buffer_async";
     if (auto err = require_queue(queue, op); !err.ok()) return err;
     if (auto err = require_buffer(dst, op, "dst"); !err.ok()) return err;
     if (auto err = require_buffer(src, op, "src"); !err.ok()) return err;
-    if (auto err = validate_copy_region(*dst, *src, region, op); !err.ok()) return err;
+    if (auto err = validate_copy_region(dst, src, region, op); !err.ok()) return err;
     if (region.size_bytes == 0) return make_success(op);
-    return do_copy_buffer(*queue, *dst, region.dst_offset, *src, region.src_offset, region.size_bytes);
+    return do_copy_buffer(queue, dst, region.dst_offset, src, region.src_offset, region.size_bytes);
   }
 
   /// Enqueue a host-to-buffer copy.
   BackendError copy_from_host_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendBuffer>& dst,
+      BackendQueue& queue,
+      BackendBuffer& dst,
       const void* src,
       const BufferTransferRegion& region) {
     constexpr const char* op = "copy_from_host_async";
@@ -272,15 +268,15 @@ public:
     if (src == nullptr) {
       return make_error(op, BackendErrorCode::InvalidArgument, "src must not be null when size_bytes > 0");
     }
-    if (auto err = validate_buffer_region(*dst, region, op); !err.ok()) return err;
-    return do_copy_from_host(*queue, *dst, region.buffer_offset, src, region.size_bytes);
+    if (auto err = validate_buffer_region(dst, region, op); !err.ok()) return err;
+    return do_copy_from_host(queue, dst, region.buffer_offset, src, region.size_bytes);
   }
 
   /// Enqueue a buffer-to-host copy.
   BackendError copy_to_host_async(
-      const std::shared_ptr<BackendQueue>& queue,
+      BackendQueue& queue,
       void* dst,
-      const std::shared_ptr<BackendBuffer>& src,
+      BackendBuffer& src,
       const BufferTransferRegion& region) {
     constexpr const char* op = "copy_to_host_async";
     if (auto err = require_queue(queue, op); !err.ok()) return err;
@@ -289,13 +285,13 @@ public:
     if (dst == nullptr) {
       return make_error(op, BackendErrorCode::InvalidArgument, "dst must not be null when size_bytes > 0");
     }
-    if (auto err = validate_buffer_region(*src, region, op); !err.ok()) return err;
-    return do_copy_to_host(*queue, dst, *src, region.buffer_offset, region.size_bytes);
+    if (auto err = validate_buffer_region(src, region, op); !err.ok()) return err;
+    return do_copy_to_host(queue, dst, src, region.buffer_offset, region.size_bytes);
   }
 
   /// Enqueue a raw device-pointer to host copy.
   BackendError copy_device_to_host_async(
-      const std::shared_ptr<BackendQueue>& queue,
+      BackendQueue& queue,
       void* dst,
       const void* src,
       size_t size_bytes) {
@@ -305,12 +301,12 @@ public:
     if (dst == nullptr || src == nullptr) {
       return make_error(op, BackendErrorCode::InvalidArgument, "dst and src must not be null when size_bytes > 0");
     }
-    return do_transfer_raw(*queue, dst, src, size_bytes, TransferDirection::DeviceToHost);
+    return do_transfer_raw(queue, dst, src, size_bytes, TransferDirection::DeviceToHost);
   }
 
   /// Enqueue a host-to-raw-device-pointer copy.
   BackendError copy_host_to_device_async(
-      const std::shared_ptr<BackendQueue>& queue,
+      BackendQueue& queue,
       void* dst,
       const void* src,
       size_t size_bytes) {
@@ -320,15 +316,15 @@ public:
     if (dst == nullptr || src == nullptr) {
       return make_error(op, BackendErrorCode::InvalidArgument, "dst and src must not be null when size_bytes > 0");
     }
-    return do_transfer_raw(*queue, dst, src, size_bytes, TransferDirection::HostToDevice);
+    return do_transfer_raw(queue, dst, src, size_bytes, TransferDirection::HostToDevice);
   }
 
   // ---- Fill operations (NVI wrappers) ----
 
   /// Enqueue a byte fill over a buffer region.
   BackendError fill_buffer_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendBuffer>& buffer,
+      BackendQueue& queue,
+      BackendBuffer& buffer,
       uint8_t value,
       size_t offset,
       size_t size_bytes) {
@@ -336,21 +332,18 @@ public:
     if (auto err = require_queue(queue, op); !err.ok()) return err;
     if (auto err = require_buffer(buffer, op, "buffer"); !err.ok()) return err;
     if (size_bytes == 0) return make_success(op);
-    if (add_overflows(offset, size_bytes) || offset + size_bytes > buffer->size_bytes()) {
+    if (add_overflows(offset, size_bytes) || offset + size_bytes > buffer.size_bytes()) {
       return make_error(op, BackendErrorCode::InvalidArgument, "fill range exceeds buffer size");
     }
-    return do_fill_buffer(*queue, *buffer, offset, value, size_bytes);
+    return do_fill_buffer(queue, buffer, offset, value, size_bytes);
   }
 
   /// Enqueue a byte fill over the entire buffer.
   BackendError fill_buffer_async(
-      const std::shared_ptr<BackendQueue>& queue,
-      const std::shared_ptr<BackendBuffer>& buffer,
+      BackendQueue& queue,
+      BackendBuffer& buffer,
       uint8_t value) {
-    if (!buffer) {
-      return make_error("fill_buffer_async", BackendErrorCode::InvalidArgument, "buffer must not be null");
-    }
-    return fill_buffer_async(queue, buffer, value, 0, buffer->size_bytes());
+    return fill_buffer_async(queue, buffer, value, 0, buffer.size_bytes());
   }
 
 protected:
@@ -431,35 +424,25 @@ private:
     return backend_error(backend_type(), code, op, msg);
   }
 
-  BackendError require_queue(const std::shared_ptr<BackendQueue>& queue, const char* op) const {
-    if (!queue) {
-      return make_error(op, BackendErrorCode::InvalidArgument, "queue must not be null");
-    }
-    if (queue->backend_type() != backend_type() || queue->device() != device()) {
+  BackendError require_queue(const BackendQueue& queue, const char* op) const {
+    if (queue.backend_type() != backend_type() || queue.device() != device()) {
       return make_error(op, BackendErrorCode::InvalidArgument, "queue backend/device mismatch");
     }
     return make_success(op);
   }
 
-  BackendError require_event(const std::shared_ptr<BackendEvent>& event, const char* op) const {
-    if (!event) {
-      return make_error(op, BackendErrorCode::InvalidArgument, "event must not be null");
-    }
-    if (event->backend_type() != backend_type() || event->device() != device()) {
+  BackendError require_event(const BackendEvent& event, const char* op) const {
+    if (event.backend_type() != backend_type() || event.device() != device()) {
       return make_error(op, BackendErrorCode::InvalidArgument, "event backend/device mismatch");
     }
     return make_success(op);
   }
 
   BackendError require_buffer(
-      const std::shared_ptr<BackendBuffer>& buffer,
+      const BackendBuffer& buffer,
       const char* op,
       const char* name) const {
-    if (!buffer) {
-      return make_error(op, BackendErrorCode::InvalidArgument,
-                        (std::string(name) + " must not be null").c_str());
-    }
-    if (buffer->backend_type() != backend_type() || buffer->device() != device()) {
+    if (buffer.backend_type() != backend_type() || buffer.device() != device()) {
       return make_error(op, BackendErrorCode::InvalidArgument,
                         (std::string(name) + " backend/device mismatch").c_str());
     }

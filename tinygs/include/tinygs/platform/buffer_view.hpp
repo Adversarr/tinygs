@@ -15,12 +15,12 @@ public:
   BufferView() = default;
 
   BufferView(
-      const std::shared_ptr<BackendBuffer>& buffer,
+      BackendBuffer* buffer,
       size_t offset_bytes,
       size_t size_bytes)
       : m_buffer(buffer), m_offset_bytes(offset_bytes), m_size_bytes(size_bytes) {}
 
-  const std::shared_ptr<BackendBuffer>& buffer() const { return m_buffer; }
+  BackendBuffer* buffer() const { return m_buffer; }
   size_t offset_bytes() const { return m_offset_bytes; }
   size_t size_bytes() const { return m_size_bytes; }
   bool empty() const { return m_size_bytes == 0; }
@@ -36,7 +36,7 @@ public:
   }
 
 private:
-  std::shared_ptr<BackendBuffer> m_buffer;
+  BackendBuffer* m_buffer = nullptr;
   size_t m_offset_bytes = 0;
   size_t m_size_bytes = 0;
 };
@@ -54,12 +54,12 @@ public:
   }
 
   DeviceSpan(
-      const std::shared_ptr<BackendBuffer>& buffer,
+      BackendBuffer* buffer,
       size_t offset_elems,
       size_t count_elems)
       : m_view(buffer, offset_elems * sizeof(T), count_elems * sizeof(T)) {}
 
-  explicit DeviceSpan(const std::shared_ptr<BackendBuffer>& buffer)
+  explicit DeviceSpan(BackendBuffer* buffer)
       : m_view(buffer, 0, buffer ? buffer->size_bytes() : 0) {}
 
   T* data() const {

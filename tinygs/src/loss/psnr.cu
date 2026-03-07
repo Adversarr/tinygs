@@ -96,7 +96,7 @@ float PsnrMetric::evaluate(Image pred, Image target) {
 
   // Allocate temporary memory for squared differences
   if (!m_sqr_diff || buffer_count<float>(m_sqr_diff) < static_cast<size_t>(n)) {
-    m_sqr_diff = create_device_buffer_for<float>(runtime(), n, "psnr_sqr_diff");
+    m_sqr_diff = create_device_buffer_for<float>(*runtime(), n, "psnr_sqr_diff");
   }
   CUDA_CHECK_THROW(cudaMemset(buffer_data<float>(m_sqr_diff), 0, m_sqr_diff->size_bytes()));
 

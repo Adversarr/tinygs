@@ -135,23 +135,23 @@ std::shared_ptr<BackendQueue> create_test_queue(const std::shared_ptr<FakeRuntim
 TEST(BufferUtilsTest, FillBufferAsyncDoesNotSynchronizeAndUsesByteValue) {
   auto runtime = std::make_shared<FakeRuntime>();
   auto queue = create_test_queue(runtime);
-  auto buffer = create_device_buffer_for<uint32_t>(runtime, 4, "fill_async_buffer");
+  auto buffer = create_device_buffer_for<uint32_t>(*runtime, 4, "fill_async_buffer");
 
-  fill_buffer_async(runtime, queue, buffer, 0xAB);
+  fill_buffer_async(*runtime, *queue, buffer, 0xAB);
 
   EXPECT_EQ(runtime->sync_queue_calls, 0);
 
   std::vector<uint8_t> host(buffer->size_bytes(), 0);
-  copy_to_host(runtime, queue, buffer, host.data(), host.size());
+  copy_to_host(*runtime, *queue, buffer, host.data(), host.size());
   EXPECT_TRUE(std::all_of(host.begin(), host.end(), [](uint8_t value) { return value == 0xAB; }));
 }
 
 TEST(BufferUtilsTest, FillBufferSynchronizesExactlyOnce) {
   auto runtime = std::make_shared<FakeRuntime>();
   auto queue = create_test_queue(runtime);
-  auto buffer = create_device_buffer_for<uint32_t>(runtime, 2, "fill_sync_buffer");
+  auto buffer = create_device_buffer_for<uint32_t>(*runtime, 2, "fill_sync_buffer");
 
-  fill_buffer(runtime, queue, buffer, 0x11);
+  fill_buffer(*runtime, *queue, buffer, 0x11);
 
   EXPECT_EQ(runtime->sync_queue_calls, 1);
 }
@@ -159,17 +159,17 @@ TEST(BufferUtilsTest, FillBufferSynchronizesExactlyOnce) {
 TEST(BufferUtilsTest, ResizeBufferAsyncKeepsPrefixWithoutSynchronizing) {
   auto runtime = std::make_shared<FakeRuntime>();
   auto queue = create_test_queue(runtime);
-  auto old_buffer = create_device_buffer_for<uint32_t>(runtime, 3, "old_buffer");
+  auto old_buffer = create_device_buffer_for<uint32_t>(*runtime, 3, "old_buffer");
   std::vector<uint32_t> initial{7, 8, 9};
-  copy_from_host(runtime, queue, old_buffer, initial);
+  copy_from_host(*runtime, *queue, old_buffer, initial);
   const int baseline_syncs = runtime->sync_queue_calls;
 
-  auto resized = resize_buffer_async<uint32_t>(runtime, queue, old_buffer, 5, "resized_buffer");
+  auto resized = resize_buffer_async<uint32_t>(*runtime, *queue, old_buffer, 5, "resized_buffer");
 
   EXPECT_EQ(runtime->sync_queue_calls, baseline_syncs);
 
   std::vector<uint32_t> host;
-  copy_to_host(runtime, queue, resized, host);
+  copy_to_host(*runtime, *queue, resized, host);
   ASSERT_EQ(host.size(), 5u);
   EXPECT_EQ(host[0], 7u);
   EXPECT_EQ(host[1], 8u);
@@ -181,12 +181,12 @@ TEST(BufferUtilsTest, ResizeBufferAsyncKeepsPrefixWithoutSynchronizing) {
 TEST(BufferUtilsTest, ResizeBufferSynchronizesForFillAndCopy) {
   auto runtime = std::make_shared<FakeRuntime>();
   auto queue = create_test_queue(runtime);
-  auto old_buffer = create_device_buffer_for<uint32_t>(runtime, 2, "old_buffer");
+  auto old_buffer = create_device_buffer_for<uint32_t>(*runtime, 2, "old_buffer");
   std::vector<uint32_t> initial{3, 4};
-  copy_from_host(runtime, queue, old_buffer, initial);
+  copy_from_host(*runtime, *queue, old_buffer, initial);
   const int baseline_syncs = runtime->sync_queue_calls;
 
-  auto resized = resize_buffer<uint32_t>(runtime, queue, old_buffer, 4, "resized_buffer");
+  auto resized = resize_buffer<uint32_t>(*runtime, *queue, old_buffer, 4, "resized_buffer");
 
   ASSERT_NE(resized, nullptr);
   EXPECT_EQ(runtime->sync_queue_calls, baseline_syncs + 2);

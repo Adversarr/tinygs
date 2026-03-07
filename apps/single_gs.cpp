@@ -92,7 +92,7 @@ int main(int argc, char** argv) {
   }
   auto queue = q_result.value();
   auto sync_queue_or_throw = [&](const char* op_name) {
-    const auto status = runtime->synchronize_queue(queue);
+    const auto status = runtime->synchronize_queue(*queue);
     if (!status.ok()) {
       throw std::runtime_error(std::string(op_name) + " failed: " + tinygs::to_string(status));
     }
@@ -143,11 +143,11 @@ int main(int argc, char** argv) {
   std::shared_ptr<tinygs::BackendBuffer> out_image_convert;
 
   if (use_fp16) {
-    out_image_fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, padded_size, "out_image_fp16");
+    out_image_fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, padded_size, "out_image_fp16");
     io.output.image.data = tinygs::buffer_data<tinygs::float16_t>(out_image_fp16);
-    out_image_convert = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_convert");
+    out_image_convert = tinygs::create_device_buffer_for<float>(*runtime, padded_size, "out_image_convert");
   } else {
-    out_image_fp32 = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_fp32");
+    out_image_fp32 = tinygs::create_device_buffer_for<float>(*runtime, padded_size, "out_image_fp32");
     io.output.image.data = tinygs::buffer_data<float>(out_image_fp32);
   }
   io.output.image.shape = shape;
@@ -175,9 +175,9 @@ int main(int argc, char** argv) {
     if (use_fp16) {
       half_to_float_gpu(tinygs::buffer_data<float>(out_image_convert),
                         tinygs::buffer_data<tinygs::float16_t>(out_image_fp16), padded_size, queue.get());
-      tinygs::copy_to_host_async(runtime, queue, out_image_convert, tiled_data);
+      tinygs::copy_to_host_async(*runtime, *queue, out_image_convert, tiled_data);
     } else {
-      tinygs::copy_to_host_async(runtime, queue, out_image_fp32, tiled_data);
+      tinygs::copy_to_host_async(*runtime, *queue, out_image_fp32, tiled_data);
     }
     sync_queue_or_throw("single_gs read image");
     std::vector<float> linear_hwc(total_pixels * 3);
@@ -204,7 +204,7 @@ int main(int argc, char** argv) {
   params.runtime = runtime;
   params.queue = queue;
   params.densification_info = tinygs::create_device_buffer_for<DensificationInfo>(
-      params.runtime, gpu_gaussian->size(), "densification_info");
+      *params.runtime, gpu_gaussian->size(), "densification_info");
 
   auto rast = create_rasterizer(rasterizer, runtime);
   rast->set_gaussians(gpu_gaussian);
@@ -232,14 +232,14 @@ int main(int argc, char** argv) {
   }
 
   if (use_fp16) {
-    out_image_grad_fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(runtime, padded_size, "out_image_grad_fp16");
-    out_image_grad_convert = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_grad_convert");
-    tinygs::copy_from_host_async(runtime, queue, out_image_grad_convert, out_image_grad_tiled);
+    out_image_grad_fp16 = tinygs::create_device_buffer_for<tinygs::float16_t>(*runtime, padded_size, "out_image_grad_fp16");
+    out_image_grad_convert = tinygs::create_device_buffer_for<float>(*runtime, padded_size, "out_image_grad_convert");
+    tinygs::copy_from_host_async(*runtime, *queue, out_image_grad_convert, out_image_grad_tiled);
     float_to_half_gpu(tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16),
                       tinygs::buffer_data<float>(out_image_grad_convert), padded_size, queue.get());
   } else {
-    out_image_grad_fp32 = tinygs::create_device_buffer_for<float>(runtime, padded_size, "out_image_grad_fp32");
-    tinygs::copy_from_host_async(runtime, queue, out_image_grad_fp32, out_image_grad_tiled);
+    out_image_grad_fp32 = tinygs::create_device_buffer_for<float>(*runtime, padded_size, "out_image_grad_fp32");
+    tinygs::copy_from_host_async(*runtime, *queue, out_image_grad_fp32, out_image_grad_tiled);
   }
 
   std::vector<float> fd_loss_weights;
@@ -247,7 +247,7 @@ int main(int argc, char** argv) {
     half_to_float_gpu(tinygs::buffer_data<float>(out_image_grad_convert),
                       tinygs::buffer_data<tinygs::float16_t>(out_image_grad_fp16), padded_size, queue.get());
     std::vector<float> out_image_grad_tiled_effective(padded_size);
-    tinygs::copy_to_host_async(runtime, queue, out_image_grad_convert, out_image_grad_tiled_effective);
+    tinygs::copy_to_host_async(*runtime, *queue, out_image_grad_convert, out_image_grad_tiled_effective);
     sync_queue_or_throw("single_gs read fp16 loss weights");
     fd_loss_weights = tiled_to_linear_hwc(out_image_grad_tiled_effective);
   } else {
@@ -332,7 +332,7 @@ int main(int argc, char** argv) {
   grad->copy_to_host_async(gaussian_grad, queue);
   size_t dinfo_count = params.densification_info->size_bytes() / sizeof(DensificationInfo);
   std::vector<DensificationInfo> dinfo(dinfo_count);
-  tinygs::copy_to_host_async(runtime, queue, params.densification_info, dinfo);
+  tinygs::copy_to_host_async(*runtime, *queue, params.densification_info, dinfo);
   sync_queue_or_throw("single_gs read backward outputs");
   const std::vector<vec3>& means_grad = gaussian_grad.means;
   const std::vector<vec3>& scales_grad = gaussian_grad.scales;

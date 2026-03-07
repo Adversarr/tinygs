@@ -532,7 +532,7 @@ Adam::Adam(std::shared_ptr<BackendRuntime> runtime,
     throw std::runtime_error("Adam: failed to create init queue: " + to_string(queue_result.error()));
   }
   Adam::reset(queue_result.value());
-  m_runtime->synchronize_queue(queue_result.value());
+  m_runtime->synchronize_queue(*queue_result.value());
 }
 
 Adam::~Adam() = default;
@@ -578,21 +578,21 @@ __global__ void copy_optimizer_base_state(
 void Adam::remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQueue>& queue) {
   size_t original_size = m_size;
   cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
-  auto mapping = create_device_buffer_for<uint>(m_runtime, original_size, "remove_mapping");
+  auto mapping = create_device_buffer_for<uint>(*m_runtime, original_size, "remove_mapping");
 
   auto end_it = thrust::copy_if(
     thrust::cuda::par.on(stream),
     thrust::make_counting_iterator<uint>(0), thrust::make_counting_iterator<uint>(original_size),
     buffer_data<uint>(mapping), [kept_flag] __device__ (uint orig) { return static_cast<bool>(kept_flag[orig]); });
 
-  auto new_means_first = create_device_buffer_for<vec3>(m_runtime, num_kept, "means_first");
-  auto new_means_second = create_device_buffer_for<vec3>(m_runtime, num_kept, "means_second");
-  auto new_opacities_first = create_device_buffer_for<float>(m_runtime, num_kept, "opacities_first");
-  auto new_opacities_second = create_device_buffer_for<float>(m_runtime, num_kept, "opacities_second");
-  auto new_rotations_first = create_device_buffer_for<vec4>(m_runtime, num_kept, "rotations_first");
-  auto new_rotations_second = create_device_buffer_for<vec4>(m_runtime, num_kept, "rotations_second");
-  auto new_scales_first = create_device_buffer_for<vec3>(m_runtime, num_kept, "scales_first");
-  auto new_scales_second = create_device_buffer_for<vec3>(m_runtime, num_kept, "scales_second");
+  auto new_means_first = create_device_buffer_for<vec3>(*m_runtime, num_kept, "means_first");
+  auto new_means_second = create_device_buffer_for<vec3>(*m_runtime, num_kept, "means_second");
+  auto new_opacities_first = create_device_buffer_for<float>(*m_runtime, num_kept, "opacities_first");
+  auto new_opacities_second = create_device_buffer_for<float>(*m_runtime, num_kept, "opacities_second");
+  auto new_rotations_first = create_device_buffer_for<vec4>(*m_runtime, num_kept, "rotations_first");
+  auto new_rotations_second = create_device_buffer_for<vec4>(*m_runtime, num_kept, "rotations_second");
+  auto new_scales_first = create_device_buffer_for<vec3>(*m_runtime, num_kept, "scales_first");
+  auto new_scales_second = create_device_buffer_for<vec3>(*m_runtime, num_kept, "scales_second");
   const int grid = (num_kept + block_size - 1) / block_size;
   copy_optimizer_base_state<<<grid, block_size, 0, stream>>>(
       buffer_data<vec3>(m_means_first),
@@ -627,13 +627,13 @@ void Adam::remove(char* kept_flag, int num_kept, const std::shared_ptr<BackendQu
   const uint* map_ptr = buffer_data<uint>(mapping);
   const int old_n = static_cast<int>(original_size);
   std::shared_ptr<BackendBuffer> sh0_f, sh0_s, sh1_f, sh1_s, sh2_f, sh2_s, sh3_f, sh3_s;
-  optim_detail::gather_soa_optim_buffers(m_runtime, queue, m_sh0_first, m_sh0_second, sh0_f, sh0_s, map_ptr, num_kept,
+  optim_detail::gather_soa_optim_buffers(*m_runtime, *queue, m_sh0_first, m_sh0_second, sh0_f, sh0_s, map_ptr, num_kept,
                                          GPUGaussian3d::sh_degree_num_coeffs(0) * 3, old_n, block_size);
-  optim_detail::gather_soa_optim_buffers(m_runtime, queue, m_sh1_first, m_sh1_second, sh1_f, sh1_s, map_ptr, num_kept,
+  optim_detail::gather_soa_optim_buffers(*m_runtime, *queue, m_sh1_first, m_sh1_second, sh1_f, sh1_s, map_ptr, num_kept,
                                          GPUGaussian3d::sh_degree_num_coeffs(1) * 3, old_n, block_size);
-  optim_detail::gather_soa_optim_buffers(m_runtime, queue, m_sh2_first, m_sh2_second, sh2_f, sh2_s, map_ptr, num_kept,
+  optim_detail::gather_soa_optim_buffers(*m_runtime, *queue, m_sh2_first, m_sh2_second, sh2_f, sh2_s, map_ptr, num_kept,
                                          GPUGaussian3d::sh_degree_num_coeffs(2) * 3, old_n, block_size);
-  optim_detail::gather_soa_optim_buffers(m_runtime, queue, m_sh3_first, m_sh3_second, sh3_f, sh3_s, map_ptr, num_kept,
+  optim_detail::gather_soa_optim_buffers(*m_runtime, *queue, m_sh3_first, m_sh3_second, sh3_f, sh3_s, map_ptr, num_kept,
                                          GPUGaussian3d::sh_degree_num_coeffs(3) * 3, old_n, block_size);
   m_sh0_first = std::move(sh0_f); m_sh0_second = std::move(sh0_s);
   m_sh1_first = std::move(sh1_f); m_sh1_second = std::move(sh1_s);
@@ -651,20 +651,20 @@ void Adam::duplicate(int* indices, int* new_indices, int num_duplicate, const st
   const int old_n = static_cast<int>(m_size);
   const int new_n = static_cast<int>(m_gaussians->size());
 
-  m_means_first = resize_buffer_async<vec3>(m_runtime, queue, m_means_first, new_n, "means_first");
-  m_means_second = resize_buffer_async<vec3>(m_runtime, queue, m_means_second, new_n, "means_second");
-  m_opacities_first = resize_buffer_async<float>(m_runtime, queue, m_opacities_first, new_n, "opacities_first");
-  m_opacities_second = resize_buffer_async<float>(m_runtime, queue, m_opacities_second, new_n, "opacities_second");
-  m_rotations_first = resize_buffer_async<vec4>(m_runtime, queue, m_rotations_first, new_n, "rotations_first");
-  m_rotations_second = resize_buffer_async<vec4>(m_runtime, queue, m_rotations_second, new_n, "rotations_second");
-  m_scales_first = resize_buffer_async<vec3>(m_runtime, queue, m_scales_first, new_n, "scales_first");
-  m_scales_second = resize_buffer_async<vec3>(m_runtime, queue, m_scales_second, new_n, "scales_second");
+  m_means_first = resize_buffer_async<vec3>(*m_runtime, *queue, m_means_first, new_n, "means_first");
+  m_means_second = resize_buffer_async<vec3>(*m_runtime, *queue, m_means_second, new_n, "means_second");
+  m_opacities_first = resize_buffer_async<float>(*m_runtime, *queue, m_opacities_first, new_n, "opacities_first");
+  m_opacities_second = resize_buffer_async<float>(*m_runtime, *queue, m_opacities_second, new_n, "opacities_second");
+  m_rotations_first = resize_buffer_async<vec4>(*m_runtime, *queue, m_rotations_first, new_n, "rotations_first");
+  m_rotations_second = resize_buffer_async<vec4>(*m_runtime, *queue, m_rotations_second, new_n, "rotations_second");
+  m_scales_first = resize_buffer_async<vec3>(*m_runtime, *queue, m_scales_first, new_n, "scales_first");
+  m_scales_second = resize_buffer_async<vec3>(*m_runtime, *queue, m_scales_second, new_n, "scales_second");
 
   for (int deg = 0; deg < 4; deg++) {
     int nc = GPUGaussian3d::sh_degree_num_coeffs(deg) * 3;
     auto relayout_pair = [&](std::shared_ptr<BackendBuffer>& first, std::shared_ptr<BackendBuffer>& second) {
-      optim_detail::relayout_soa_optim(m_runtime, queue, first, old_n, new_n, nc, block_size);
-      optim_detail::relayout_soa_optim(m_runtime, queue, second, old_n, new_n, nc, block_size);
+      optim_detail::relayout_soa_optim(*m_runtime, *queue, first, old_n, new_n, nc, block_size);
+      optim_detail::relayout_soa_optim(*m_runtime, *queue, second, old_n, new_n, nc, block_size);
     };
     switch (deg) {
       case 0: relayout_pair(m_sh0_first, m_sh0_second); break;
@@ -675,30 +675,30 @@ void Adam::duplicate(int* indices, int* new_indices, int num_duplicate, const st
   }
 
   if (m_adam_params.copy_state_on_duplicate) {
-    optim_detail::duplicate_optim_buffer<vec3>(queue, m_means_first, indices, new_indices, num_duplicate, block_size);
-    optim_detail::duplicate_optim_buffer<vec3>(queue, m_means_second, indices, new_indices, num_duplicate, block_size);
-    optim_detail::duplicate_optim_buffer<float>(queue, m_opacities_first, indices, new_indices, num_duplicate, block_size);
-    optim_detail::duplicate_optim_buffer<float>(queue, m_opacities_second, indices, new_indices, num_duplicate, block_size);
-    optim_detail::duplicate_optim_buffer<vec4>(queue, m_rotations_first, indices, new_indices, num_duplicate, block_size);
-    optim_detail::duplicate_optim_buffer<vec4>(queue, m_rotations_second, indices, new_indices, num_duplicate, block_size);
-    optim_detail::duplicate_optim_buffer<vec3>(queue, m_scales_first, indices, new_indices, num_duplicate, block_size);
-    optim_detail::duplicate_optim_buffer<vec3>(queue, m_scales_second, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec3>(*queue, m_means_first, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec3>(*queue, m_means_second, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<float>(*queue, m_opacities_first, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<float>(*queue, m_opacities_second, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec4>(*queue, m_rotations_first, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec4>(*queue, m_rotations_second, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec3>(*queue, m_scales_first, indices, new_indices, num_duplicate, block_size);
+    optim_detail::duplicate_optim_buffer<vec3>(*queue, m_scales_second, indices, new_indices, num_duplicate, block_size);
     optim_detail::duplicate_soa_optim_buffer(
-        queue, m_sh0_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(0) * 3, new_n, block_size);
+        *queue, m_sh0_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(0) * 3, new_n, block_size);
     optim_detail::duplicate_soa_optim_buffer(
-        queue, m_sh0_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(0) * 3, new_n, block_size);
+        *queue, m_sh0_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(0) * 3, new_n, block_size);
     optim_detail::duplicate_soa_optim_buffer(
-        queue, m_sh1_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(1) * 3, new_n, block_size);
+        *queue, m_sh1_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(1) * 3, new_n, block_size);
     optim_detail::duplicate_soa_optim_buffer(
-        queue, m_sh1_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(1) * 3, new_n, block_size);
+        *queue, m_sh1_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(1) * 3, new_n, block_size);
     optim_detail::duplicate_soa_optim_buffer(
-        queue, m_sh2_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(2) * 3, new_n, block_size);
+        *queue, m_sh2_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(2) * 3, new_n, block_size);
     optim_detail::duplicate_soa_optim_buffer(
-        queue, m_sh2_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(2) * 3, new_n, block_size);
+        *queue, m_sh2_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(2) * 3, new_n, block_size);
     optim_detail::duplicate_soa_optim_buffer(
-        queue, m_sh3_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(3) * 3, new_n, block_size);
+        *queue, m_sh3_first, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(3) * 3, new_n, block_size);
     optim_detail::duplicate_soa_optim_buffer(
-        queue, m_sh3_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(3) * 3, new_n, block_size);
+        *queue, m_sh3_second, indices, new_indices, num_duplicate, GPUGaussian3d::sh_degree_num_coeffs(3) * 3, new_n, block_size);
   }
   
   m_size = new_n;
@@ -714,39 +714,39 @@ void Adam::reset(const std::shared_ptr<BackendQueue>& queue) {
   m_scales_steps = 0;
   m_rotations_steps = 0;
 
-  m_means_first = create_device_buffer_for<vec3>(m_runtime, num_gaussians, "means_first");
-  m_means_second = create_device_buffer_for<vec3>(m_runtime, num_gaussians, "means_second");
-  m_opacities_first = create_device_buffer_for<float>(m_runtime, num_gaussians, "opacities_first");
-  m_opacities_second = create_device_buffer_for<float>(m_runtime, num_gaussians, "opacities_second");
-  m_rotations_first = create_device_buffer_for<vec4>(m_runtime, num_gaussians, "rotations_first");
-  m_rotations_second = create_device_buffer_for<vec4>(m_runtime, num_gaussians, "rotations_second");
-  m_scales_first = create_device_buffer_for<vec3>(m_runtime, num_gaussians, "scales_first");
-  m_scales_second = create_device_buffer_for<vec3>(m_runtime, num_gaussians, "scales_second");
-  m_sh0_first = create_device_buffer_for<float>(m_runtime, num_gaussians * 3, "sh0_first");
-  m_sh0_second = create_device_buffer_for<float>(m_runtime, num_gaussians * 3, "sh0_second");
-  m_sh1_first = create_device_buffer_for<float>(m_runtime, num_gaussians * 9, "sh1_first");
-  m_sh1_second = create_device_buffer_for<float>(m_runtime, num_gaussians * 9, "sh1_second");
-  m_sh2_first = create_device_buffer_for<float>(m_runtime, num_gaussians * 15, "sh2_first");
-  m_sh2_second = create_device_buffer_for<float>(m_runtime, num_gaussians * 15, "sh2_second");
-  m_sh3_first = create_device_buffer_for<float>(m_runtime, num_gaussians * 21, "sh3_first");
-  m_sh3_second = create_device_buffer_for<float>(m_runtime, num_gaussians * 21, "sh3_second");
+  m_means_first = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "means_first");
+  m_means_second = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "means_second");
+  m_opacities_first = create_device_buffer_for<float>(*m_runtime, num_gaussians, "opacities_first");
+  m_opacities_second = create_device_buffer_for<float>(*m_runtime, num_gaussians, "opacities_second");
+  m_rotations_first = create_device_buffer_for<vec4>(*m_runtime, num_gaussians, "rotations_first");
+  m_rotations_second = create_device_buffer_for<vec4>(*m_runtime, num_gaussians, "rotations_second");
+  m_scales_first = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "scales_first");
+  m_scales_second = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "scales_second");
+  m_sh0_first = create_device_buffer_for<float>(*m_runtime, num_gaussians * 3, "sh0_first");
+  m_sh0_second = create_device_buffer_for<float>(*m_runtime, num_gaussians * 3, "sh0_second");
+  m_sh1_first = create_device_buffer_for<float>(*m_runtime, num_gaussians * 9, "sh1_first");
+  m_sh1_second = create_device_buffer_for<float>(*m_runtime, num_gaussians * 9, "sh1_second");
+  m_sh2_first = create_device_buffer_for<float>(*m_runtime, num_gaussians * 15, "sh2_first");
+  m_sh2_second = create_device_buffer_for<float>(*m_runtime, num_gaussians * 15, "sh2_second");
+  m_sh3_first = create_device_buffer_for<float>(*m_runtime, num_gaussians * 21, "sh3_first");
+  m_sh3_second = create_device_buffer_for<float>(*m_runtime, num_gaussians * 21, "sh3_second");
 
-  fill_buffer_zero_async(m_runtime, queue, m_means_first);
-  fill_buffer_zero_async(m_runtime, queue, m_means_second);
-  fill_buffer_zero_async(m_runtime, queue, m_opacities_first);
-  fill_buffer_zero_async(m_runtime, queue, m_opacities_second);
-  fill_buffer_zero_async(m_runtime, queue, m_rotations_first);
-  fill_buffer_zero_async(m_runtime, queue, m_rotations_second);
-  fill_buffer_zero_async(m_runtime, queue, m_scales_first);
-  fill_buffer_zero_async(m_runtime, queue, m_scales_second);
-  fill_buffer_zero_async(m_runtime, queue, m_sh0_first);
-  fill_buffer_zero_async(m_runtime, queue, m_sh0_second);
-  fill_buffer_zero_async(m_runtime, queue, m_sh1_first);
-  fill_buffer_zero_async(m_runtime, queue, m_sh1_second);
-  fill_buffer_zero_async(m_runtime, queue, m_sh2_first);
-  fill_buffer_zero_async(m_runtime, queue, m_sh2_second);
-  fill_buffer_zero_async(m_runtime, queue, m_sh3_first);
-  fill_buffer_zero_async(m_runtime, queue, m_sh3_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_means_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_means_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_opacities_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_opacities_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_rotations_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_rotations_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_scales_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_scales_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_sh0_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_sh0_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_sh1_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_sh1_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_sh2_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_sh2_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_sh3_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_sh3_second);
 }
 
 void Adam::reset(int* indices, int num_reset) {
@@ -790,8 +790,8 @@ void Adam::reset(int* indices, int num_reset) {
 }
 
 void Adam::reset_opacity(const std::shared_ptr<BackendQueue>& queue) {
-  fill_buffer_zero_async(m_runtime, queue, m_opacities_first);
-  fill_buffer_zero_async(m_runtime, queue, m_opacities_second);
+  fill_buffer_zero_async(*m_runtime, *queue, m_opacities_first);
+  fill_buffer_zero_async(*m_runtime, *queue, m_opacities_second);
 }
 
 void Adam::set_params(const json& config) {
@@ -834,14 +834,14 @@ void AdamParameters::from_json(const json& config) {
 void Adam::reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) {
   int num_gaussians = static_cast<int>(m_size);
 
-  auto new_means_first = create_device_buffer_for<vec3>(m_runtime, num_gaussians, "means_first");
-  auto new_means_second = create_device_buffer_for<vec3>(m_runtime, num_gaussians, "means_second");
-  auto new_opacities_first = create_device_buffer_for<float>(m_runtime, num_gaussians, "opacities_first");
-  auto new_opacities_second = create_device_buffer_for<float>(m_runtime, num_gaussians, "opacities_second");
-  auto new_rotations_first = create_device_buffer_for<vec4>(m_runtime, num_gaussians, "rotations_first");
-  auto new_rotations_second = create_device_buffer_for<vec4>(m_runtime, num_gaussians, "rotations_second");
-  auto new_scales_first = create_device_buffer_for<vec3>(m_runtime, num_gaussians, "scales_first");
-  auto new_scales_second = create_device_buffer_for<vec3>(m_runtime, num_gaussians, "scales_second");
+  auto new_means_first = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "means_first");
+  auto new_means_second = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "means_second");
+  auto new_opacities_first = create_device_buffer_for<float>(*m_runtime, num_gaussians, "opacities_first");
+  auto new_opacities_second = create_device_buffer_for<float>(*m_runtime, num_gaussians, "opacities_second");
+  auto new_rotations_first = create_device_buffer_for<vec4>(*m_runtime, num_gaussians, "rotations_first");
+  auto new_rotations_second = create_device_buffer_for<vec4>(*m_runtime, num_gaussians, "rotations_second");
+  auto new_scales_first = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "scales_first");
+  auto new_scales_second = create_device_buffer_for<vec3>(*m_runtime, num_gaussians, "scales_second");
 
   cudaStream_t stream = reinterpret_cast<cudaStream_t>(queue->native_handle());
   const int grid = (num_gaussians + block_size - 1) / block_size;
@@ -876,13 +876,13 @@ void Adam::reorder(uint* indices, const std::shared_ptr<BackendQueue>& queue) {
   m_scales_second = std::move(new_scales_second);
 
   std::shared_ptr<BackendBuffer> sh0_f, sh0_s, sh1_f, sh1_s, sh2_f, sh2_s, sh3_f, sh3_s;
-  optim_detail::gather_soa_optim_buffers(m_runtime, queue, m_sh0_first, m_sh0_second, sh0_f, sh0_s, indices, num_gaussians,
+  optim_detail::gather_soa_optim_buffers(*m_runtime, *queue, m_sh0_first, m_sh0_second, sh0_f, sh0_s, indices, num_gaussians,
                                          GPUGaussian3d::sh_degree_num_coeffs(0) * 3, num_gaussians, block_size);
-  optim_detail::gather_soa_optim_buffers(m_runtime, queue, m_sh1_first, m_sh1_second, sh1_f, sh1_s, indices, num_gaussians,
+  optim_detail::gather_soa_optim_buffers(*m_runtime, *queue, m_sh1_first, m_sh1_second, sh1_f, sh1_s, indices, num_gaussians,
                                          GPUGaussian3d::sh_degree_num_coeffs(1) * 3, num_gaussians, block_size);
-  optim_detail::gather_soa_optim_buffers(m_runtime, queue, m_sh2_first, m_sh2_second, sh2_f, sh2_s, indices, num_gaussians,
+  optim_detail::gather_soa_optim_buffers(*m_runtime, *queue, m_sh2_first, m_sh2_second, sh2_f, sh2_s, indices, num_gaussians,
                                          GPUGaussian3d::sh_degree_num_coeffs(2) * 3, num_gaussians, block_size);
-  optim_detail::gather_soa_optim_buffers(m_runtime, queue, m_sh3_first, m_sh3_second, sh3_f, sh3_s, indices, num_gaussians,
+  optim_detail::gather_soa_optim_buffers(*m_runtime, *queue, m_sh3_first, m_sh3_second, sh3_f, sh3_s, indices, num_gaussians,
                                          GPUGaussian3d::sh_degree_num_coeffs(3) * 3, num_gaussians, block_size);
   m_sh0_first = std::move(sh0_f); m_sh0_second = std::move(sh0_s);
   m_sh1_first = std::move(sh1_f); m_sh1_second = std::move(sh1_s);
