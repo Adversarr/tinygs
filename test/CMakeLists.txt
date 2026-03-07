@@ -1,6 +1,9 @@
-add_executable(tinygs_basic_test
-    basic_test.cpp
-)
+include(GoogleTest)
+
+if(TINYGS_BACKEND STREQUAL "CUDA")
+    add_executable(tinygs_basic_test
+        basic_test.cpp
+    )
 
 target_link_libraries(tinygs_basic_test
     PRIVATE
@@ -13,7 +16,6 @@ set_target_properties(tinygs_basic_test PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-include(GoogleTest)
 gtest_discover_tests(tinygs_basic_test)
 
 add_executable(tinygs_camera_ext_test
@@ -354,7 +356,27 @@ set_target_properties(tinygs_tile_utils_test PROPERTIES
     CXX_STANDARD_REQUIRED ON
 )
 
-gtest_discover_tests(tinygs_tile_utils_test)
+    gtest_discover_tests(tinygs_tile_utils_test)
+endif()
+
+if(TINYGS_BACKEND STREQUAL "METAL")
+    add_executable(tinygs_metal_runtime_test
+        metal_runtime_test.cpp
+    )
+
+    target_link_libraries(tinygs_metal_runtime_test
+        PRIVATE
+            tinygs::tinygs
+            GTest::gtest_main
+    )
+
+    set_target_properties(tinygs_metal_runtime_test PROPERTIES
+        CXX_STANDARD 20
+        CXX_STANDARD_REQUIRED ON
+    )
+
+    add_test(NAME tinygs_metal_runtime_test COMMAND tinygs_metal_runtime_test)
+endif()
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 

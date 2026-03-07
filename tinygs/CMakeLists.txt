@@ -48,7 +48,7 @@ set(TINYGS_BACKEND_CUDA_SOURCES
     "src/strategy/fastgs.cu"
     "src/strategy/mcmc.cu"
     "src/strategy/improved.cu"
-    "src/orchestrator.cu"
+    "src/orchestrator.cpp"
     "src/utils/image_format.cu"
 )
 
@@ -57,7 +57,7 @@ set(TINYGS_BACKEND_CUDA_RUNTIME_SOURCES
 )
 
 set(TINYGS_METAL_RUNTIME_SOURCES
-    "src/platform/runtime_metal.cpp"
+    "src/platform/runtime_metal.mm"
 )
 
 set(TINYGS_BACKEND_METAL_SOURCES
@@ -121,6 +121,17 @@ if(TINYGS_BACKEND STREQUAL "CUDA")
             CUDA::cudart
             OpenMP::OpenMP_CXX
     )
+elseif(TINYGS_BACKEND STREQUAL "METAL")
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    find_library(CORE_GRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+    
+    target_link_libraries(tinygs
+        PUBLIC
+            ${METAL_FRAMEWORK}
+            ${FOUNDATION_FRAMEWORK}
+            ${CORE_GRAPHICS_FRAMEWORK}
+    )
 elseif(OpenMP_FOUND)
     target_link_libraries(tinygs PUBLIC OpenMP::OpenMP_CXX)
 endif()
@@ -150,6 +161,13 @@ if(TINYGS_BACKEND STREQUAL "CUDA")
         PUBLIC
             ${CUDAToolkit_INCLUDE_DIRS}
             $<$<VERSION_GREATER_EQUAL:${CUDA_VERSION},13.0>:${CUDAToolkit_INCLUDE_DIRS}/cccl>
+    )
+elseif(TINYGS_BACKEND STREQUAL "METAL")
+    set_source_files_properties(
+        ${TINYGS_METAL_RUNTIME_SOURCES}
+        PROPERTIES
+            LANGUAGE OBJCXX
+            COMPILE_FLAGS "-fobjc-arc"
     )
 endif()
 

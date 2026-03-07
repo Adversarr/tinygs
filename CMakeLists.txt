@@ -17,6 +17,8 @@ endif()
 set(TINYGS_PROJECT_LANGUAGES CXX)
 if(TINYGS_BACKEND STREQUAL "CUDA")
     list(APPEND TINYGS_PROJECT_LANGUAGES CUDA)
+elseif(TINYGS_BACKEND STREQUAL "METAL")
+    list(APPEND TINYGS_PROJECT_LANGUAGES OBJCXX)
 endif()
 
 # Project configuration
@@ -108,7 +110,7 @@ if(TINYGS_BUILD_APPS)
 endif()
 
 if(TINYGS_BUILD_TESTS)
-    if(TINYGS_BACKEND STREQUAL "CUDA")
+    if(TINYGS_BACKEND STREQUAL "CUDA" OR TINYGS_BACKEND STREQUAL "METAL")
         enable_testing()
         add_subdirectory(test)
     else()
