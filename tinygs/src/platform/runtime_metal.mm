@@ -385,5 +385,3 @@ Result<BackendRuntime> create_metal_backend_runtime(int device) {
 }
 
 }  // namespace tinygs
-
-}  // namespace tinygs
