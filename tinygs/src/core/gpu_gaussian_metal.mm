@@ -350,27 +350,27 @@ void GPUGaussian3d::copy_to_host(
 void GPUGaussian3d::memset_async(char value, const BackendQueue* queue) {
   const auto effective_queue = make_effective_queue(*m_impl->m_runtime, queue);
   const uint8_t byte_value = static_cast<uint8_t>(value);
-  if (m_impl->m_means && m_impl->m_means->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, effective_queue, m_impl->m_means, byte_value);
-  if (m_impl->m_opacities && m_impl->m_opacities->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, effective_queue, m_impl->m_opacities, byte_value);
-  if (m_impl->m_rotations && m_impl->m_rotations->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, effective_queue, m_impl->m_rotations, byte_value);
-  if (m_impl->m_scales && m_impl->m_scales->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, effective_queue, m_impl->m_scales, byte_value);
-  if (m_impl->m_sh0 && m_impl->m_sh0->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, effective_queue, m_impl->m_sh0, byte_value);
-  if (m_impl->m_sh1 && m_impl->m_sh1->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, effective_queue, m_impl->m_sh1, byte_value);
-  if (m_impl->m_sh2 && m_impl->m_sh2->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, effective_queue, m_impl->m_sh2, byte_value);
-  if (m_impl->m_sh3 && m_impl->m_sh3->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, effective_queue, m_impl->m_sh3, byte_value);
+  if (m_impl->m_means && m_impl->m_means->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *effective_queue, m_impl->m_means, byte_value);
+  if (m_impl->m_opacities && m_impl->m_opacities->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *effective_queue, m_impl->m_opacities, byte_value);
+  if (m_impl->m_rotations && m_impl->m_rotations->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *effective_queue, m_impl->m_rotations, byte_value);
+  if (m_impl->m_scales && m_impl->m_scales->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *effective_queue, m_impl->m_scales, byte_value);
+  if (m_impl->m_sh0 && m_impl->m_sh0->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *effective_queue, m_impl->m_sh0, byte_value);
+  if (m_impl->m_sh1 && m_impl->m_sh1->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *effective_queue, m_impl->m_sh1, byte_value);
+  if (m_impl->m_sh2 && m_impl->m_sh2->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *effective_queue, m_impl->m_sh2, byte_value);
+  if (m_impl->m_sh3 && m_impl->m_sh3->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *effective_queue, m_impl->m_sh3, byte_value);
 }
 
 void GPUGaussian3d::memset(char value) {
   const auto queue = create_internal_queue(*m_impl->m_runtime);
   const uint8_t byte_value = static_cast<uint8_t>(value);
-  if (m_impl->m_means && m_impl->m_means->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, queue, m_impl->m_means, byte_value);
-  if (m_impl->m_opacities && m_impl->m_opacities->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, queue, m_impl->m_opacities, byte_value);
-  if (m_impl->m_rotations && m_impl->m_rotations->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, queue, m_impl->m_rotations, byte_value);
-  if (m_impl->m_scales && m_impl->m_scales->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, queue, m_impl->m_scales, byte_value);
-  if (m_impl->m_sh0 && m_impl->m_sh0->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, queue, m_impl->m_sh0, byte_value);
-  if (m_impl->m_sh1 && m_impl->m_sh1->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, queue, m_impl->m_sh1, byte_value);
-  if (m_impl->m_sh2 && m_impl->m_sh2->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, queue, m_impl->m_sh2, byte_value);
-  if (m_impl->m_sh3 && m_impl->m_sh3->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, queue, m_impl->m_sh3, byte_value);
+  if (m_impl->m_means && m_impl->m_means->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *queue, m_impl->m_means, byte_value);
+  if (m_impl->m_opacities && m_impl->m_opacities->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *queue, m_impl->m_opacities, byte_value);
+  if (m_impl->m_rotations && m_impl->m_rotations->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *queue, m_impl->m_rotations, byte_value);
+  if (m_impl->m_scales && m_impl->m_scales->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *queue, m_impl->m_scales, byte_value);
+  if (m_impl->m_sh0 && m_impl->m_sh0->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *queue, m_impl->m_sh0, byte_value);
+  if (m_impl->m_sh1 && m_impl->m_sh1->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *queue, m_impl->m_sh1, byte_value);
+  if (m_impl->m_sh2 && m_impl->m_sh2->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *queue, m_impl->m_sh2, byte_value);
+  if (m_impl->m_sh3 && m_impl->m_sh3->size_bytes() > 0) fill_buffer_async(*m_impl->m_runtime, *queue, m_impl->m_sh3, byte_value);
   detail::throw_if_status_error(m_impl->m_runtime->synchronize_queue(*queue), "GPUGaussian3d::memset sync");
 }
 
